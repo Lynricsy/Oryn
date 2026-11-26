@@ -4752,8 +4752,8 @@
 			"unsupported": "这个浏览器不支持系统通知；通知仍会出现在侧栏铃铛里。",
 			"insecure": "系统通知与后台推送需要 HTTPS；当前不是安全连接，通知只会出现在侧栏铃铛里。",
 			"homeScreen": "在 iPhone / iPad 上，先用 Safari 的「分享 → 添加到主屏幕」，再从主屏幕打开 Oryn 才能开启后台推送。",
-			"push": "后台推送（标签页关闭时也能收到）",
-			"pushHint": "经浏览器的推送服务送达；关闭后这台设备只在页面打开时收到通知。",
+			"push": "后台推送",
+			"pushHint": "标签页关闭时也能收到；经浏览器的推送服务送达。",
 			"others": "其它已订阅的浏览器与设备",
 			"subscribedAt": "订阅于 {{when}}",
 			"viaGateway": "经推送网关 {{host}}",
@@ -4779,32 +4779,39 @@
 		"name": "名称",
 		"events": "发送哪些事件",
 		"locale": "消息语言",
-		"localeHint": "渠道里固定文案（如「回复即可继续」）的语言。",
+		"localeHint": "渠道里固定文案的语言",
 		"localeName": {
 			"zhCN": "简体中文",
 			"en": "English"
 		},
-		"keepConfig": "出于安全，已保存的配置不会回显。全部留空 = 保持不变；填写任一项则整组替换（必填项要填全）。",
+		"config": {
+			"title": "连接配置",
+			"hidden": "已保存的配置不回显",
+			"reset": "取消更换",
+			"note": "填写任一项即整组替换原配置（必填项要填全）；全部留空则保持不变。"
+		},
 		"unchanged": "留空保持不变",
-		"headersHint": "每行一个，格式 Name: value。",
+		"optional": "可选",
+		"headersHint": "每行一个 Name: value",
+		"apiBaseHint": "留空则用官方地址",
 		"telegramHint": "向 @BotFather 创建机器人得到 token；创建后会引导你把它绑定到你的私聊。",
 		"field": {
 			"telegram": {
 				"botToken": "Bot token",
-				"apiBase": "Bot API 地址（可选）"
+				"apiBase": "Bot API 地址"
 			},
 			"webhook": {
 				"url": "URL",
-				"secret": "签名密钥（可选）",
-				"headers": "自定义请求头（可选）"
+				"secret": "签名密钥",
+				"headers": "自定义请求头"
 			},
 			"ntfy": {
-				"server": "服务器（可选）",
+				"server": "服务器",
 				"topic": "Topic",
-				"token": "访问令牌（可选）"
+				"token": "访问令牌"
 			},
 			"bark": {
-				"server": "服务器（可选）",
+				"server": "服务器",
 				"deviceKey": "Device key"
 			}
 		},
@@ -4819,11 +4826,18 @@
 		},
 		"status": {
 			"ok": "正常",
-			"err": "最近一次投递失败",
 			"neutral": "已停用"
+		},
+		"state": {
+			"sent": "{{when}}送达",
+			"pending": "待重试",
+			"failed": "投递失败",
+			"nextRetry": "下次重试 {{when}}"
 		},
 		"enabled": "启用",
 		"test": "测试",
+		"sendTest": "发送测试",
+		"more": "更多操作",
 		"testing": "正在发送测试消息…",
 		"testOk": "测试消息已发送",
 		"linkedTo": "已绑定 {{chat}}",

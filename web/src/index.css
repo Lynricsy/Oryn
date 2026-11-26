@@ -98,6 +98,11 @@
 	--ctp-lavender: #7287fd;
 	--ctp-text: #4c4f69;
 	--ctp-overlay1: #8c8fa1;
+	/* 工作台原生（D）输入框（components/ui/workbench.tsx）：静止半透明白 + 细外缘，聚焦变实、外缘加深 */
+	--field: oklch(1 0 0 / 0.72);
+	--field-focus: var(--panel);
+	--field-edge: color-mix(in oklab, var(--text) 12%, transparent);
+	--field-edge-focus: color-mix(in oklab, var(--text) 22%, transparent);
 	color-scheme: light;
 }
 
@@ -171,6 +176,10 @@
 	--ctp-lavender: #b4befe;
 	--ctp-text: #cdd6f4;
 	--ctp-overlay1: #7f849c;
+	--field: oklch(1 0 0 / 0.045);
+	--field-focus: oklch(0.275 0.013 var(--tint-h));
+	--field-edge: oklch(1 0 0 / 0.1);
+	--field-edge-focus: oklch(1 0 0 / 0.2);
 	color-scheme: dark;
 }
 
@@ -252,6 +261,13 @@
 	--sh-xl:
 		0 8px 20px oklch(var(--shadow-color) / calc(0.1 * var(--shadow-k))),
 		0 32px 80px -16px oklch(var(--shadow-color) / calc(0.3 * var(--shadow-k)));
+	--sh-field:
+		inset 0 0 0 1px var(--field-edge),
+		0 1px 2px oklch(var(--shadow-color) / calc(0.05 * var(--shadow-k)));
+	--sh-field-focus:
+		inset 0 0 0 1px var(--field-edge-focus),
+		0 2px 4px oklch(var(--shadow-color) / calc(0.06 * var(--shadow-k))),
+		0 10px 22px -10px oklch(var(--shadow-color) / calc(0.32 * var(--shadow-k)));
 }
 
 @theme inline {
@@ -2057,4 +2073,12 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 		width: 60%;
 		translate: 33% 0;
 	}
+}
+
+/* 工作台分组列表（components/ui/workbench.tsx）：行间发丝线从文字列起，不穿过左侧 54px 的图标列 */
+.wb-list > li + li {
+	background-image: linear-gradient(var(--line), var(--line));
+	background-size: calc(100% - 54px) 1px;
+	background-position: right top;
+	background-repeat: no-repeat;
 }

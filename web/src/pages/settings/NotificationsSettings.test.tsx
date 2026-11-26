@@ -128,6 +128,12 @@ function fill(dialog: HTMLElement, label: string, value: string) {
 	});
 }
 
+/** 行尾 ⋯ 菜单里的一项（编辑 / 发送测试 / 删除）。 */
+async function rowMenu(row: HTMLElement, item: string) {
+	fireEvent.click(within(row).getByRole("button", { name: "更多操作" }));
+	fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
 describe("NotificationsSettings 渠道", () => {
 	it("四种渠道的创建请求体：配置对象与 kind 同名，空的可选字段不提交", async () => {
 		resetNotifyMock({ empty: true });
@@ -136,8 +142,8 @@ describe("NotificationsSettings 渠道", () => {
 
 		let d = await openAdd("Webhook");
 		fill(d, "URL", " https://hooks.example.com/x ");
-		fill(d, "签名密钥（可选）", "s3cret");
-		fill(d, "自定义请求头（可选）", "X-A: 1\nbad line\nX-B:two");
+		fill(d, "签名密钥", "s3cret");
+		fill(d, "自定义请求头", "X-A: 1\nbad line\nX-B:two");
 		fireEvent.click(within(d).getByLabelText("需要输入"));
 		fireEvent.click(within(d).getByRole("button", { name: "创建" }));
 		await waitFor(() =>
@@ -171,7 +177,7 @@ describe("NotificationsSettings 渠道", () => {
 		const create = within(d).getByRole("button", { name: "创建" });
 		// 必填项没填时不能创建
 		expect(create).toBeDisabled();
-		fill(d, "服务器（可选）", "https://bark.example");
+		fill(d, "服务器", "https://bark.example");
 		fill(d, "Device key", "dk");
 		fireEvent.click(create);
 		await waitFor(() =>
@@ -216,10 +222,36 @@ describe("NotificationsSettings 渠道", () => {
 		});
 	});
 
+	it("消息语言是自绘下拉：键盘选中 English 后提交 en；Esc 只关列表不关对话框", async () => {
+		resetNotifyMock({ empty: true });
+		mount();
+		await screen.findByText(/还没有渠道/);
+		const d = await openAdd("Webhook");
+		const lang = within(d).getByRole("combobox", { name: /消息语言/ });
+		expect(lang).toHaveTextContent("简体中文");
+		fireEvent.keyDown(lang, { key: "ArrowDown" });
+		expect(lang).toHaveAttribute("aria-expanded", "true");
+		fireEvent.keyDown(lang, { key: "Escape" });
+		expect(lang).toHaveAttribute("aria-expanded", "false");
+		expect(screen.getByRole("dialog", { name: "添加 Webhook 渠道" })).toBe(d);
+		fireEvent.keyDown(lang, { key: "ArrowDown" });
+		fireEvent.keyDown(lang, { key: "ArrowDown" });
+		fireEvent.keyDown(lang, { key: "Enter" });
+		expect(lang).toHaveTextContent("English");
+		fill(d, "URL", "https://hooks.example.com/en");
+		fireEvent.click(within(d).getByRole("button", { name: "创建" }));
+		await waitFor(() =>
+			expect(posts("/api/v1/notification-channels")).toHaveLength(1),
+		);
+		expect(posts("/api/v1/notification-channels")[0]?.body).toMatchObject({
+			locale: "en",
+		});
+	});
+
 	it("编辑：机密留空 = 不提交配置对象；填了就整体替换", async () => {
 		mount();
 		const row = await rowOf("CI 钩子");
-		fireEvent.click(within(row).getByRole("button", { name: "编辑" }));
+		await rowMenu(row, "编辑");
 		let d = await screen.findByRole("dialog", { name: "编辑 Webhook 渠道" });
 		fill(d, "名称", "CI");
 		fireEvent.click(within(d).getByRole("button", { name: "保存" }));
@@ -237,10 +269,10 @@ describe("NotificationsSettings 渠道", () => {
 		});
 
 		const row2 = await rowOf("CI");
-		fireEvent.click(within(row2).getByRole("button", { name: "编辑" }));
+		await rowMenu(row2, "编辑");
 		d = await screen.findByRole("dialog", { name: "编辑 Webhook 渠道" });
 		// 只填可选的签名密钥：必填的 URL 没填，不能保存（否则会把 URL 整体替换成空）
-		fill(d, "签名密钥（可选）", "new");
+		fill(d, "签名密钥", "new");
 		expect(within(d).getByRole("button", { name: "保存" })).toBeDisabled();
 		fill(d, "URL", "https://hooks.example.com/y");
 		fireEvent.click(within(d).getByRole("button", { name: "保存" }));
@@ -302,6 +334,25 @@ describe("NotificationsSettings 渠道", () => {
 		).toBeInTheDocument();
 	});
 
+	it("出错的渠道：点「投递失败」展开渠道原文，Esc 收起并回到状态按钮", async () => {
+		mount();
+		const ntfy = await rowOf("手机 ntfy");
+		const status = within(ntfy).getByRole("button", { name: "投递失败" });
+		expect(status).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(status);
+		const details = await within(ntfy).findByRole("dialog", {
+			name: "投递失败",
+		});
+		expect(
+			within(details).getByText("HTTP 500: upstream unavailable"),
+		).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: "Escape" });
+		await waitFor(() =>
+			expect(status).toHaveAttribute("aria-expanded", "false"),
+		);
+		expect(document.activeElement).toBe(status);
+	});
+
 	it("测试未绑定的 Telegram：提示先绑定", async () => {
 		resetNotifyMock({ empty: true });
 		await handleNotifyFetch(
@@ -335,8 +386,8 @@ describe("NotificationsSettings 渠道", () => {
 describe("NotificationsSettings 此设备", () => {
 	it("后台推送开关：先请求通知权限，再调 subscribePush；关掉调 unsubscribePush", async () => {
 		mount();
-		const toggle = await screen.findByRole("checkbox", {
-			name: "后台推送（标签页关闭时也能收到）",
+		const toggle = await screen.findByRole("switch", {
+			name: "后台推送",
 		});
 		expect(toggle).not.toBeChecked();
 		fireEvent.click(toggle);
@@ -356,8 +407,8 @@ describe("NotificationsSettings 此设备", () => {
 		});
 		notificationsStore.setState({ pushActive: true });
 		mount();
-		const toggle = await screen.findByRole("checkbox", {
-			name: "后台推送（标签页关闭时也能收到）",
+		const toggle = await screen.findByRole("switch", {
+			name: "后台推送",
 		});
 		await waitFor(() =>
 			expect(notificationsStore.getState().pushActive).toBe(false),
@@ -376,8 +427,8 @@ describe("NotificationsSettings 此设备", () => {
 			),
 		);
 		mount();
-		const toggle = await screen.findByRole("checkbox", {
-			name: "后台推送（标签页关闭时也能收到）",
+		const toggle = await screen.findByRole("switch", {
+			name: "后台推送",
 		});
 		fireEvent.click(toggle);
 		expect(
@@ -421,7 +472,7 @@ describe("NotificationsSettings 此设备", () => {
 		expect(
 			await screen.findByText(/系统通知与后台推送需要 HTTPS/),
 		).toBeInTheDocument();
-		expect(screen.queryByRole("checkbox", { name: /后台推送/ })).toBeNull();
+		expect(screen.queryByRole("switch", { name: /后台推送/ })).toBeNull();
 		push.pushSupported.mockReturnValue(true);
 	});
 });
@@ -447,7 +498,7 @@ describe("NotificationsSettings 此设备（桌面壳，M6）", () => {
 		expect(
 			await screen.findByText(/系统通知由桌面应用发送/),
 		).toBeInTheDocument();
-		expect(screen.queryByRole("checkbox", { name: /后台推送/ })).toBeNull();
+		expect(screen.queryByRole("switch", { name: /后台推送/ })).toBeNull();
 		expect(screen.queryByText("允许系统通知")).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "发送测试通知" }));
 		expect(notify).toHaveBeenCalledWith(
@@ -498,7 +549,7 @@ describe("NotificationsSettings 此设备（移动壳，M7）", () => {
 			"data-push-state",
 			"disabled",
 		);
-		expect(screen.queryByRole("checkbox", { name: /后台推送/ })).toBeNull();
+		expect(screen.queryByRole("switch", { name: /后台推送/ })).toBeNull();
 		expect(screen.queryByText(/系统通知由桌面应用发送/)).toBeNull();
 	});
 });

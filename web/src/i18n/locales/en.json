@@ -4752,8 +4752,8 @@
 			"unsupported": "This browser doesn't support system notifications; they still show up in the sidebar bell.",
 			"insecure": "System notifications and background push need HTTPS. This connection isn't secure, so notifications only show up in the sidebar bell.",
 			"homeScreen": "On iPhone / iPad, use Safari's Share → Add to Home Screen first, then open Oryn from the home screen to turn on background push.",
-			"push": "Background push (works even with the tab closed)",
-			"pushHint": "Delivered through the browser's push service. When off, this device only gets notifications while the page is open.",
+			"push": "Background push",
+			"pushHint": "Works even with the tab closed; delivered through the browser's push service.",
 			"others": "Other subscribed browsers and devices",
 			"subscribedAt": "Subscribed {{when}}",
 			"viaGateway": "Via push gateway {{host}}",
@@ -4779,32 +4779,39 @@
 		"name": "Name",
 		"events": "Events to send",
 		"locale": "Message language",
-		"localeHint": "Language of the fixed text in channel messages (such as \"Reply to continue\").",
+		"localeHint": "Language of fixed text in messages",
 		"localeName": {
 			"zhCN": "简体中文",
 			"en": "English"
 		},
-		"keepConfig": "For safety, saved settings aren't shown. Leave every field empty to keep them; filling in any field replaces the whole set (fill in all required fields).",
+		"config": {
+			"title": "Connection",
+			"hidden": "Saved values aren't shown",
+			"reset": "Keep current",
+			"note": "Filling in any field replaces the whole set (fill in all required fields); leave all empty to keep it."
+		},
 		"unchanged": "Leave empty to keep",
-		"headersHint": "One per line, as Name: value.",
+		"optional": "optional",
+		"headersHint": "One per line: Name: value",
+		"apiBaseHint": "Empty uses the official API",
 		"telegramHint": "Create a bot with @BotFather to get a token. After creating the channel you'll link it to your private chat.",
 		"field": {
 			"telegram": {
 				"botToken": "Bot token",
-				"apiBase": "Bot API URL (optional)"
+				"apiBase": "Bot API URL"
 			},
 			"webhook": {
 				"url": "URL",
-				"secret": "Signing secret (optional)",
-				"headers": "Custom headers (optional)"
+				"secret": "Signing secret",
+				"headers": "Custom headers"
 			},
 			"ntfy": {
-				"server": "Server (optional)",
+				"server": "Server",
 				"topic": "Topic",
-				"token": "Access token (optional)"
+				"token": "Access token"
 			},
 			"bark": {
-				"server": "Server (optional)",
+				"server": "Server",
 				"deviceKey": "Device key"
 			}
 		},
@@ -4819,11 +4826,18 @@
 		},
 		"status": {
 			"ok": "Working",
-			"err": "Last delivery failed",
 			"neutral": "Disabled"
+		},
+		"state": {
+			"sent": "Delivered {{when}}",
+			"pending": "Retrying",
+			"failed": "Delivery failed",
+			"nextRetry": "Next retry {{when}}"
 		},
 		"enabled": "Enabled",
 		"test": "Test",
+		"sendTest": "Send test",
+		"more": "More actions",
 		"testing": "Sending a test message…",
 		"testOk": "Test message sent",
 		"linkedTo": "Linked to {{chat}}",

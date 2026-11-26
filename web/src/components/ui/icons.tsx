@@ -38,6 +38,7 @@ import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { CaretUp } from "@phosphor-icons/react/dist/csr/CaretUp";
+import { CaretUpDown } from "@phosphor-icons/react/dist/csr/CaretUpDown";
 import { ChartBar } from "@phosphor-icons/react/dist/csr/ChartBar";
 import { ChatCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
 import { Chats } from "@phosphor-icons/react/dist/csr/Chats";
@@ -131,6 +132,7 @@ import { Note } from "@phosphor-icons/react/dist/csr/Note";
 import { Package } from "@phosphor-icons/react/dist/csr/Package";
 import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
 import { Paperclip } from "@phosphor-icons/react/dist/csr/Paperclip";
+import { PaperPlaneTilt } from "@phosphor-icons/react/dist/csr/PaperPlaneTilt";
 import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
 import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { PenNib } from "@phosphor-icons/react/dist/csr/PenNib";
@@ -205,6 +207,7 @@ const ICONS = {
 	chevronRight: CaretRight,
 	chevronLeft: CaretLeft,
 	chevronUp: CaretUp,
+	caretUpDown: CaretUpDown,
 	close: X,
 	pin: PushPin,
 	archive: Archive,
@@ -246,6 +249,7 @@ const ICONS = {
 	download: DownloadSimple,
 	upload: UploadSimple,
 	attach: Paperclip,
+	paperPlane: PaperPlaneTilt,
 	filePlus: FilePlus,
 	folderPlus: FolderPlus,
 	folderOpen: FolderOpen,

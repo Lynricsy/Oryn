@@ -1,15 +1,23 @@
 /**
- * 设置 → 通知（M5 计划 6.3）：三张卡片。
+ * 设置 → 通知（M5 计划 6.3），工作台原生（D）分组列表试点（components/ui/workbench.tsx）。
  * 1. 此设备：系统通知权限、「后台推送」开关（Web Push 订阅 / 退订）、其它已订阅的浏览器。
  *    桌面壳（M6）里系统通知由壳发送：只有一句说明与「发送测试通知」，不渲染权限与推送开关；
  *    移动壳（M7）换成 `MobilePushCard`（壳注册的 UnifiedPush / FCM 推送状态）。
  * 2. 渠道：Telegram / Webhook / ntfy / Bark 的列表、启停、测试、编辑、删除与「添加渠道 ▾」。
- *    机密字段只写不读：编辑时整组配置留空 = 不变（不提交配置对象），填了任一项 = 整体替换。
+ *    行尾：测试（悬停出现）· 定宽状态列 · ⋯（编辑 / 发送测试 / 删除）· 开关；出错时点状态看原文。
+ *    机密字段只写不读：编辑时「连接配置」整组留空 = 不变（不提交配置对象），填了任一项 = 整体替换。
  *    Telegram 创建后进入绑定向导：显示 `/start <码>`，每 2s 拉一次渠道列表直到已绑定。
  * 3. 最近通知：最近 20 条与各投递的状态。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { Schemas } from "../../api/client";
 import {
@@ -28,28 +36,31 @@ import {
 import { kindIcon } from "../../components/notify/NotificationBell";
 import { ActionError, DeliveryFailure } from "../../components/ui/ActionError";
 import { CopyButton } from "../../components/ui/CopyButton";
-import {
-	Badge,
-	Callout,
-	Card,
-	ListRow,
-	StatusDot,
-} from "../../components/ui/data";
+import { Callout, StatusDot } from "../../components/ui/data";
+import { Floating } from "../../components/ui/Floating";
 import { Icon, type IconName } from "../../components/ui/icons";
 import {
 	Button,
 	Checkbox,
 	Dialog,
 	ErrorText,
-	Field,
 	IconButton,
 	Menu,
-	Select,
 	Spinner,
-	TextArea,
-	TextInput,
-	Toggle,
 } from "../../components/ui/primitives";
+import {
+	ComboSelect,
+	FormField,
+	Group,
+	GroupList,
+	GroupRow,
+	Reveal,
+	StatusCell,
+	StatusText,
+	Switch,
+	TextAreaField,
+	TextField,
+} from "../../components/ui/workbench";
 import type { ActionStep } from "../../lib/action-error";
 import { confirmAction } from "../../lib/confirm";
 import { formatDateTime, formatRelative } from "../../lib/format";
@@ -148,14 +159,6 @@ export function buildConfig(
 	return out;
 }
 
-function LeadIcon({ name }: { name: IconName }) {
-	return (
-		<span className="grid h-8 w-8 place-items-center rounded-md border border-border bg-raised text-muted">
-			<Icon name={name} size={15} />
-		</span>
-	);
-}
-
 /** UA 的简短摘要：浏览器 · 系统。 */
 export function uaSummary(ua: string): string {
 	const browser = /Edg\//.test(ua)
@@ -197,6 +200,13 @@ const PERMISSION_TONE = {
 	default: "neutral",
 	unsupported: "neutral",
 } as const;
+
+/** 行说明里的分隔点 */
+const SEP = (
+	<span aria-hidden className="text-faint">
+		·
+	</span>
+);
 
 function DeviceCard() {
 	const { t } = useTranslation();
@@ -260,53 +270,63 @@ function DeviceCard() {
 	const others =
 		subs.data?.subscriptions.filter((s) => s.endpoint !== ownEndpoint) ?? [];
 	const secure = typeof window !== "undefined" && window.isSecureContext;
+	const blocked = permission === "unsupported" || !secure;
+	const homeScreen = needsHomeScreen();
 	return (
-		<Card title={t("notifySettings.device.title")} icon="monitor">
-			<div className="flex flex-col gap-3">
-				{permission === "unsupported" || !secure ? (
-					<Callout tone="neutral">
-						{secure
-							? t("notifySettings.device.unsupported")
-							: t("notifySettings.device.insecure")}
-					</Callout>
-				) : (
-					<div className="flex flex-wrap items-center gap-2 text-sm">
-						<span className="text-muted">
-							{t("notifySettings.device.permission")}
-						</span>
-						<Badge tone={PERMISSION_TONE[permission]}>
-							{t(`notifySettings.device.perm.${permission}`)}
-						</Badge>
-						{permission === "default" && (
-							<Button size="sm" onClick={() => void request()}>
-								{t("notifySettings.device.allow")}
-							</Button>
-						)}
-						{permission === "denied" && (
-							<span className="text-faint text-xs">
-								{t("notifySettings.device.deniedHint")}
-							</span>
-						)}
-					</div>
-				)}
-				{needsHomeScreen() && (
-					<Callout tone="neutral">
-						{t("notifySettings.device.homeScreen")}
-					</Callout>
-				)}
-				{supported && (
-					<div className="flex flex-col gap-1">
-						<Toggle
-							checked={pushActive}
-							disabled={busy || permission === "denied"}
-							onChange={(v) => void setPush(v)}
-							label={t("notifySettings.device.push")}
+		<>
+			<Group title={t("notifySettings.device.title")}>
+				<GroupList>
+					<GroupRow
+						icon="bell"
+						title={t("notifySettings.device.permission")}
+						meta={
+							blocked
+								? t(
+										secure
+											? "notifySettings.device.unsupported"
+											: "notifySettings.device.insecure",
+									)
+								: permission === "denied"
+									? t("notifySettings.device.deniedHint")
+									: undefined
+						}
+						trailing={
+							blocked ? undefined : (
+								<>
+									<StatusText tone={PERMISSION_TONE[permission]}>
+										{t(`notifySettings.device.perm.${permission}`)}
+									</StatusText>
+									{permission === "default" && (
+										<Button size="sm" onClick={() => void request()}>
+											{t("notifySettings.device.allow")}
+										</Button>
+									)}
+								</>
+							)
+						}
+					/>
+					{(supported || homeScreen) && (
+						<GroupRow
+							icon="broadcast"
+							title={t("notifySettings.device.push")}
+							meta={
+								homeScreen
+									? t("notifySettings.device.homeScreen")
+									: t("notifySettings.device.pushHint")
+							}
+							trailing={
+								supported && (
+									<Switch
+										checked={pushActive}
+										disabled={busy || permission === "denied"}
+										onChange={(v) => void setPush(v)}
+										label={t("notifySettings.device.push")}
+									/>
+								)
+							}
 						/>
-						<p className="pl-10 text-faint text-xs">
-							{t("notifySettings.device.pushHint")}
-						</p>
-					</div>
-				)}
+					)}
+				</GroupList>
 				{error ? (
 					<ActionError step={error.step} error={error.error} />
 				) : subs.error ? (
@@ -314,62 +334,61 @@ function DeviceCard() {
 				) : (
 					<ActionError step="pushRemove" error={remove.error} />
 				)}
-				{others.length > 0 && (
-					<div>
-						<h4 className="mb-1 font-medium text-muted text-xs">
-							{t("notifySettings.device.others")}
-						</h4>
-						<ul className="-mx-2 flex flex-col">
-							{others.map((s) => (
-								<li key={s.id}>
-									<ListRow
-										leading={
-											<LeadIcon
-												name={s.kind === "gateway" ? "phone" : "browser"}
-											/>
-										}
-										title={
-											<span className="truncate" title={s.userAgent}>
-												{uaSummary(s.userAgent)}
-											</span>
-										}
-										meta={
+			</Group>
+			{others.length > 0 && (
+				<Group title={t("notifySettings.device.others")}>
+					<GroupList>
+						{others.map((s) => (
+							<GroupRow
+								key={s.id}
+								icon={s.kind === "gateway" ? "phone" : "browser"}
+								title={
+									<span className="truncate" title={s.userAgent}>
+										{uaSummary(s.userAgent)}
+									</span>
+								}
+								meta={
+									<>
+										<span>
+											{t("notifySettings.device.subscribedAt", {
+												when: formatRelative(s.createdAt),
+											})}
+										</span>
+										{s.kind === "gateway" && (
 											<>
-												<span>
-													{t("notifySettings.device.subscribedAt", {
-														when: formatRelative(s.createdAt),
+												{SEP}
+												<span data-testid="push-sub-gateway">
+													{t("notifySettings.device.viaGateway", {
+														host: URL.canParse(s.endpoint)
+															? new URL(s.endpoint).host
+															: s.endpoint,
 													})}
 												</span>
-												{s.kind === "gateway" && (
-													<span data-testid="push-sub-gateway">
-														{t("notifySettings.device.viaGateway", {
-															host: URL.canParse(s.endpoint)
-																? new URL(s.endpoint).host
-																: s.endpoint,
-														})}
-													</span>
-												)}
-												{s.lastError && (
-													<span className="text-err">{s.lastError}</span>
-												)}
 											</>
-										}
-										trailing={
-											<IconButton
-												icon="trash"
-												label={t("notifySettings.device.remove")}
-												disabled={remove.isPending}
-												onClick={() => remove.mutate(s.id)}
-											/>
-										}
-									/>
-								</li>
-							))}
-						</ul>
-					</div>
-				)}
-			</div>
-		</Card>
+										)}
+										{s.lastError && (
+											<>
+												{SEP}
+												<span className="text-err">{s.lastError}</span>
+											</>
+										)}
+									</>
+								}
+								trailing={
+									<Button
+										size="sm"
+										disabled={remove.isPending}
+										onClick={() => remove.mutate(s.id)}
+									>
+										{t("notifySettings.device.remove")}
+									</Button>
+								}
+							/>
+						))}
+					</GroupList>
+				</Group>
+			)}
+		</>
 	);
 }
 
@@ -378,32 +397,38 @@ function DesktopDeviceCard() {
 	const { t } = useTranslation();
 	const [sent, setSent] = useState(false);
 	return (
-		<Card title={t("notifySettings.device.title")} icon="monitor">
-			<p className="mb-3 text-muted text-sm">
-				{t("notifySettings.device.desktopApp")}
-			</p>
-			<div className="flex items-center gap-2">
-				<Button
-					size="sm"
-					onClick={() => {
-						host.notify({
-							id: `test-${Date.now()}`,
-							title: t("notifySettings.device.testTitle"),
-							body: t("notifySettings.device.testBody"),
-							path: "/settings/notifications",
-						});
-						setSent(true);
-					}}
-				>
-					{t("notifySettings.device.testSend")}
-				</Button>
-				{sent && (
-					<span role="status" className="text-faint text-xs">
-						{t("notifySettings.device.testSent")}
-					</span>
-				)}
-			</div>
-		</Card>
+		<Group title={t("notifySettings.device.title")}>
+			<GroupList>
+				<GroupRow
+					icon="monitor"
+					title={t("notifySettings.device.permission")}
+					meta={t("notifySettings.device.desktopApp")}
+					trailing={
+						<>
+							{sent && (
+								<span role="status" className="text-faint text-xs">
+									{t("notifySettings.device.testSent")}
+								</span>
+							)}
+							<Button
+								size="sm"
+								onClick={() => {
+									host.notify({
+										id: `test-${Date.now()}`,
+										title: t("notifySettings.device.testTitle"),
+										body: t("notifySettings.device.testBody"),
+										path: "/settings/notifications",
+									});
+									setSent(true);
+								}}
+							>
+								{t("notifySettings.device.testSend")}
+							</Button>
+						</>
+					}
+				/>
+			</GroupList>
+		</Group>
 	);
 }
 
@@ -431,6 +456,7 @@ function ChannelDialog({
 	const { t, i18n } = useTranslation();
 	const create = useCreateChannel();
 	const update = useUpdateChannel();
+	const configId = useId();
 	const [form, setForm] = useState<FormState>(() => ({
 		name: channel?.name ?? t(`notifySettings.kind.${kind}`),
 		events: channel?.events ?? [...EVENTS],
@@ -509,26 +535,29 @@ function ChannelDialog({
 		>
 			<form
 				id={formId}
-				className="flex flex-col gap-3"
+				className="flex flex-col gap-4"
 				onSubmit={(e) => void submit(e).catch(() => {})}
 			>
-				<Field label={t("notifySettings.name")}>
-					<TextInput
-						required
-						value={form.name}
-						onChange={(e) => setForm({ ...form, name: e.target.value })}
-					/>
-				</Field>
-				<fieldset className="flex flex-col gap-1">
-					<legend className="mb-1 font-medium text-muted text-xs">
+				<FormField label={t("notifySettings.name")}>
+					{(p) => (
+						<TextField
+							{...p}
+							required
+							value={form.name}
+							onChange={(e) => setForm({ ...form, name: e.target.value })}
+						/>
+					)}
+				</FormField>
+				<fieldset className="flex flex-col">
+					<legend className="mb-[7px] font-[550] text-[13px] text-fg">
 						{t("notifySettings.events")}
 					</legend>
-					<div className="flex flex-wrap gap-x-4 gap-y-1.5">
+					<div className="flex flex-wrap gap-x-[18px] gap-y-1.5">
 						{EVENTS.map((ev) => (
 							// biome-ignore lint/a11y/noLabelWithoutControl: 控件是包在里面的 Checkbox（原生 input）
 							<label
 								key={ev}
-								className="inline-flex items-center gap-2 text-sm"
+								className="inline-flex items-center gap-[7px] text-[13.5px]"
 							>
 								<Checkbox
 									checked={form.events.includes(ev)}
@@ -539,74 +568,109 @@ function ChannelDialog({
 						))}
 					</div>
 				</fieldset>
-				<Field
+				<FormField
 					label={t("notifySettings.locale")}
-					hint={t("notifySettings.localeHint")}
+					aside={t("notifySettings.localeHint")}
 				>
-					<Select
-						value={form.locale}
-						onChange={(e) =>
-							setForm({ ...form, locale: e.target.value as Locale })
-						}
-					>
-						{LOCALES.map((l) => (
-							<option key={l} value={l}>
-								{t(`notifySettings.localeName.${l === "en" ? "en" : "zhCN"}`)}
-							</option>
-						))}
-					</Select>
-				</Field>
-				{editing && (
-					<p className="text-faint text-xs">{t("notifySettings.keepConfig")}</p>
-				)}
-				{FIELDS[kind].map((d) => {
-					const label = t(
-						`notifySettings.field.${kind}.${d.key}` as "notifySettings.name",
-					);
-					const value = form.values[d.key] ?? "";
-					const set = (v: string) =>
-						setForm((f) => ({ ...f, values: { ...f.values, [d.key]: v } }));
-					return (
-						<Field
-							key={d.key}
-							label={d.required && !editing ? `${label} *` : label}
-							hint={
-								d.key === "headers"
-									? t("notifySettings.headersHint")
-									: undefined
-							}
-						>
-							{d.multiline ? (
-								<TextArea
-									rows={3}
-									aria-label={label}
-									placeholder={d.placeholder}
-									value={value}
-									onChange={(e) => set(e.target.value)}
-								/>
-							) : (
-								<TextInput
-									aria-label={label}
-									type={d.secret ? "password" : "text"}
-									autoComplete="off"
-									spellCheck={false}
-									placeholder={
-										editing && d.secret
-											? t("notifySettings.unchanged")
-											: d.placeholder
-									}
-									value={value}
-									onChange={(e) => set(e.target.value)}
-								/>
-							)}
-						</Field>
-					);
-				})}
-				{kind === "telegram" && !editing && (
-					<p className="text-faint text-xs">
-						{t("notifySettings.telegramHint")}
-					</p>
-				)}
+					{(p) => (
+						<ComboSelect
+							{...p}
+							value={form.locale}
+							options={LOCALES.map((l) => ({
+								value: l,
+								label: t(
+									`notifySettings.localeName.${l === "en" ? "en" : "zhCN"}`,
+								),
+							}))}
+							onChange={(locale) => setForm({ ...form, locale })}
+						/>
+					)}
+				</FormField>
+				{/* 连接配置：一组，整组替换或整组保持 */}
+				<section
+					aria-labelledby={configId}
+					className="flex flex-col gap-3 rounded-[14px] bg-inset px-3.5 py-3 ring-1 ring-border"
+				>
+					<div className="flex min-h-6 items-center gap-2">
+						<h3 id={configId} className="font-semibold text-[13px] text-fg">
+							{t("notifySettings.config.title")}
+						</h3>
+						{editing && (
+							<span className="text-[12.5px] text-muted">
+								{t("notifySettings.config.hidden")}
+							</span>
+						)}
+						{editing && config !== undefined && (
+							<Button
+								size="sm"
+								variant="ghost"
+								className="ml-auto"
+								onClick={() => setForm((f) => ({ ...f, values: {} }))}
+							>
+								{t("notifySettings.config.reset")}
+							</Button>
+						)}
+					</div>
+					{FIELDS[kind].map((d) => {
+						const value = form.values[d.key] ?? "";
+						const set = (v: string) =>
+							setForm((f) => ({ ...f, values: { ...f.values, [d.key]: v } }));
+						return (
+							<FormField
+								key={d.key}
+								label={t(
+									`notifySettings.field.${kind}.${d.key}` as "notifySettings.name",
+								)}
+								optional={d.required ? undefined : t("notifySettings.optional")}
+								aside={
+									d.key === "headers"
+										? t("notifySettings.headersHint")
+										: d.key === "apiBase"
+											? t("notifySettings.apiBaseHint")
+											: undefined
+								}
+							>
+								{(p) =>
+									d.multiline ? (
+										<TextAreaField
+											{...p}
+											rows={3}
+											placeholder={d.placeholder}
+											value={value}
+											onChange={(e) => set(e.target.value)}
+										/>
+									) : (
+										<TextField
+											{...p}
+											type={d.secret ? "password" : "text"}
+											autoComplete="off"
+											spellCheck={false}
+											placeholder={
+												editing && d.secret
+													? t("notifySettings.unchanged")
+													: d.placeholder
+											}
+											value={value}
+											onChange={(e) => set(e.target.value)}
+										/>
+									)
+								}
+							</FormField>
+						);
+					})}
+					{editing ? (
+						<p className="flex items-center gap-1.5 border-border border-t pt-2.5 text-[12.5px] text-muted">
+							<Icon name="lock" size={13} aria-hidden className="shrink-0" />
+							{t("notifySettings.config.note")}
+						</p>
+					) : (
+						kind === "telegram" && (
+							<p className="border-border border-t pt-2.5 text-[12.5px] text-muted">
+								{t("notifySettings.telegramHint")}
+							</p>
+						)
+					)}
+				</section>
 				<ActionError step="channelSave" error={create.error ?? update.error} />
 			</form>
 		</Dialog>
@@ -682,16 +746,94 @@ function TelegramLinkDialog({
 	);
 }
 
-function channelTone(ch: NotificationChannel) {
-	if (!ch.enabled) return "neutral" as const;
-	return ch.lastError ? ("err" as const) : ("ok" as const);
-}
-
 /** 测试结果：送达 / 渠道投递失败（服务端回传的发送错误）/ 请求本身失败（未绑定、网络等）。 */
 type TestResult =
 	| { ok: true }
 	| { ok: false; delivery: string }
 	| { ok: false; request: unknown };
+
+/**
+ * 出错状态：状态本身是按钮，点开在下方浮出渠道原文与「发送测试」；行高与其它行一致，不铺红字。
+ * Esc 或点外面收起，Esc 时焦点回到状态按钮。
+ */
+function FailureStatus({
+	error,
+	detail,
+	onTest,
+}: {
+	error: string;
+	detail?: string;
+	onTest: () => void;
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const wrapRef = useRef<HTMLSpanElement>(null);
+	const buttonRef = useRef<HTMLButtonElement>(null);
+	const popId = useId();
+	useEffect(() => {
+		if (!open) return;
+		const onDown = (e: MouseEvent) => {
+			if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== "Escape") return;
+			setOpen(false);
+			buttonRef.current?.focus();
+		};
+		document.addEventListener("mousedown", onDown);
+		window.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("mousedown", onDown);
+			window.removeEventListener("keydown", onKey);
+		};
+	}, [open]);
+	return (
+		<span ref={wrapRef} className="relative inline-flex min-w-0">
+			<button
+				ref={buttonRef}
+				type="button"
+				aria-expanded={open}
+				aria-controls={open ? popId : undefined}
+				onClick={() => setOpen((v) => !v)}
+				className="-mx-1.5 -my-0.5 inline-flex min-w-0 items-center gap-1.5 rounded-[7px] px-1.5 py-0.5 text-[12.5px] text-err transition-colors duration-150 hover:bg-err/10 aria-expanded:bg-err/10"
+			>
+				<StatusDot tone="err" />
+				<span className="truncate">{t("notifySettings.state.failed")}</span>
+				<Icon name="chevronDown" size={10} className="shrink-0" />
+			</button>
+			{open && (
+				<Floating
+					id={popId}
+					role="dialog"
+					aria-label={t("notifySettings.state.failed")}
+					side="bottom"
+					align="end"
+					gap={6}
+					className="w-72"
+					bodyClassName="flex flex-col gap-1 p-3"
+				>
+					<code className="break-all font-mono text-[12.5px] text-fg">
+						{error}
+					</code>
+					{detail && <span className="text-muted text-xs">{detail}</span>}
+					<div className="mt-2 flex">
+						<Button
+							size="sm"
+							icon="paperPlane"
+							onClick={() => {
+								setOpen(false);
+								buttonRef.current?.focus();
+								onTest();
+							}}
+						>
+							{t("notifySettings.sendTest")}
+						</Button>
+					</div>
+				</Floating>
+			)}
+		</span>
+	);
+}
 
 function ChannelRow({
 	ch,
@@ -716,117 +858,164 @@ function ChannelRow({
 			setResult({ ok: false, request: e });
 		}
 	};
+	const remove = async () => {
+		if (
+			await confirmAction({
+				title: t("notifySettings.deleteConfirm", { name: ch.name }),
+				body: t("notifySettings.deleteConfirmBody"),
+				action: t("common.delete"),
+				danger: true,
+			})
+		)
+			del.mutate(ch.id);
+	};
 	const tg = ch.telegram;
-	const tone = channelTone(ch);
+	const kindName = t(`notifySettings.kind.${ch.kind}`);
+	const last = ch.lastDelivery;
+	const status = !ch.enabled ? (
+		<StatusText tone="neutral">{t("notifySettings.status.neutral")}</StatusText>
+	) : ch.lastError ? (
+		<FailureStatus
+			error={ch.lastError}
+			detail={
+				last?.status === "pending"
+					? t("notifySettings.state.nextRetry", {
+							when: formatRelative(last.at),
+						})
+					: last && formatDateTime(last.at)
+			}
+			onTest={() => void runTest()}
+		/>
+	) : last?.status === "pending" ? (
+		<StatusText tone="warn">{t("notifySettings.state.pending")}</StatusText>
+	) : last?.status === "sent" ? (
+		<StatusText tone="ok">
+			{t("notifySettings.state.sent", { when: formatRelative(last.at) })}
+		</StatusText>
+	) : (
+		<StatusText tone="ok">{t("notifySettings.status.ok")}</StatusText>
+	);
+	const failure = update.error ?? del.error;
 	return (
-		<li>
-			<ListRow
-				leading={<LeadIcon name={CHANNEL_ICON[ch.kind]} />}
-				title={
-					<>
-						<StatusDot tone={tone} label={t(`notifySettings.status.${tone}`)} />
-						<span className="truncate font-medium">{ch.name}</span>
-						{/* 名称就是渠道类型时不再重复 */}
-						{ch.name !== t(`notifySettings.kind.${ch.kind}`) && (
-							<Badge>{t(`notifySettings.kind.${ch.kind}`)}</Badge>
-						)}
-					</>
-				}
-				meta={
-					<>
-						<span className="truncate font-mono">{ch.summary}</span>
-						{tg &&
-							(tg.linked ? (
-								<span>
-									{t("notifySettings.linkedTo", { chat: tg.chatTitle ?? "" })}
-								</span>
-							) : (
-								<button
-									type="button"
-									className="text-accent-ink underline-offset-2 hover:underline"
-									onClick={onLink}
-								>
-									{t("notifySettings.linkNow")}
-								</button>
-							))}
-						{ch.lastError && <span className="text-err">{ch.lastError}</span>}
-					</>
-				}
-				trailing={
-					<>
-						<Toggle
-							checked={ch.enabled}
-							disabled={update.isPending}
-							onChange={(v) =>
-								update.mutate({ id: ch.id, patch: { enabled: v } })
-							}
-							label={
-								<span className="sr-only">{t("notifySettings.enabled")}</span>
-							}
-						/>
+		<GroupRow
+			icon={CHANNEL_ICON[ch.kind]}
+			title={
+				<>
+					<span className="truncate">{ch.name}</span>
+					{/* 名称就是渠道类型时不再重复 */}
+					{ch.name !== kindName && (
+						<span className="shrink-0 font-medium text-faint text-xs">
+							{kindName}
+						</span>
+					)}
+				</>
+			}
+			meta={
+				<>
+					<span className="truncate font-mono text-xs">{ch.summary}</span>
+					{tg && SEP}
+					{tg &&
+						(tg.linked ? (
+							<span>
+								{t("notifySettings.linkedTo", { chat: tg.chatTitle ?? "" })}
+							</span>
+						) : (
+							<button
+								type="button"
+								className="text-accent-ink underline-offset-2 hover:underline"
+								onClick={onLink}
+							>
+								{t("notifySettings.linkNow")}
+							</button>
+						))}
+				</>
+			}
+			trailing={
+				<>
+					<Reveal>
 						<Button
 							size="sm"
-							variant="ghost"
 							disabled={test.isPending}
 							onClick={() => void runTest()}
 						>
 							{t("notifySettings.test")}
 						</Button>
-						<IconButton
-							icon="edit"
-							box="sm"
-							label={t("common.edit")}
-							onClick={onEdit}
-						/>
-						<IconButton
-							icon="trash"
-							box="sm"
-							label={t("common.delete")}
-							disabled={del.isPending}
-							onClick={async () => {
-								if (
-									await confirmAction({
-										title: t("notifySettings.deleteConfirm", { name: ch.name }),
-										body: t("notifySettings.deleteConfirmBody"),
-										action: t("common.delete"),
-										danger: true,
-									})
-								)
-									del.mutate(ch.id);
-							}}
-						/>
-					</>
-				}
-			/>
-			{(result || test.isPending) && (
-				<div className="pb-1.5 pl-[3.25rem]">
-					{test.isPending || result?.ok ? (
-						<p
-							role="status"
-							className={`flex items-center gap-1.5 text-xs ${test.isPending ? "text-muted" : "text-ok-ink"}`}
-						>
-							{test.isPending ? (
-								<Spinner size={11} />
-							) : (
-								<Icon name="checkCircle" size={12} />
-							)}
-							{test.isPending
-								? t("notifySettings.testing")
-								: t("notifySettings.testOk")}
-						</p>
-					) : result && "delivery" in result ? (
-						<DeliveryFailure message={result.delivery} />
-					) : (
-						<ActionError
-							step="channelTest"
-							error={result && "request" in result ? result.request : null}
-							compact
-						/>
-					)}
-				</div>
+					</Reveal>
+					<StatusCell>{status}</StatusCell>
+					<Menu
+						trigger={(p) => (
+							<IconButton
+								icon="more"
+								box="sm"
+								label={t("notifySettings.more")}
+								{...p}
+							/>
+						)}
+						items={[
+							{
+								key: "edit",
+								icon: "edit",
+								label: t("common.edit"),
+								onSelect: onEdit,
+							},
+							{
+								key: "test",
+								icon: "paperPlane",
+								label: t("notifySettings.sendTest"),
+								disabled: test.isPending,
+								onSelect: () => void runTest(),
+							},
+							{
+								key: "delete",
+								icon: "trash",
+								label: t("common.delete"),
+								danger: true,
+								disabled: del.isPending,
+								onSelect: () => void remove(),
+							},
+						]}
+					/>
+					<Switch
+						checked={ch.enabled}
+						disabled={update.isPending}
+						onChange={(v) =>
+							update.mutate({ id: ch.id, patch: { enabled: v } })
+						}
+						label={t("notifySettings.enabled")}
+					/>
+				</>
+			}
+		>
+			{(result || test.isPending || failure) && (
+				<>
+					{(result || test.isPending) &&
+						(test.isPending || result?.ok ? (
+							<p
+								role="status"
+								className={`flex items-center gap-1.5 text-xs ${test.isPending ? "text-muted" : "text-ok-ink"}`}
+							>
+								{test.isPending ? (
+									<Spinner size={11} />
+								) : (
+									<Icon name="checkCircle" size={12} />
+								)}
+								{test.isPending
+									? t("notifySettings.testing")
+									: t("notifySettings.testOk")}
+							</p>
+						) : result && "delivery" in result ? (
+							<DeliveryFailure message={result.delivery} />
+						) : (
+							<ActionError
+								step="channelTest"
+								error={result && "request" in result ? result.request : null}
+								compact
+							/>
+						))}
+					<ErrorText error={failure} />
+				</>
 			)}
-			<ErrorText error={update.error ?? del.error} />
-		</li>
+		</GroupRow>
 	);
 }
 
@@ -842,13 +1031,12 @@ function ChannelsCard() {
 	const list = channels.data?.channels ?? [];
 	const hasTelegram = list.some((c) => c.kind === "telegram");
 	return (
-		<Card
+		<Group
 			title={t("notifySettings.channels")}
-			icon="bell"
 			action={
 				<Menu
 					trigger={(p) => (
-						<Button size="sm" variant="ghost" icon="plus" {...p}>
+						<Button size="sm" icon="plus" {...p}>
 							{t("notifySettings.add")}
 							<Icon name="chevronDown" size={11} className="text-faint" />
 						</Button>
@@ -870,18 +1058,22 @@ function ChannelsCard() {
 			{channels.isPending && <Spinner />}
 			<ErrorText error={channels.error} />
 			{channels.data && list.length === 0 && (
-				<p className="text-faint text-sm">{t("notifySettings.noChannels")}</p>
+				<p className="px-1.5 text-faint text-sm">
+					{t("notifySettings.noChannels")}
+				</p>
 			)}
-			<ul className="-mx-2 flex flex-col">
-				{list.map((ch) => (
-					<ChannelRow
-						key={ch.id}
-						ch={ch}
-						onEdit={() => setEditor({ mode: "edit", channel: ch })}
-						onLink={() => setEditor({ mode: "link", channelId: ch.id })}
-					/>
-				))}
-			</ul>
+			{list.length > 0 && (
+				<GroupList>
+					{list.map((ch) => (
+						<ChannelRow
+							key={ch.id}
+							ch={ch}
+							onEdit={() => setEditor({ mode: "edit", channel: ch })}
+							onLink={() => setEditor({ mode: "link", channelId: ch.id })}
+						/>
+					))}
+				</GroupList>
+			)}
 			{editor?.mode === "create" && (
 				<ChannelDialog
 					kind={editor.kind}
@@ -909,7 +1101,7 @@ function ChannelsCard() {
 					onClose={() => setEditor(null)}
 				/>
 			)}
-		</Card>
+		</Group>
 	);
 }
 
@@ -926,68 +1118,70 @@ function RecentCard() {
 	const recent = useRecentNotifications(20);
 	const list = recent.data?.notifications ?? [];
 	return (
-		<Card title={t("notifySettings.recent")} icon="clock">
+		<Group title={t("notifySettings.recent")}>
 			{recent.isPending && <Spinner />}
 			<ErrorText error={recent.error} />
 			{recent.data && list.length === 0 && (
-				<p className="text-faint text-sm">{t("notify.empty")}</p>
+				<p className="px-1.5 text-faint text-sm">{t("notify.empty")}</p>
 			)}
-			<ul className="flex flex-col divide-y divide-border">
-				{list.map((n) => {
-					const kind = kindIcon(n.kind);
-					return (
-						<li
+			{list.length > 0 && (
+				<GroupList>
+					{list.map((n) => (
+						<GroupRow
 							key={n.id}
-							className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0"
-						>
-							<div className="flex min-w-0 items-center gap-2 text-sm">
-								<Icon
-									name={kind.icon}
-									size={14}
-									className={`shrink-0 ${kind.className}`}
-									aria-label={t(`notify.kind.${n.kind}`)}
-								/>
-								<span className="min-w-0 flex-1 truncate">
-									{n.title || t("notify.untitled")}
-								</span>
-								<span className="shrink-0 text-faint text-xs tabular-nums">
+							icon={kindIcon(n.kind).icon}
+							title={
+								<>
+									<span className="sr-only">{t(`notify.kind.${n.kind}`)} </span>
+									<span className="truncate">
+										{n.title || t("notify.untitled")}
+									</span>
+								</>
+							}
+							meta={
+								n.deliveries.length > 0 && (
+									<ul className="flex min-w-0 flex-col gap-0.5">
+										{n.deliveries.map((d, i) => (
+											<li
+												// biome-ignore lint/suspicious/noArrayIndexKey: 投递没有 id（同一订阅可有多条推送），列表只读、不重排
+												key={`${d.target}-${d.channelId ?? ""}-${i}`}
+												className={`flex min-w-0 flex-wrap items-baseline gap-x-1.5 ${DELIVERY_TONE[d.status]}`}
+											>
+												<span className="font-medium">
+													{d.channelName ??
+														t(`notifySettings.target.${d.target}`)}
+												</span>
+												<span>
+													{t(`notifySettings.delivery.${d.status}`, {
+														n: d.attempts,
+														when: formatRelative(d.at),
+													})}
+												</span>
+												{d.error && (
+													<span className="break-all">{d.error}</span>
+												)}
+											</li>
+										))}
+									</ul>
+								)
+							}
+							trailing={
+								<span className="text-faint text-xs tabular-nums">
 									{formatRelative(n.createdAt)}
 								</span>
-							</div>
-							{n.deliveries.length > 0 && (
-								<ul className="flex flex-col gap-0.5 pl-6 text-xs">
-									{n.deliveries.map((d, i) => (
-										<li
-											// biome-ignore lint/suspicious/noArrayIndexKey: 投递没有 id（同一订阅可有多条推送），列表只读、不重排
-											key={`${d.target}-${d.channelId ?? ""}-${i}`}
-											className={`flex min-w-0 flex-wrap items-baseline gap-x-1.5 ${DELIVERY_TONE[d.status]}`}
-										>
-											<span className="font-medium">
-												{d.channelName ??
-													t(`notifySettings.target.${d.target}`)}
-											</span>
-											<span>
-												{t(`notifySettings.delivery.${d.status}`, {
-													n: d.attempts,
-													when: formatRelative(d.at),
-												})}
-											</span>
-											{d.error && <span className="break-all">{d.error}</span>}
-										</li>
-									))}
-								</ul>
-							)}
-						</li>
-					);
-				})}
-			</ul>
-		</Card>
+							}
+						/>
+					))}
+				</GroupList>
+			)}
+		</Group>
 	);
 }
 
 export default function NotificationsSettings(): ReactNode {
 	return (
-		<>
+		// 分组间 30（G3）：分组标题小而淡，靠留白分层
+		<div className="flex flex-col gap-[30px]">
 			{host.mobile ? (
 				<MobilePushCard />
 			) : host.desktop ? (
@@ -997,6 +1191,6 @@ export default function NotificationsSettings(): ReactNode {
 			)}
 			<ChannelsCard />
 			<RecentCard />
-		</>
+		</div>
 	);
 }
