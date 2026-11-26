@@ -369,7 +369,7 @@ func (g *Guest) serveConn(rw io.ReadWriter) {
 }
 
 // orbdEnv 是 orbd 的环境：镜像环境，加 HOME、ORYN_URL、ORYN_ORB_ID、ORYN_ORB=1、ORYN_FC=1，caPem 非空时
-// ORYN_ORB_CA_PEM。令牌不进环境（orbd 每次拨号前读令牌文件）。
+// ORYN_ORB_CA_PEM；Agent 沙箱（M30）另加 ORYN_SANDBOX=1 与 ORYN_LINK_VIA。令牌不进环境（orbd 每次拨号前读令牌文件）。
 func orbdEnv(image []string, req fcguest.Request) []string {
 	var keys []string
 	vals := map[string]string{}
@@ -394,6 +394,12 @@ func orbdEnv(image []string, req fcguest.Request) []string {
 	set("ORYN_FC", "1")
 	if strings.TrimSpace(req.CAPEM) != "" {
 		set("ORYN_ORB_CA_PEM", req.CAPEM)
+	}
+	if req.Sandbox {
+		set("ORYN_SANDBOX", "1")
+	}
+	if req.LinkVia != "" {
+		set("ORYN_LINK_VIA", req.LinkVia)
 	}
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {

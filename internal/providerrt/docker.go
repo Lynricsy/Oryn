@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -50,6 +51,8 @@ type Docker struct {
 	orbDiskValid bool
 	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_docker.go）。
 	offline indexCache
+	// relays 是各沙箱的 link 中继（M30）：<socket_dir>/<orbId>/link.sock → ORYN_URL 的 host:port。
+	relays relaySet
 }
 
 // NewDocker 创建 docker 驱动。
@@ -62,9 +65,13 @@ func NewDocker(cfg config.Docker) *Docker {
 
 // Info 实现 Driver。
 func (d *Docker) Info() Info {
+	caps := apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)}
+	if d.Cfg.Sandbox.Enabled {
+		caps.Sandbox = new(true)
+	}
 	return Info{
 		Driver:       apigen.Docker,
-		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)},
+		Capabilities: caps,
 		Types:        typeInfos(d.Cfg.Types),
 		DefaultType:  d.Cfg.DefaultType,
 		BaseImageID:  d.baseImageID(),
@@ -135,6 +142,14 @@ func (d *Docker) Preflight(ctx context.Context) error {
 			slog.Warn("docker.extra_run_args 挂载了宿主的 docker.sock：orb 内的 agent 可借此控制宿主 Docker（等同宿主 root），不受支持；见 docs/deploy.md", "arg", a)
 		}
 	}
+	if s := d.Cfg.Sandbox; s.Enabled {
+		if err := d.exec(ctx, io.Discard, io.Discard, nil, "network", "inspect", s.Network); err != nil {
+			return fmt.Errorf("docker: 沙箱网络 %q 不可用（先运行 deploy/docker/oryn-sbx-net.sh up）: %w", s.Network, err)
+		}
+		if err := os.MkdirAll(d.sandboxSocketDir(), 0o700); err != nil {
+			return fmt.Errorf("docker: 建沙箱中继目录: %w", err)
+		}
+	}
 	need := map[string][]string{}
 	for name, t := range d.Cfg.Types {
 		if t.Runtime != "" {
@@ -199,11 +214,18 @@ func (d *Docker) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobRes
 		}
 		return d.snapshotResult(ctx, j.SnapshotID, out), nil
 	case "delete":
-		err := d.run(ctx, out, nil, "rm", "-f", j.OrbID)
-		if isNoSuch(err) {
-			return nil, nil
+		if err := d.run(ctx, out, nil, "rm", "-f", j.OrbID); err != nil && !isNoSuch(err) {
+			return nil, err
 		}
-		return nil, err
+		if j.OrbID != "" {
+			d.relays.drop(j.OrbID)
+			if err := os.RemoveAll(filepath.Join(d.sandboxSocketDir(), j.OrbID)); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	case "set_network":
+		return nil, d.setNetwork(ctx, j, out)
 	case "delete_snapshot":
 		err := d.run(ctx, out, nil, "rmi", j.SnapshotID)
 		if isNoSuch(err) {
@@ -345,6 +367,21 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 		}
 		return &apigen.JobResult{SnapshotUsed: &used}
 	}
+	sb := p.Sandbox
+	sandboxTarget := ""
+	if sb != nil {
+		if !d.Cfg.Sandbox.Enabled {
+			return nil, errors.New("docker: sandbox is not enabled on this provider")
+		}
+		if snap != "" {
+			return nil, errors.New("docker: 沙箱不能从快照创建")
+		}
+		// 先于容器状态建好中继：已有容器的 orbd 也要能经它重连（provider 重启后 Housekeep 同样重建）。
+		var err error
+		if sandboxTarget, err = d.ensureSandboxRelay(j.OrbID, p.Env.OrynURL); err != nil {
+			return nil, err
+		}
+	}
 	status, exists, err := d.status(ctx, j.OrbID, out)
 	if err != nil {
 		return nil, err
@@ -389,7 +426,7 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 		typ = d.Cfg.Types[d.Cfg.DefaultType]
 	}
 	image := d.Cfg.Image
-	if p.Image != "" {
+	if p.Image != "" && sb == nil {
 		image = p.Image
 	}
 	used := false
@@ -407,19 +444,38 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 		}
 	}
 	args := []string{"create", "--init",
-		"--name", j.OrbID, "--hostname", j.OrbID, "--label", "oryn-orb=1",
-		"--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64), "--memory", typ.Memory}
+		"--name", j.OrbID, "--hostname", j.OrbID, "--label", "oryn-orb=1"}
+	if sb != nil {
+		args = append(args, "--label", "oryn-sandbox="+string(sb.Network), "--label", "oryn-sandbox-link="+sandboxTarget)
+	}
+	args = append(args, "--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64), "--memory", typ.Memory)
 	if d.Cfg.PidsLimit > 0 {
 		// 所有类型都限制进程数（S-P2-6）：sysbox 宿主调高了 kernel.pid_max，fork 炸弹的上限随之放大。
 		args = append(args, "--pids-limit", strconv.Itoa(d.Cfg.PidsLimit))
 	}
-	args = append(args, "--shm-size", "1g", "--add-host", "host.docker.internal:host-gateway")
+	args = append(args, "--shm-size", "1g")
+	if sb == nil {
+		// 沙箱不加：它的 link 经中继，不需要访问宿主。
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
+	}
 	if !typ.NestedDocker {
 		// agent 在容器内有 root（免密 sudo）：去掉原始套接字与网络配置能力（防 ARP 欺骗 / 改路由），
 		// 网络隔离另见 docs/deploy.md「安全」一节。
 		// 嵌套 Docker 的类型保留这两项：内层 dockerd 要建网桥、写 iptables；sysbox 下它们只作用于容器自己的
 		// 网络命名空间，宿主须按 docs/deploy.md 建隔离网桥。
 		args = append(args, "--cap-drop", "NET_RAW", "--cap-drop", "NET_ADMIN")
+	}
+	if sb != nil {
+		// none：没有网卡；egress：只接入沙箱专用网络（隔离规则见 deploy/docker/oryn-sbx-net.sh）。
+		if sb.Network == apigen.SandboxNetworkNone {
+			args = append(args, "--network", "none")
+		} else {
+			args = append(args, "--network", d.Cfg.Sandbox.Network)
+			for _, ip := range d.Cfg.Sandbox.DNS {
+				args = append(args, "--dns", ip)
+			}
+		}
+		args = append(args, "-v", filepath.Join(d.sandboxSocketDir(), j.OrbID)+":"+sandboxLinkMount+":ro")
 	}
 	args = append(args, "-e", "ORYN_URL", "-e", "ORYN_ORB_ID", "-e", "ORYN_ORB_TOKEN")
 	// 令牌与 CA 经环境变量传给 docker CLI（`-e NAME` 取调用方环境），不出现在 argv 中。
@@ -432,10 +488,15 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 		args = append(args, "-e", "ORYN_NESTED_DOCKER")
 		env = append(env, "ORYN_NESTED_DOCKER=1")
 	}
+	if sb != nil {
+		args = append(args, "-e", "ORYN_SANDBOX", "-e", "ORYN_LINK_VIA")
+		env = append(env, "ORYN_SANDBOX=1", "ORYN_LINK_VIA=unix:"+sandboxLinkMount+"/link.sock")
+	}
 	if typ.Runtime != "" {
 		args = append(args, "--runtime", typ.Runtime)
 	}
-	if !hasSeccompOpt(d.Cfg.ExtraRunArgs) {
+	// 沙箱恒用内置 profile、不追加 extra_run_args（那是给 orb 的，可能带 --network 等）。
+	if sb != nil || !hasSeccompOpt(d.Cfg.ExtraRunArgs) {
 		// docker CLI 在客户端读取 profile 文件并内联发给守护进程，create 返回后即可删除。
 		f, err := writeSeccompProfile()
 		if err != nil {
@@ -444,7 +505,9 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 		defer os.Remove(f)
 		args = append(args, "--security-opt", "seccomp="+f)
 	}
-	args = append(args, d.Cfg.ExtraRunArgs...)
+	if sb == nil {
+		args = append(args, d.Cfg.ExtraRunArgs...)
+	}
 	args = append(args, image, "orbd", "run")
 	if err := d.run(ctx, out, env, args...); err != nil {
 		return nil, err

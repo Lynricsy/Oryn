@@ -244,6 +244,22 @@ func (h *osHost) TapDown(vm vmMeta) error {
 	return run(ctx, "ip", "link", "del", vm.Tap)
 }
 
+// TapLink 实现 fcHost：ip link set dev <tap> up|down。
+func (h *osHost) TapLink(vm vmMeta, up bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	state := "down"
+	if up {
+		state = "up"
+	}
+	return run(ctx, "ip", "link", "set", "dev", vm.Tap, state)
+}
+
+// LinkListen 实现 fcHost：jail 里的 v.sock_<LinkPort>，0600、属主为槽位 uid（jail 里的 firecracker 以它运行、要能连）。
+func (h *osHost) LinkListen(vm vmMeta) (net.Listener, error) {
+	return unixsock.Listen(h.paths.linkSock(vm.OrbID), 0o600, vm.UID)
+}
+
 // MakeDisk 实现 fcHost：truncate 出稀疏文件，mke2fs 成 ext4（卷标 oryn-data）。
 func (h *osHost) MakeDisk(path string, gb int, uid int) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)

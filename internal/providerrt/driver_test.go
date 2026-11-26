@@ -33,6 +33,7 @@ case "$1 $2" in
   st=$(cat "$FAKE_DOCKER_DIR/state")
   if [ "$st" = missing ]; then echo "Error: No such container: $5" >&2; exit 1; fi
   case "$4" in
+  *oryn-sandbox*) cat "$FAKE_DOCKER_DIR/sandbox-inspect";;
   *Runtime*) echo "$(cat "$FAKE_DOCKER_DIR/runtime" 2>/dev/null || echo runc) $st";;
   *Config.Image*) cat "$FAKE_DOCKER_DIR/config.image";;
   *) echo "$st";;
@@ -50,12 +51,13 @@ case "$1 $2" in
   echo "Error: No such image: $5" >&2; exit 1;;
 esac
 if [ "$1" = info ]; then cat "$FAKE_DOCKER_DIR/runtimes" 2>/dev/null; exit 0; fi
+if [ "$1" = ps ]; then cat "$FAKE_DOCKER_DIR/ps" 2>/dev/null; exit 0; fi
 if [ "$1" = commit ]; then
   mkdir -p "$FAKE_DOCKER_DIR/images"
   printf 'sha256:snap\n%s\n' "$(cat "$FAKE_DOCKER_DIR/commit.size" 2>/dev/null || echo 100)" > "$FAKE_DOCKER_DIR/images/$last"
 fi
 if [ "$1" = create ]; then
-  echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN${ORYN_NESTED_DOCKER:+ nested=$ORYN_NESTED_DOCKER}" >> "$FAKE_DOCKER_DIR/log"
+  echo "ENV $ORYN_URL $ORYN_ORB_ID $ORYN_ORB_TOKEN${ORYN_NESTED_DOCKER:+ nested=$ORYN_NESTED_DOCKER}${ORYN_SANDBOX:+ sandbox=$ORYN_SANDBOX}${ORYN_LINK_VIA:+ via=$ORYN_LINK_VIA}" >> "$FAKE_DOCKER_DIR/log"
   if [ -n "${ORYN_ORB_CA_PEM+x}" ]; then printf '%s' "$ORYN_ORB_CA_PEM" > "$FAKE_DOCKER_DIR/ca.pem"; fi
   for a in "$@"; do case "$a" in seccomp=*) cp "${a#seccomp=}" "$FAKE_DOCKER_DIR/seccomp.json"; echo "${a#seccomp=}" > "$FAKE_DOCKER_DIR/seccomp.path";; esac; done
   echo cid
@@ -85,7 +87,7 @@ func newFakeDocker(t *testing.T) *fakeDockerEnv {
 func (f *fakeDockerEnv) set(t *testing.T, state string, image bool) {
 	require.NoError(t, os.WriteFile(filepath.Join(f.dir, "state"), []byte(state), 0o644))
 	for _, n := range []string{"log", "image", "tokenfile.tar", "cpin.tar", "stdin", "seccomp.json", "seccomp.path", "images", "runtimes", "commit.size",
-		"runtime", "config.image", "ca.pem", "fail.commit", "fail.stop", "fail.start", "fail.unpause"} {
+		"runtime", "config.image", "ca.pem", "fail.commit", "fail.stop", "fail.start", "fail.unpause", "sandbox-inspect", "ps", "fail.network"} {
 		_ = os.RemoveAll(filepath.Join(f.dir, n))
 	}
 	if image {
@@ -751,6 +753,17 @@ func TestParseJob(t *testing.T) {
 	j, err = ParseJob(apigen.ProviderJob{ID: "job_1", Op: apigen.DeleteSnapshot, Params: map[string]any{"snapshotId": "oryn-snap-1"}})
 	require.NoError(t, err)
 	assert.Equal(t, "oryn-snap-1", j.SnapshotID)
+
+	// M30：set_network 解出 network；取值只有 none / egress，orbId 必填。
+	j, err = ParseJob(apigen.ProviderJob{ID: "job_1", Op: apigen.SetNetwork, OrbID: "orb-1", Params: map[string]any{"network": "egress"}})
+	require.NoError(t, err)
+	assert.Equal(t, Job{ID: "job_1", Op: "set_network", OrbID: "orb-1", Network: "egress"}, j)
+	_, err = ParseJob(apigen.ProviderJob{ID: "job_1", Op: apigen.SetNetwork, OrbID: "orb-1", Params: map[string]any{"network": "host"}})
+	assert.ErrorContains(t, err, "无效")
+	_, err = ParseJob(apigen.ProviderJob{ID: "job_1", Op: apigen.SetNetwork, OrbID: "orb-1", Params: map[string]any{}})
+	assert.Error(t, err)
+	_, err = ParseJob(apigen.ProviderJob{ID: "job_1", Op: apigen.SetNetwork, Params: map[string]any{"network": "none"}})
+	assert.ErrorContains(t, err, "orbId")
 }
 
 // CP16：任务超时时整个进程组被终止，且不会因后代进程占着输出管道而挂住 worker。

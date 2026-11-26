@@ -21,6 +21,7 @@ import (
 // freeze = SIGSTOP / SIGCONT，stop = SIGTERM，snapshot = 复制 HOME 目录。
 //
 // 目录布局：<Root>/orbs/<orbId>/home、<Root>/orbs/<orbId>/orbd.log、<Root>/snapshots/<snapshotId>。
+// Agent 沙箱（M30）另有 <Root>/orbs/<orbId>/link/link.sock（link 中继）、created-network 与 network（当前网络模式，只是记录）。
 type Process struct {
 	Root    string
 	OrbdBin string
@@ -29,8 +30,9 @@ type Process struct {
 	// StopTimeout 是 SIGTERM 后等待退出的时长，超时 SIGKILL。
 	StopTimeout time.Duration
 
-	mu    sync.Mutex
-	procs map[string]*orbProc
+	mu     sync.Mutex
+	procs  map[string]*orbProc
+	relays relaySet
 }
 
 type orbProc struct {
@@ -69,7 +71,7 @@ func NewProcess(root, orbdBin string, dc config.Docker) *Process {
 func (p *Process) Info() Info {
 	return Info{
 		Driver:       apigen.Process,
-		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true},
+		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true, Sandbox: new(true)},
 		Types:        typeInfos(p.Types),
 		DefaultType:  p.Default,
 		BaseImageID:  "process",
@@ -81,6 +83,8 @@ func (p *Process) Info() Info {
 func (p *Process) HomeDir(orbID string) string { return filepath.Join(p.Root, "orbs", orbID, "home") }
 
 func (p *Process) snapshotDir(id string) string { return filepath.Join(p.Root, "snapshots", id) }
+
+func (p *Process) orbDir(orbID string) string { return filepath.Join(p.Root, "orbs", orbID) }
 
 // Exec 实现 Driver。
 func (p *Process) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobResult, error) {
@@ -109,7 +113,10 @@ func (p *Process) Exec(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 		return &apigen.JobResult{SnapshotBytes: &n}, nil
 	case "delete":
 		p.kill(j.OrbID)
-		return nil, os.RemoveAll(filepath.Join(p.Root, "orbs", j.OrbID))
+		p.relays.drop(j.OrbID)
+		return nil, os.RemoveAll(p.orbDir(j.OrbID))
+	case "set_network":
+		return nil, p.setNetwork(j)
 	case "delete_snapshot":
 		return nil, os.RemoveAll(p.snapshotDir(j.SnapshotID))
 	}
@@ -216,6 +223,13 @@ func (p *Process) spawn(j Job, out io.Writer) (*apigen.JobResult, error) {
 	if err := writeTokenFile(home, j.Spawn.Env.OrynOrbToken); err != nil {
 		return nil, err
 	}
+	var sandboxEnv []string
+	if sb := j.Spawn.Sandbox; sb != nil {
+		var err error
+		if sandboxEnv, err = p.prepareSandbox(j.OrbID, string(sb.Network), j.Spawn.Env.OrynURL); err != nil {
+			return nil, err
+		}
+	}
 	logf, err := os.OpenFile(filepath.Join(filepath.Dir(home), "orbd.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
@@ -231,6 +245,7 @@ func (p *Process) spawn(j Job, out io.Writer) (*apigen.JobResult, error) {
 	if c := j.Spawn.OrbCaPem; c != nil && *c != "" {
 		cmd.Env = append(cmd.Env, "ORYN_ORB_CA_PEM="+*c)
 	}
+	cmd.Env = append(cmd.Env, sandboxEnv...)
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	if err := cmd.Start(); err != nil {
@@ -246,6 +261,49 @@ func (p *Process) spawn(j Job, out io.Writer) (*apigen.JobResult, error) {
 	p.procs[j.OrbID] = pr
 	fmt.Fprintf(out, "started pid %d\n", cmd.Process.Pid)
 	return result(), nil
+}
+
+// prepareSandbox 为沙箱建 link 中继（已有转发到同一目标的中继则沿用），首次启动时记下创建时的网络模式；
+// 返回给 orbd 的额外环境变量。
+func (p *Process) prepareSandbox(orbID, network, orynURL string) ([]string, error) {
+	target, err := relayTarget(orynURL)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(p.orbDir(orbID), "link")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	sock := filepath.Join(dir, "link.sock")
+	if !p.relays.has(orbID, target) {
+		if err := p.relays.listen(orbID, sock, 0o600, -1, target); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range []string{"created-network", "network"} {
+		f := filepath.Join(p.orbDir(orbID), name)
+		if _, err := os.Stat(f); errors.Is(err, fs.ErrNotExist) {
+			if err := os.WriteFile(f, []byte(network), 0o644); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []string{"ORYN_SANDBOX=1", "ORYN_LINK_VIA=unix:" + sock}, nil
+}
+
+// setNetwork 实现 set_network：process 驱动没有真实网络，只改写 network 文件（供测试断言）。
+func (p *Process) setNetwork(j Job) error {
+	b, err := os.ReadFile(filepath.Join(p.orbDir(j.OrbID), "created-network"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("process: orb %s 不是沙箱", j.OrbID)
+	}
+	if err != nil {
+		return err
+	}
+	if string(b) == "none" && j.Network == "egress" {
+		return fmt.Errorf("network_unavailable: sandbox %s was created without a network", j.OrbID)
+	}
+	return os.WriteFile(filepath.Join(p.orbDir(j.OrbID), "network"), []byte(j.Network), 0o644)
 }
 
 // writeTokenFile 原子写入 <home>/.oryn/orb-token（0600）。
@@ -322,6 +380,7 @@ func (p *Process) Close() {
 	for _, id := range ids {
 		p.kill(id)
 	}
+	p.relays.closeAll()
 }
 
 // copyTree 递归复制目录（保留权限与符号链接）。

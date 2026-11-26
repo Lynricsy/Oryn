@@ -43,6 +43,8 @@ type Job struct {
 	PauseMode string
 	// SnapshotID 用于 snapshot / delete_snapshot。
 	SnapshotID string
+	// Network 仅 op=set_network 时有值（none | egress，M30）。
+	Network string
 }
 
 // Driver 执行任务。实现必须幂等；out 收集输出（只保留尾部上报）。
@@ -63,6 +65,7 @@ type Preflighter interface {
 type OrbDiskSizer interface {
 	OrbDiskUsage(ctx context.Context) (totalBytes int64, byOrb map[string]int64, ok bool)
 }
+
 // ParseJob 把协议任务按 op 解析为 Job。
 func ParseJob(pj apigen.ProviderJob) (Job, error) {
 	j := Job{ID: pj.ID, Op: string(pj.Op), OrbID: pj.OrbID, Attempt: pj.Attempt}
@@ -95,6 +98,15 @@ func ParseJob(pj apigen.ProviderJob) (Job, error) {
 			return j, fmt.Errorf("%s: snapshotId 必填", pj.Op)
 		}
 		j.SnapshotID = p.SnapshotID
+	case apigen.SetNetwork:
+		var p apigen.JobNetworkParams
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return j, fmt.Errorf("set_network params: %w", err)
+		}
+		if p.Network != apigen.SandboxNetworkNone && p.Network != apigen.SandboxNetworkEgress {
+			return j, fmt.Errorf("set_network network %q 无效", p.Network)
+		}
+		j.Network = string(p.Network)
 	case apigen.Delete:
 	default:
 		return j, fmt.Errorf("未知 op %q", pj.Op)

@@ -20,6 +20,10 @@ import (
 // Port 是 guest 内 orbd guest-init 监听的 vsock 端口。
 const Port uint32 = 5005
 
+// LinkPort 是 Agent 沙箱（M30）的 link 中继端口：guest 内 orbd 连 vsock CID 2 的这个端口，
+// Firecracker 把它转到 jail 里的 v.sock_<LinkPort>，由 provider 转发到控制面。
+const LinkPort uint32 = 5006
+
 // MaxLine 是每个方向一行 JSON 的上限（不含结尾换行）。
 const MaxLine = 64 << 10
 
@@ -44,6 +48,8 @@ type Request struct {
 	NowMs        int64    `json:"nowMs,omitempty"`        // start / token：宿主时间，guest 据此对时
 	CAPEM        string   `json:"caPem,omitempty"`        // start：orb link 的 TLS CA（PEM，可空）；guest 原样作为 ORYN_ORB_CA_PEM 交给 orbd
 	GraceSeconds int      `json:"graceSeconds,omitempty"` // shutdown
+	Sandbox      bool     `json:"sandbox,omitempty"`      // start：以精简模式（ORYN_SANDBOX=1）拉起 orbd（M30）
+	LinkVia      string   `json:"linkVia,omitempty"`      // start：orbd 的 ORYN_LINK_VIA（如 vsock:5006，M30）
 }
 
 // Response 是 guest 的一行应答。

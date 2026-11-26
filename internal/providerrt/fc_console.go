@@ -38,8 +38,11 @@ type Housekeeper interface {
 	Housekeep(ctx context.Context)
 }
 
-// Housekeep 实现 Housekeeper：立即检查一次串口日志，之后每 FCConsoleTrimEvery 一次，直到 ctx 结束。
+// Housekeep 实现 Housekeeper：先为在运行的沙箱重建 link 中继，然后立即检查一次串口日志，之后每 FCConsoleTrimEvery 一次，
+// 直到 ctx 结束（结束时关闭全部中继）。
 func (d *FirecrackerDriver) Housekeep(ctx context.Context) {
+	d.restoreRelays()
+	defer d.relays.closeAll()
 	t := time.NewTicker(FCConsoleTrimEvery)
 	defer t.Stop()
 	for {

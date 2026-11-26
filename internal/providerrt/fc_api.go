@@ -26,6 +26,11 @@ type fcHost interface {
 	// TapUp 建好 tap（已存在则先删再建）；TapDown 删掉 tap（不存在不算错）。
 	TapUp(vm vmMeta) error
 	TapDown(vm vmMeta) error
+	// TapLink 把 tap 置为 up / down（沙箱的 set_network，M30）。
+	TapLink(vm vmMeta, up bool) error
+	// LinkListen 在 jail 里的 v.sock_<LinkPort> 上监听（属主为槽位 uid），供沙箱的 link 中继（M30）。
+	// jail 根目录每次 Launch 都重建，所以只能在 Launch 之后调用。
+	LinkListen(vm vmMeta) (net.Listener, error)
 	// MakeDisk 在 path 建 gb GiB 的稀疏 ext4 空盘，属主为 uid。
 	MakeDisk(path string, gb int, uid int) error
 	// CopySparse 稀疏复制 src → dst（属主为 uid），返回 dst 实际占用的字节数。
@@ -57,9 +62,14 @@ const (
 
 // fcBootArgs 返回内核命令行：只读根 /dev/vda，init 为 orbd（PID 1 时进入 guest-init），
 // 内核按 ip= 静态配置 eth0（guest/30，网关为宿主侧地址），reboot=k 使 guest 复位时 Firecracker 退出。
+// 没有网卡的沙箱（NoNIC）不带 ip= 段。
 func fcBootArgs(vm vmMeta) string {
-	return "console=ttyS0 reboot=k panic=1 pci=off nomodule i8042.noaux i8042.nomux i8042.dumbkbd quiet " +
-		"root=/dev/vda ro init=/usr/local/bin/orbd ip=" + vm.GuestIP + "::" + vm.HostIP + ":255.255.255.252::eth0:off"
+	args := "console=ttyS0 reboot=k panic=1 pci=off nomodule i8042.noaux i8042.nomux i8042.dumbkbd quiet " +
+		"root=/dev/vda ro init=/usr/local/bin/orbd"
+	if vm.NoNIC {
+		return args
+	}
+	return args + " ip=" + vm.GuestIP + "::" + vm.HostIP + ":255.255.255.252::eth0:off"
 }
 
 // fcVsockCID 是 guest 的 vsock CID。
@@ -135,7 +145,7 @@ const (
 // 总量由 tmpfs 的容量限定（fc_console.go）。
 var fcSerialRateLimit = map[string]any{"size": 16 << 10, "one_time_burst": 1 << 20, "refill_time": 1000}
 
-// Boot 实现 fcAPI：依次 machine-config、boot-source、两块盘、eth0、vsock、串口、entropy（失败忽略）、InstanceStart。
+// Boot 实现 fcAPI：依次 machine-config、boot-source、两块盘、eth0（NoNIC 时跳过）、vsock、串口、entropy（失败忽略）、InstanceStart。
 // 路径都是 jail（chroot）里的路径。
 func (a unixAPI) Boot(ctx context.Context, vm vmMeta) error {
 	steps := []struct {
@@ -151,6 +161,9 @@ func (a unixAPI) Boot(ctx context.Context, vm vmMeta) error {
 		{"/serial", map[string]any{"serial_out_path": "/" + fcConsoleDir + "/" + fcConsoleLog, "rate_limiter": fcSerialRateLimit}},
 	}
 	for _, s := range steps {
+		if vm.NoNIC && s.path == "/network-interfaces/eth0" {
+			continue
+		}
 		if err := a.do(ctx, vm.OrbID, http.MethodPut, s.path, s.body, nil); err != nil {
 			return err
 		}

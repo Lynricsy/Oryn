@@ -259,6 +259,18 @@ func TestStartWithoutCAAndImageConfig(t *testing.T) {
 	assert.Equal(t, "/home/user", o.dir)
 }
 
+// M30：沙箱的 start 让 orbd 以精简模式运行、link 经 vsock 中继；普通 orb 没有这两项（见 TestStart）。
+func TestStartSandboxEnv(t *testing.T) {
+	g, _, o := newTestGuest(imageConfig{})
+	req := startReq()
+	req.Sandbox, req.LinkVia, req.DNS = true, "vsock:5006", nil
+	require.True(t, call(t, g, req).OK)
+	env := envMap(o.env)
+	assert.Equal(t, "1", env["ORYN_SANDBOX"])
+	assert.Equal(t, "vsock:5006", env["ORYN_LINK_VIA"])
+	assert.Len(t, o.env, len(env), "no duplicate keys")
+}
+
 func TestStartRejectsIncompleteAndFailures(t *testing.T) {
 	g, fs, o := newTestGuest(imageConfig{})
 	resp := call(t, g, fcguest.Request{Op: fcguest.OpStart, URL: "http://x", OrbID: "orb-x"})

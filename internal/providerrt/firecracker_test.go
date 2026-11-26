@@ -126,6 +126,34 @@ func (f *fakeFC) TapDown(vm vmMeta) error {
 	return nil
 }
 
+func (f *fakeFC) TapLink(vm vmMeta, up bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	state := "down"
+	if up {
+		state = "up"
+	}
+	f.log("TapLink %s %s", vm.Tap, state)
+	return nil
+}
+
+func (f *fakeFC) LinkListen(vm vmMeta) (net.Listener, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log("LinkListen %s", vm.OrbID)
+	return &idleListener{done: make(chan struct{})}, nil
+}
+
+// idleListener 是没有连接进来的监听：Accept 阻塞到 Close。
+type idleListener struct {
+	once sync.Once
+	done chan struct{}
+}
+
+func (l *idleListener) Accept() (net.Conn, error) { <-l.done; return nil, net.ErrClosed }
+func (l *idleListener) Close() error              { l.once.Do(func() { close(l.done) }); return nil }
+func (l *idleListener) Addr() net.Addr            { return &net.UnixAddr{Name: "fake", Net: "unix"} }
+
 func (f *fakeFC) MakeDisk(path string, gb int, uid int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

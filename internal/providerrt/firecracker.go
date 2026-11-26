@@ -65,6 +65,8 @@ type FirecrackerDriver struct {
 
 	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_fc.go）。
 	offline indexCache
+	// relays 是各沙箱的 link 中继（M30）：jail 里的 v.sock_<LinkPort> → ORYN_URL 的 host:port。
+	relays relaySet
 }
 
 // NewFirecracker 创建 firecracker 驱动（真实现：jailer / ip / mke2fs、api.sock、v.sock）。
@@ -112,9 +114,13 @@ func (d *FirecrackerDriver) Info() Info {
 			limits.MaxMemoryMB = new(d.Cfg.Limits.MaxMemoryMB)
 		}
 	}
+	caps := apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)}
+	if d.Cfg.Sandbox.Enabled {
+		caps.Sandbox = new(true)
+	}
 	return Info{
 		Driver:       apigen.Firecracker,
-		Capabilities: apigen.ProviderCapabilities{Freeze: true, Snapshot: true, OfflineFs: new(true)},
+		Capabilities: caps,
 		Types:        types,
 		DefaultType:  d.Cfg.DefaultType,
 		BaseImageID:  d.baseImageID(),
@@ -154,6 +160,8 @@ func (d *FirecrackerDriver) Exec(ctx context.Context, j Job, out io.Writer) (*ap
 		return d.snapshot(ctx, j, out)
 	case "delete":
 		return nil, d.delete(j.OrbID, out)
+	case "set_network":
+		return nil, d.setNetwork(j)
 	case "delete_snapshot":
 		return nil, d.deleteSnapshot(j.SnapshotID, out)
 	}
@@ -236,6 +244,16 @@ func (d *FirecrackerDriver) spawn(ctx context.Context, j Job, out io.Writer) (*a
 // 快照不存在（或其基础盘已不在）：snapshotOptional 时退回空盘，否则报错。meta.json 最后写入，它在即 VM 在。
 func (d *FirecrackerDriver) create(j Job, out io.Writer) (vmMeta, error) {
 	p := j.Spawn
+	if p.Sandbox != nil && !d.Cfg.Sandbox.Enabled {
+		return vmMeta{}, errors.New("firecracker: sandbox is not enabled on this provider")
+	}
+	linkTarget := ""
+	if p.Sandbox != nil {
+		var err error
+		if linkTarget, err = relayTarget(p.Env.OrynURL); err != nil {
+			return vmMeta{}, err
+		}
+	}
 	typeName := p.Type
 	typ, ok := d.Cfg.Types[typeName]
 	if !ok {
@@ -280,6 +298,9 @@ func (d *FirecrackerDriver) create(j Job, out io.Writer) (vmMeta, error) {
 	}
 	vm := newVMMeta(d.Cfg, j.OrbID, slot)
 	vm.Base, vm.Snapshot, vm.Type, vm.CPUs, vm.MemMB = base, snap, typeName, typ.CPUs, typ.MemoryMB()
+	if p.Sandbox != nil {
+		vm.Sandbox, vm.NoNIC, vm.LinkTarget = true, p.Sandbox.Network == apigen.SandboxNetworkNone, linkTarget
+	}
 	if err := os.MkdirAll(d.paths.vmDir(j.OrbID), 0o700); err != nil {
 		return vmMeta{}, err
 	}
@@ -325,7 +346,8 @@ func (d *FirecrackerDriver) ensureBase() (string, error) {
 }
 
 // boot 走「启动」一段：核对容量 → tap → jailer → API 配置并 InstanceStart → vsock start（重试至多 startTimeout）。
-// 任何一步失败都杀掉进程、拆 tap，下一次 spawn 从头再来（磁盘与槽位保留）。
+// 沙箱在 jailer 之后、API 配置之前建 link 中继的监听（jail 根目录每次 Launch 都重建）。
+// 任何一步失败都杀掉进程、拆 tap、关中继，下一次 spawn 从头再来（磁盘与槽位保留）。
 func (d *FirecrackerDriver) boot(ctx context.Context, vm vmMeta, p *apigen.JobSpawnParams, out io.Writer) (err error) {
 	defer func() {
 		if err != nil {
@@ -336,6 +358,7 @@ func (d *FirecrackerDriver) boot(ctx context.Context, vm vmMeta, p *apigen.JobSp
 			if terr := d.host.TapDown(vm); terr != nil {
 				fmt.Fprintf(out, "oryn: 拆 tap: %v\n", terr)
 			}
+			d.relays.drop(vm.OrbID)
 		}
 	}()
 	if err := d.launch(ctx, vm); err != nil {
@@ -345,10 +368,60 @@ func (d *FirecrackerDriver) boot(ctx context.Context, vm vmMeta, p *apigen.JobSp
 	if err := removeIfExists(d.paths.vmThawPending(vm.OrbID)); err != nil {
 		return err
 	}
+	if vm.Sandbox {
+		if err := d.listenLink(vm); err != nil {
+			return err
+		}
+	}
 	if err := d.api.Boot(ctx, vm); err != nil {
 		return err
 	}
 	return d.startGuest(ctx, vm.OrbID, d.startRequest(vm, p), out)
+}
+
+// listenLink 在 jail 里建沙箱的 link 中继监听并登记（替换旧的）。
+func (d *FirecrackerDriver) listenLink(vm vmMeta) error {
+	ln, err := d.host.LinkListen(vm)
+	if err != nil {
+		return fmt.Errorf("firecracker: 沙箱 link 中继: %w", err)
+	}
+	d.relays.put(vm.OrbID, newLinkRelay(ln, vm.LinkTarget))
+	return nil
+}
+
+// restoreRelays 为在运行的沙箱 VM 重建 link 中继（provider 重启后恢复，VM 以 --daemonize 跨 provider 重启存活）；失败只记日志。
+func (d *FirecrackerDriver) restoreRelays() {
+	vms, err := d.paths.listVMs()
+	if err != nil {
+		slog.Warn("恢复沙箱中继：读取 VM 列表失败", "err", err)
+		return
+	}
+	for _, vm := range vms {
+		if !vm.Sandbox || !d.host.Alive(vm.OrbID) {
+			continue
+		}
+		if err := d.listenLink(vm); err != nil {
+			slog.Warn("恢复沙箱中继失败", "orb", vm.OrbID, "err", err)
+		}
+	}
+}
+
+// setNetwork 实现 set_network：沙箱的 tap 置 up（egress）或 down（none）。没有网卡的沙箱不能开网。
+func (d *FirecrackerDriver) setNetwork(j Job) error {
+	vm, exists, err := d.paths.loadVM(j.OrbID)
+	if err != nil {
+		return err
+	}
+	if !exists || !vm.Sandbox {
+		return fmt.Errorf("firecracker: orb %s 不是沙箱", j.OrbID)
+	}
+	if vm.NoNIC {
+		if j.Network == string(apigen.SandboxNetworkEgress) {
+			return fmt.Errorf("network_unavailable: sandbox %s was created without a network interface", j.OrbID)
+		}
+		return nil
+	}
+	return d.host.TapLink(vm, j.Network == string(apigen.SandboxNetworkEgress))
 }
 
 // startRequest 是 guest 的 start 请求（令牌与 CA 只走 vsock，不进输出）。
@@ -356,6 +429,12 @@ func (d *FirecrackerDriver) startRequest(vm vmMeta, p *apigen.JobSpawnParams) fc
 	req := fcguest.Request{
 		Op: fcguest.OpStart, URL: p.Env.OrynURL, OrbID: vm.OrbID, Token: p.Env.OrynOrbToken,
 		DNS: d.Cfg.Network.DNS, NowMs: d.clock().UnixMilli(),
+	}
+	if vm.NoNIC {
+		req.DNS = nil
+	}
+	if vm.Sandbox {
+		req.Sandbox, req.LinkVia = true, fmt.Sprintf("vsock:%d", fcguest.LinkPort)
 	}
 	if p.OrbCaPem != nil {
 		req.CAPEM = *p.OrbCaPem
@@ -370,8 +449,10 @@ func (d *FirecrackerDriver) launch(ctx context.Context, vm vmMeta) error {
 	if err := d.checkCapacity(vm); err != nil {
 		return err
 	}
-	if err := d.host.TapUp(vm); err != nil {
-		return err
+	if !vm.NoNIC {
+		if err := d.host.TapUp(vm); err != nil {
+			return err
+		}
 	}
 	return d.host.Launch(ctx, vm)
 }
@@ -636,6 +717,7 @@ func (d *FirecrackerDriver) delete(orbID string, out io.Writer) error {
 	if err := d.host.Kill(orbID); err != nil {
 		return err
 	}
+	d.relays.drop(orbID)
 	if err := d.host.TapDown(vm); err != nil {
 		return err
 	}

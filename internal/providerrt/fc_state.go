@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/config"
+	"github.com/Lynricsy/Oryn/internal/fcguest"
 )
 
 // Firecracker 驱动的状态目录（计划 8.3）：
@@ -62,6 +63,11 @@ func (p fcPaths) vmThawPending(orbID string) string {
 	return filepath.Join(p.root, "vms", orbID, "thaw-pending")
 }
 
+// linkSock 是沙箱 link 中继在 jail 里的监听：guest 连 vsock CID 2 的 LinkPort 时 Firecracker 转到 v.sock_<LinkPort>。
+func (p fcPaths) linkSock(orbID string) string {
+	return filepath.Join(p.jailRoot(orbID), fmt.Sprintf("v.sock_%d", fcguest.LinkPort))
+}
+
 // vmMeta 是一台 VM 的元数据（vms/<orbId>/meta.json）。
 type vmMeta struct {
 	OrbID string `json:"orbId"`
@@ -78,6 +84,12 @@ type vmMeta struct {
 	HostIP   string `json:"hostIP"`
 	GuestIP  string `json:"guestIP"`
 	MAC      string `json:"mac"`
+	// Sandbox：这台 VM 是 Agent 沙箱（M30），orbd 以精简模式运行、link 经 vsock 中继。
+	Sandbox bool `json:"sandbox,omitempty"`
+	// NoNIC：沙箱以 network=none 创建，没有网卡（不建 tap、不配 eth0）。
+	NoNIC bool `json:"noNic,omitempty"`
+	// LinkTarget 是中继转发的目标 host:port（spawn 时 ORYN_URL 的；provider 重启后据此恢复中继）。
+	LinkTarget string `json:"linkTarget,omitempty"`
 }
 
 // snapMeta 是快照的元数据（snapshots/<snapId>.json）。
