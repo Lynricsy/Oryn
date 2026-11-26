@@ -72,7 +72,7 @@
    - `TextInput` / `TextArea` 换成 D 输入框（圆角 11、半透明底、「提亮浮起」聚焦），删掉 `workbench` 里重复的 `TextField` / `TextAreaField`。
    - `Toggle` 换成 D 开关（墨色、`role=switch`），删掉 `workbench` 的 `Switch`。
    - `Field` 换成 L2 标题（13/550 正文色），长说明仍在控件下方；`FormField` 保留给要「可选」标记和行内短说明的表单。
-   - `Checkbox` 圆角 5；`Dialog` 圆角 20；`Menu` 圆角 14、菜单项 9；`Card` 圆角 16 + 发丝外缘 + 浅投影；`ListRow` / `Callout` 圆角跟随。
+   - `Checkbox` 圆角 5。`Dialog`（32）、`Menu` / 浮层（18）、`Card`（18）保持现有圆角：生产里本来就比 D 稿大，且主人已在试点里看过；只改主人明确认可的数值。
    - `Select`：所有调用方改用自绘下拉（触屏回落原生），之后删除原生 `Select`。
 2. **设置骨架：** 分区注册表（路由、设置导航、命令面板共用）、设置页内导航与搜索、手机分组首页、旧路由重定向；把 `SettingsPage.tsx` 里内联的 9 个分区拆成独立文件。
 3. **逐组迁移：** 个人 / 助手与 Agent / 工作区 / 其它 四组并行，各组合并、移动并改用 `Group` / `GroupRow` / `Toggle`，测试随迁移更新。
@@ -80,3 +80,12 @@
 5. **接口设计（只出文档）：** Passkey 管理、控制面运维参数、通知免打扰、桌面开机自启。
 
 每一步的验收：`npm run check`、受影响分区的测试文件、mock 环境下浅色 / 深色 / 390px 截图。
+
+## 6. 完成情况（2026-11-27）
+
+第 5 节 1–5 步已完成：设置页 20 个分区全部是 D 分组列表（设置里不再用 `Card`），共享 `Select` 已换成自绘下拉（`size="sm"` 为紧凑款）。接口设计见 `docs/design/settings-backend-apis.md`。
+
+遗留：
+- 控制面运维参数在第 2 节还没有落位，接口设计建议在「工作区」加一个「控制面」分区，待主人确认。
+- `ToggleCard.tsx` 的 `MemoryProjectRow` 仍是旧写法，项目设置的 Agent 标签页在用。
+- 包在 `<label>` 里的 `Select` 展开时，列表文字会混进可读名称；`Field` 里用 `Select` 时建议改用 `FormField`。
