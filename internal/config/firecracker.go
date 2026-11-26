@@ -33,6 +33,13 @@ type Firecracker struct {
 	// Types 是 orb 规格表；未写时取 DefaultFirecrackerTypes。
 	Types       map[string]FirecrackerType `yaml:"types"`
 	DefaultType string                     `yaml:"default_type"`
+	// Sandbox 是 kvm 后端的 agent 沙箱设置（M30）。
+	Sandbox FirecrackerSandbox `yaml:"sandbox"`
+}
+
+// FirecrackerSandbox 是 firecracker 驱动的沙箱配置（M30）；link 经 vsock 中继，不需要额外网络设置。
+type FirecrackerSandbox struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // FirecrackerNetwork 是 guest 网络：每台 VM 一个 /30（槽位 n：宿主侧 = 基址 + 4n + 1，guest = + 2），

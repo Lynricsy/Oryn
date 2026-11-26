@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -252,6 +253,40 @@ func (g GitHub) validate() []error {
 	return errs
 }
 
+// Sandbox 是 agent 沙箱的控制面配置（M30）。provider 侧还要在 provider.yaml 里显式开启。
+type Sandbox struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxPerOrb 是每台 owner orb 同时在用的沙箱上限；MaxTotal 是全局上限。
+	MaxPerOrb int `yaml:"max_per_orb"`
+	MaxTotal  int `yaml:"max_total"`
+	// Idle 是缺省空闲超时（创建时可设 5–240 分钟覆盖）；MaxLifetime 是最长寿命硬上限。
+	Idle        Duration `yaml:"idle"`
+	MaxLifetime Duration `yaml:"max_lifetime"`
+	// DefaultBackend 是 backend 省略时优先选的后端：kvm 或 docker。
+	DefaultBackend string `yaml:"default_backend"`
+}
+
+// validate 按 docs/deploy.md 的 sandbox 配置表校验；错误前缀均为 sandbox.。
+func (s Sandbox) validate() []error {
+	var errs []error
+	if s.MaxPerOrb < 1 {
+		errs = append(errs, fmt.Errorf("sandbox.max_per_orb %d 至少为 1", s.MaxPerOrb))
+	}
+	if s.MaxTotal < s.MaxPerOrb {
+		errs = append(errs, fmt.Errorf("sandbox.max_total %d 不能小于 max_per_orb（%d）", s.MaxTotal, s.MaxPerOrb))
+	}
+	if d := s.Idle.D(); d < 5*time.Minute || d > 4*time.Hour {
+		errs = append(errs, fmt.Errorf("sandbox.idle %s 必须在 5m–4h 之间", d))
+	}
+	if d := s.MaxLifetime.D(); d < s.Idle.D() || d > 72*time.Hour {
+		errs = append(errs, fmt.Errorf("sandbox.max_lifetime %s 必须不小于 idle 且不超过 72h", d))
+	}
+	if s.DefaultBackend != "kvm" && s.DefaultBackend != "docker" {
+		errs = append(errs, fmt.Errorf("sandbox.default_backend %q 无效：只接受 kvm 或 docker", s.DefaultBackend))
+	}
+	return errs
+}
+
 // Orynd 对应 /etc/oryn/orynd.yaml。
 type Orynd struct {
 	Listen       []string    `yaml:"listen"`
@@ -271,6 +306,7 @@ type Orynd struct {
 	GitHub       GitHub      `yaml:"github"`
 	Artifacts    Artifacts   `yaml:"artifacts"`
 	Repos        Repos       `yaml:"repos"`
+	Sandbox      Sandbox     `yaml:"sandbox"`
 }
 
 // CoordinatorDir 返回协调宿主目录（未配置时为 <data_dir>/coordinator）。
@@ -323,6 +359,14 @@ func DefaultOrynd() Orynd {
 		Pool:   Pool{MaxTotal: 2, MaxAge: Duration(12 * time.Hour), ActiveWindow: Duration(72 * time.Hour)},
 		GitHub: GitHub{APIURL: "https://api.github.com", WebURL: "https://github.com"},
 		Push:   Push{Gateway: Gateway{URL: DefaultPushGateway}},
+		Sandbox: Sandbox{
+			Enabled:        true,
+			MaxPerOrb:      2,
+			MaxTotal:       8,
+			Idle:           Duration(30 * time.Minute),
+			MaxLifetime:    Duration(12 * time.Hour),
+			DefaultBackend: "kvm",
+		},
 	}
 }
 
@@ -468,6 +512,7 @@ func (c Orynd) Validate() error {
 	if c.Repos.MaxLFSCacheGB < 0 {
 		errs = append(errs, errors.New("repos.max_lfs_cache_gb 不能为负"))
 	}
+	errs = append(errs, c.Sandbox.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -556,6 +601,42 @@ type Docker struct {
 	DefaultType  string                `yaml:"default_type"`
 	// PidsLimit 是所有类型的 `docker run --pids-limit`（M11a 审查修复）；缺省 4096，0 = 不限。
 	PidsLimit int `yaml:"pids_limit"`
+	// Sandbox 是 docker 后端的 agent 沙箱设置（M30）。
+	Sandbox DockerSandbox `yaml:"sandbox"`
+}
+
+// DockerSandbox 是 docker 驱动的沙箱配置（M30）。
+type DockerSandbox struct {
+	Enabled bool `yaml:"enabled"`
+	// Network 是 egress 模式接入的 docker 网络（由 deploy/docker/oryn-sbx-net.sh 建立）；Enabled 时必填。
+	Network string `yaml:"network"`
+	// DNS 是 egress 模式的 --dns，每项须是 IP。
+	DNS []string `yaml:"dns"`
+	// SocketDir 存各沙箱的 link 中继 socket（<socket_dir>/<orbId>/link.sock）；须是绝对路径，缺省 DefaultSandboxSocketDir。
+	SocketDir string `yaml:"socket_dir"`
+}
+
+// DefaultSandboxSocketDir 是 docker.sandbox.socket_dir 的缺省值。
+const DefaultSandboxSocketDir = "/run/oryn-sbx"
+
+// validate 只在 Enabled 时校验；错误前缀均为 docker.sandbox.。
+func (s DockerSandbox) validate() []error {
+	if !s.Enabled {
+		return nil
+	}
+	var errs []error
+	if s.Network == "" {
+		errs = append(errs, errors.New("docker.sandbox.network 在 enabled 时必填（见 deploy/docker/oryn-sbx-net.sh）"))
+	}
+	if !filepath.IsAbs(s.SocketDir) {
+		errs = append(errs, fmt.Errorf("docker.sandbox.socket_dir %q 必须是绝对路径", s.SocketDir))
+	}
+	for _, d := range s.DNS {
+		if _, err := netip.ParseAddr(d); err != nil {
+			errs = append(errs, fmt.Errorf("docker.sandbox.dns %q 不是 IP 地址", d))
+		}
+	}
+	return errs
 }
 
 // DefaultPidsLimit 是 docker.pids_limit 的缺省值。
@@ -605,6 +686,9 @@ func LoadProvider(path string) (Provider, error) {
 	if c.OrbURL == "" {
 		c.OrbURL = c.URL
 	}
+	if c.Docker.Sandbox.SocketDir == "" {
+		c.Docker.Sandbox.SocketDir = DefaultSandboxSocketDir
+	}
 	var errs []error
 	if u, err := url.Parse(c.URL); err != nil || u.Scheme == "" || u.Host == "" {
 		errs = append(errs, fmt.Errorf("url %q 必须是绝对 URL", c.URL))
@@ -621,6 +705,7 @@ func LoadProvider(path string) (Provider, error) {
 		if _, ok := c.Docker.Types[c.Docker.DefaultType]; !ok {
 			errs = append(errs, fmt.Errorf("docker.default_type %q 不在 types 中", c.Docker.DefaultType))
 		}
+		errs = append(errs, c.Docker.Sandbox.validate()...)
 	case "dispatch":
 		if c.Dispatch.Script == "" {
 			errs = append(errs, errors.New("driver=dispatch 时 dispatch.script 必填"))

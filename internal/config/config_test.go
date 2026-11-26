@@ -457,3 +457,81 @@ func TestReposConfig(t *testing.T) {
 	_, err = LoadOrynd(path)
 	assert.ErrorContains(t, err, "repos.max_lfs_cache_gb 不能为负")
 }
+
+// M30：sandbox 的默认值与每条校验的错误文案。
+func TestSandboxConfig(t *testing.T) {
+	d := DefaultOrynd()
+	assert.Equal(t, Sandbox{Enabled: true, MaxPerOrb: 2, MaxTotal: 8, Idle: Duration(30 * time.Minute),
+		MaxLifetime: Duration(12 * time.Hour), DefaultBackend: "kvm"}, d.Sandbox)
+
+	base := DefaultOrynd()
+	base.PublicURL = "https://oryn.example.com"
+	require.NoError(t, base.Validate())
+	for want, mod := range map[string]func(*Sandbox){
+		"sandbox.max_per_orb":     func(s *Sandbox) { s.MaxPerOrb = 0 },
+		"sandbox.max_total":       func(s *Sandbox) { s.MaxTotal = 1 },
+		"sandbox.idle":            func(s *Sandbox) { s.Idle = Duration(4 * time.Minute) },
+		"sandbox.max_lifetime":    func(s *Sandbox) { s.MaxLifetime = Duration(73 * time.Hour) },
+		"sandbox.default_backend": func(s *Sandbox) { s.DefaultBackend = "lxc" },
+	} {
+		c := base
+		mod(&c.Sandbox)
+		assert.ErrorContains(t, c.Validate(), want)
+	}
+	c := base
+	c.Sandbox.Idle = Duration(4*time.Hour + time.Minute)
+	assert.ErrorContains(t, c.Validate(), "sandbox.idle", "idle 上限 4h")
+	c = base
+	c.Sandbox.Idle, c.Sandbox.MaxLifetime = Duration(2*time.Hour), Duration(time.Hour)
+	assert.ErrorContains(t, c.Validate(), "sandbox.max_lifetime", "max_lifetime 不能小于 idle")
+	c = base
+	c.Sandbox.MaxPerOrb, c.Sandbox.MaxTotal, c.Sandbox.Idle, c.Sandbox.MaxLifetime = 1, 1, Duration(5*time.Minute), Duration(72*time.Hour)
+	assert.NoError(t, c.Validate(), "边界值合法")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orynd.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+
+		"\nsandbox: {enabled: false, idle: 10m, default_backend: docker}\n"), 0o600))
+	got, err := LoadOrynd(path)
+	require.NoError(t, err)
+	assert.False(t, got.Sandbox.Enabled)
+	assert.Equal(t, 10*time.Minute, got.Sandbox.Idle.D())
+	assert.Equal(t, "docker", got.Sandbox.DefaultBackend)
+	assert.Equal(t, 2, got.Sandbox.MaxPerOrb, "未写的键保持默认")
+}
+
+// M30：provider.yaml 的 docker.sandbox / firecracker.sandbox。
+func TestProviderSandboxConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "provider.yaml")
+	load := func(body string) (Provider, error) {
+		require.NoError(t, os.WriteFile(path, []byte("url: http://127.0.0.1:7600\ntoken_file: /tmp/t\n"+body), 0o600))
+		return LoadProvider(path)
+	}
+
+	c, err := load("")
+	require.NoError(t, err)
+	assert.False(t, c.Docker.Sandbox.Enabled, "provider 默认不开启沙箱")
+	assert.Equal(t, DefaultSandboxSocketDir, c.Docker.Sandbox.SocketDir)
+	assert.False(t, c.Firecracker.Sandbox.Enabled)
+
+	c, err = load("docker:\n  sandbox: {enabled: true, network: oryn-sbx, dns: [1.1.1.1, '2606:4700::1111']}\n")
+	require.NoError(t, err)
+	assert.Equal(t, DockerSandbox{Enabled: true, Network: "oryn-sbx", DNS: []string{"1.1.1.1", "2606:4700::1111"}, SocketDir: DefaultSandboxSocketDir}, c.Docker.Sandbox)
+
+	for body, want := range map[string]string{
+		"docker:\n  sandbox: {enabled: true}\n":                                     "docker.sandbox.network",
+		"docker:\n  sandbox: {enabled: true, network: n, socket_dir: run/sbx}\n":    "docker.sandbox.socket_dir",
+		"docker:\n  sandbox: {enabled: true, network: n, dns: [dns.example.com]}\n": "docker.sandbox.dns",
+		"docker:\n  sandbox: {enabled: true, network: n, extra: 1}\n":               "extra",
+	} {
+		_, err = load(body)
+		assert.ErrorContains(t, err, want, body)
+	}
+	_, err = load("docker:\n  sandbox: {enabled: false, socket_dir: relative}\n")
+	assert.NoError(t, err, "未开启时不校验")
+
+	c, err = load("driver: process\ndocker:\n  sandbox: {enabled: true}\nfirecracker:\n  sandbox: {enabled: true}\n")
+	require.NoError(t, err, "docker.sandbox 只在 driver=docker 时校验")
+	assert.True(t, c.Firecracker.Sandbox.Enabled)
+}
