@@ -95,7 +95,17 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		out = map[string]any{"modelVersion": "gemini-real", "echo": echo,
 			"usageMetadata": map[string]any{"promptTokenCount": 13, "candidatesTokenCount": 4}}
 	case "/emb/embeddings":
-		out = map[string]any{"model": body["model"], "echo": echo, "data": []any{}, "usage": map[string]any{"prompt_tokens": 6, "total_tokens": 6}}
+		// 仿 Gemini 的 OpenAI 兼容接口：第 0 条省略 index（proto3 零值），其余带上
+		data := []any{}
+		inputs, _ := body["input"].([]any)
+		for i := range inputs {
+			item := map[string]any{"object": "embedding", "embedding": []float64{float64(i)}}
+			if i > 0 {
+				item["index"] = i
+			}
+			data = append(data, item)
+		}
+		out = map[string]any{"model": body["model"], "echo": echo, "data": data, "usage": map[string]any{"prompt_tokens": 6, "total_tokens": 6}}
 	case "/rr/v1/rerank":
 		out = map[string]any{"echo": echo, "results": []any{map[string]any{"index": 0, "relevance_score": 0.9}}}
 	default:
@@ -331,6 +341,31 @@ func TestRelayEndpointsForwardWithTheirKeys(t *testing.T) {
 	assert.Equal(t, "bge-rerank", got.Body["model"])
 	assert.Equal(t, "Bearer "+keyRerank, got.Header.Get("Authorization"))
 	assertNoSecrets(t, w, e.token)
+}
+
+// TestRelayEmbedFillsMissingIndex：上游（Gemini）第 0 条省略 index 时，中转按位置补齐，Hindsight 按 index 排序不再出错；
+// 嵌入向量与其余字段原样保留。
+func TestRelayEmbedFillsMissingIndex(t *testing.T) {
+	e := newRelayEnv(t)
+	w := e.post(t, "embed/embeddings", "", e.token, map[string]any{"model": "oryn-embed", "input": []string{"甲", "乙", "丙"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp struct {
+		Data []struct {
+			Index     *int      `json:"index"`
+			Object    string    `json:"object"`
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+		Usage map[string]any `json:"usage"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), w.Body.String())
+	require.Len(t, resp.Data, 3)
+	for i, d := range resp.Data {
+		require.NotNil(t, d.Index, "第 %d 条缺 index", i)
+		assert.Equal(t, i, *d.Index)
+		assert.Equal(t, "embedding", d.Object)
+		assert.Equal(t, []float64{float64(i)}, d.Embedding)
+	}
+	assert.Equal(t, float64(6), resp.Usage["prompt_tokens"])
 }
 
 func TestRelayUsagePerProtocol(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -21,7 +22,7 @@ import (
 // （附录 A 第 3 项实测，非流式）：
 //   - `<用途>/chat/completions`、`<用途>/responses`（openai）、`<用途>/v1/messages`（anthropic）；
 //   - `gemini/v1beta/models/<别名>:generateContent`（用途按别名认）；
-//   - `embed/embeddings`、`rerank/v1/rerank`：按 memory_endpoints 转发。
+//   - `embed/embeddings`、`rerank/v1/rerank`：按 memory_endpoints 转发；嵌入响应缺失的 `data[].index` 按位置补齐。
 // 其余路径一律 404，别的东西到不了上游。
 
 // ModelUpstream 是中央模型目录里一个模型的上游，由 orynd 用 models.yml 的出站路由实现（relayroute 包）。
@@ -351,6 +352,9 @@ func (h *relay) endpoint(w http.ResponseWriter, r *http.Request, kind apigen.Mem
 	if key != "" {
 		respBody = bytes.ReplaceAll(respBody, []byte(key), []byte(redacted))
 	}
+	if kind == apigen.MemoryEndpointEmbed && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		respBody = fillEmbeddingIndex(respBody)
+	}
 	for k, vs := range resp.Header {
 		if hopHeader(k) {
 			continue
@@ -365,6 +369,41 @@ func (h *relay) endpoint(w http.ResponseWriter, r *http.Request, kind apigen.Mem
 		in, out := parseUsage(respBody)
 		h.record(context.WithoutCancel(ctx), string(kind), in, out)
 	}
+}
+
+// fillEmbeddingIndex 补齐嵌入响应里缺失或为 null 的 `data[].index`（按数组位置）。Gemini 的 OpenAI 兼容接口按 proto3
+// 省略零值，第 0 条的 index 是 null；Hindsight 按 index 排序（embeddings.py `sorted(response.data, key=lambda x: x.index)`），
+// 一批两条以上时 None 与 int 比较直接抛 TypeError，retain 与 consolidation 全部失败。不是预期形状或无需补齐时原样返回。
+func fillEmbeddingIndex(body []byte) []byte {
+	var resp map[string]json.RawMessage
+	if json.Unmarshal(body, &resp) != nil {
+		return body
+	}
+	var data []map[string]json.RawMessage
+	if json.Unmarshal(resp["data"], &data) != nil {
+		return body
+	}
+	filled := false
+	for i, item := range data {
+		if v, ok := item["index"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			continue
+		}
+		item["index"] = json.RawMessage(strconv.Itoa(i))
+		filled = true
+	}
+	if !filled {
+		return body
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return body
+	}
+	resp["data"] = raw
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // redact 把 s 里的真实值换成 redacted；secret 为空时原样返回。
