@@ -39,6 +39,8 @@ type Service struct {
 	// gatesMu 保护 gates：每个来源一把门，串行化同一来源的写入与遗忘（见 lockSource）
 	gatesMu sync.Mutex
 	gates   map[string]*sourceGate
+	// afterDueCheck（仅测试）在写入通过最后一次资格检查之后调用
+	afterDueCheck func(threadID string)
 }
 
 // New 构造服务。

@@ -13,3 +13,6 @@ func (s *Service) RerankTexts(ctx context.Context, query string, texts []string)
 	}
 	return s.rerank(ctx, query, cands)
 }
+
+// SetAfterDueCheck（仅测试）设置写入通过最后一次资格检查之后的回调。
+func (s *Service) SetAfterDueCheck(fn func(threadID string)) { s.afterDueCheck = fn }

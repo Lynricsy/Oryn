@@ -338,6 +338,47 @@ func TestWriterCanceledFirstRetainStillForgotten(t *testing.T) {
 	assert.Empty(t, chunks)
 }
 
+// TestWriterProjectExclusionAfterDueCheck:来源第一次写入，项目排除恰好插在最后一次资格检查之后。排除按项目枚举来源时
+// 必须已能找到它（来源记录在检查之前建好），于是遗忘等门、删掉写入的全部块，排除返回后不留可召回的内容。
+func TestWriterProjectExclusionAfterDueCheck(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, true)
+	e.enable(t)
+	require.NoError(t, e.st.Q.CreateProject(ctx, db.CreateProjectParams{ID: "p", Name: "P", CreatedAt: 1, UpdatedAt: 1}))
+	e.thread(t, "c", "assistant", "idle", 16, time.Hour)
+	e.exec(t, `UPDATE threads SET project_id = 'p' WHERE id = 'c'`)
+	project := "p"
+	var listed []string
+	excluded := make(chan error, 1)
+	e.svc.SetAfterDueCheck(func(string) {
+		// 与 PutExclusion 相同的前两步：先记排除，再按项目枚举来源
+		require.NoError(t, e.st.Q.InsertOwnerMemoryExclusion(ctx, db.InsertOwnerMemoryExclusionParams{Kind: "project", TargetID: project, CreatedAt: 1}))
+		var err error
+		listed, err = e.st.Q.ListOwnerMemorySourcesOfProject(ctx, &project)
+		require.NoError(t, err)
+		go func() {
+			_, err := e.svc.PutExclusion(ctx, apigen.OwnerMemoryExclusionProject, project)
+			excluded <- err
+		}()
+	})
+	e.scan(t) // 写入可能在首个请求前放弃，也可能写完后才轮到遗忘；两种结局都不能留下内容
+	require.NoError(t, <-excluded)
+	assert.Equal(t, []string{"c"}, listed, "资格检查之后插入的项目排除枚举得到这个来源")
+
+	e.hs.mu.Lock()
+	defer e.hs.mu.Unlock()
+	for i := range e.hs.retains {
+		for _, it := range e.hs.retains[i] {
+			assert.Contains(t, e.hs.deletes, it["document_id"], "写入过的块都被删除")
+		}
+	}
+	chunks, err := e.st.Q.ListOwnerMemoryChunks(ctx, "c")
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+	_, err = e.st.Q.GetOwnerMemorySource(ctx, "c")
+	require.Error(t, err)
+}
+
 // TestWriterBackfillWindow:回填只取开启前 30 天内有活动的来源；进度按来源数计算。
 func TestWriterBackfillWindow(t *testing.T) {
 	ctx := context.Background()
