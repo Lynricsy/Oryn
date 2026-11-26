@@ -167,6 +167,8 @@ func (r *Runtime) handleSock(ctx context.Context, method string, params json.Raw
 		return r.sshCall(ctx, params)
 	case orbsock.MethodBoxCall:
 		return r.boxCall(ctx, params)
+	case orbsock.MethodSandboxCall:
+		return r.sandboxCall(ctx, params, out)
 	default:
 		if res, ok, err := r.handleThreadSock(ctx, method, params); ok {
 			return res, err

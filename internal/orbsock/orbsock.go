@@ -93,6 +93,11 @@ const (
 	// 由 orb 内 `oryn follow add` 发出，控制面核对 quote 是主人在该线程里的原话。只在 orbd.sock 上，runner.sock 不提供。
 	MethodFollowAdd = "follow.add"
 
+	// Agent 沙箱（M30，docs/plan-m30.md C5）：sandbox.call（SandboxCallParams）由 orbd 在 link 上打开一条 `sandbox` 流转给
+	// 控制面，op 与 params 原样放进请求行；exec 的输出作为 stdout / stderr 日志流回，结果是控制面回的 result 原文，
+	// 控制面的错误码原样透传。threadId 恒为调用方线程。只在 orbd.sock 上，runner.sock 与沙箱自身不提供。
+	MethodSandboxCall = "sandbox.call"
+
 	// 设计画布（M29，docs/plan-m29.md C3 / C4）：orbd 在 `~/designs/<artifactId>/` 维护工作副本，经 ctl artifact.call
 	// 的内部操作物化与封存。只在 orbd.sock 上，runner.sock 不提供。threadId 恒为调用方线程。
 	// design.open（DesignOpenParams → DesignOpenResult）建立或接管本线程的工作副本并起 dev 服务；
@@ -197,6 +202,13 @@ func Errorf(code, format string, args ...any) *Error {
 // RerunParams 是 setup.rerun 的参数。
 type RerunParams struct {
 	Resume bool `json:"resume,omitempty"`
+}
+
+// SandboxCallParams 是 sandbox.call 的参数（M30）。
+type SandboxCallParams struct {
+	ThreadID string          `json:"threadId"`
+	Op       string          `json:"op"`
+	Params   json.RawMessage `json:"params,omitempty"`
 }
 
 // Status 是 setup.status 的结果，也是 `$HOME/.oryn/setup-status.json` 的内容。
