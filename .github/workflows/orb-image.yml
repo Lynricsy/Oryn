@@ -38,6 +38,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      publishable: ${{ steps.meta.outputs.publishable }}
       tag: ${{ steps.meta.outputs.tag }}
       label: ${{ steps.meta.outputs.label }}
       date: ${{ steps.meta.outputs.date }}
@@ -61,16 +62,31 @@ jobs:
             echo "::error::无效的 tag「${tag}」"
             exit 1
           fi
+          # 构建跑的是该 tag 自己的 Dockerfile 与构建脚本。改用 VSCodium 之前的 tag 会把微软官方 VS Code 装进镜像，
+          # 不能公开发布：定时任务跳过（等下一个 Release），手动指定或发版调用时直接失败。
+          dockerfile=$(gh api -H "Accept: application/vnd.github.raw" "repos/${GH_REPO}/contents/images/orb/Dockerfile?ref=${tag}")
+          publishable=true
+          if grep -q 'update.code.visualstudio.com' <<<"$dockerfile"; then
+            publishable=false
+            if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+              echo "::notice::${tag} 的镜像内置微软官方 VS Code，不能公开发布；跳过本次重建"
+            else
+              echo "::error::${tag} 的镜像内置微软官方 VS Code（许可不允许再分发），拒绝构建与推送"
+              exit 1
+            fi
+          fi
           {
             echo "tag=$tag"
             echo "label=${tag#v}"
             echo "date=$(date -u +%Y%m%d)"
             echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oryn-orb"
+            echo "publishable=$publishable"
           } >> "$GITHUB_OUTPUT"
-          echo "orb 镜像：${tag}" >> "$GITHUB_STEP_SUMMARY"
+          echo "orb 镜像：${tag}（可发布：${publishable}）" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     needs: resolve
+    if: needs.resolve.outputs.publishable == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -109,10 +125,20 @@ jobs:
       - name: 取 Oryn Core
         shell: bash
         run: scripts/fetch-core.sh "$ARCH"
-      # 构建脚本最后在断网容器里跑冒烟，并确认镜像没有内置微软官方 VS Code
       - name: 构建并冒烟
         shell: bash
         run: IMAGE="$IMAGE" VERSION="$TAG" scripts/build-orb-image.sh "$ARCH"
+      # 推送前由本工作流自己再查一次，不依赖被构建 tag 的脚本：没有 /opt/vscode，code 不指向它，
+      # 整个根文件系统里也没有任何一份 nameLong 为 Visual Studio Code 的 product.json（微软官方发行版的标识）
+      - name: 确认没有内置微软官方 VS Code
+        shell: bash
+        run: |
+          docker run --rm --network none --user 0 --entrypoint bash "$IMAGE" -c '
+            set -euo pipefail
+            test ! -e /opt/vscode
+            if command -v code >/dev/null; then [[ "$(readlink -f "$(command -v code)")" != /opt/vscode/* ]]; fi
+            found=$(find / -xdev -path "*/resources/app/product.json" -exec jq -r "select((.nameLong // \"\") | test(\"Visual Studio Code\")) | input_filename" {} +)
+            if [[ -n "$found" ]]; then echo "发现微软官方 VS Code：$found" >&2; exit 1; fi'
       - name: 推送单架构镜像
         shell: bash
         env:
