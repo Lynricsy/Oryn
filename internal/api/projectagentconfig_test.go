@@ -3,6 +3,7 @@ package api_test
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"os"
@@ -271,6 +272,7 @@ func TestProjectAgentConfigWriteRacesDelete(t *testing.T) {
 	}{
 		{"put", "PUT", "/files/rules%2Fa.md", "application/octet-stream", []byte("# a")},
 		{"import", "POST", "/import", "application/x-tar", h2Tar(t, map[string]string{"rules/a.md": "# a"})},
+		{"batch", "POST", "/batch", "application/json", []byte(`{"files":[{"path":"rules/a.md","content":"# a"}]}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := h2Project(t, e, c, tc.name)
@@ -311,5 +313,87 @@ func TestProjectAgentConfigWriteRacesDelete(t *testing.T) {
 			_, err = os.Lstat(filepath.Join(e.dataDir, agentcfg.ProjectsDirName, id))
 			assert.True(t, os.IsNotExist(err), "已删项目的配置目录不能复活：%v", err)
 		})
+	}
+}
+
+// 批量变更：全局与项目级共用处理逻辑；先删后写、base64 与 mode、整批校验失败不改盘、项目不存在 404。
+func TestAgentConfigBatchAPI(t *testing.T) {
+	e := newH2Env(t)
+	c := h2DeviceToken(t, e)
+	id := h2Project(t, e, c, "p")
+	type batchResult struct {
+		Files []struct {
+			Path string
+			Mode int
+			Size int64
+		}
+		Deleted          []string
+		ExtractedSecrets []string
+		Warnings         []any
+	}
+	for _, base := range []string{"/api/v1/agent-config", "/api/v1/projects/" + id + "/agent-config"} {
+		require.Equal(t, 200, e.do("PUT", base+"/files/skills%2Fs%2Fold.md", c, []byte("old")).status)
+		bin := []byte{0x00, 0xff, 0x7f}
+		r := e.do("POST", base+"/batch", c, map[string]any{
+			"delete": []string{"skills/s", "skills/missing"},
+			"files": []map[string]any{
+				{"path": "skills/s/SKILL.md", "content": "---\ndescription: s\n---\n"},
+				{"path": "skills/s/scripts/run.sh", "content": "#!/bin/sh\n", "encoding": "utf8", "mode": 493},
+				{"path": "skills/s/assets/a.bin", "content": base64.StdEncoding.EncodeToString(bin), "encoding": "base64"},
+			},
+		})
+		require.Equal(t, 200, r.status, base+": "+string(r.body))
+		var res batchResult
+		r.json(t, &res)
+		require.Len(t, res.Files, 3, base)
+		assert.Equal(t, "skills/s/SKILL.md", res.Files[0].Path)
+		assert.Equal(t, "skills/s/assets/a.bin", res.Files[1].Path)
+		assert.Equal(t, int64(len(bin)), res.Files[1].Size)
+		assert.Equal(t, 0o755, res.Files[2].Mode)
+		assert.Equal(t, []string{"skills/s/old.md"}, res.Deleted)
+		assert.Equal(t, []string{}, res.ExtractedSecrets)
+		assert.NotNil(t, res.Warnings)
+		r = e.do("GET", base+"/files/skills%2Fs%2Fassets%2Fa.bin", c, nil)
+		require.Equal(t, 200, r.status)
+		assert.Equal(t, bin, r.body)
+
+		// 只删：files 为空列表而不是 null
+		r = e.do("POST", base+"/batch", c, map[string]any{"delete": []string{"skills/s"}})
+		require.Equal(t, 200, r.status, string(r.body))
+		assert.JSONEq(t, `{"files":[],"deleted":["skills/s/SKILL.md","skills/s/assets/a.bin","skills/s/scripts/run.sh"],"extractedSecrets":[],"warnings":[]}`, string(r.body))
+		assert.Equal(t, []string{}, h2ListPaths(t, e, c, base+"/files"))
+
+		// 400：整批不改盘
+		require.Equal(t, 200, e.do("PUT", base+"/files/rules%2Fkeep.md", c, []byte("keep")).status)
+		for _, bad := range []any{
+			map[string]any{},
+			[]byte("not json"),
+			map[string]any{"files": []map[string]any{{"path": "a.bin", "content": "!!", "encoding": "base64"}}},
+			map[string]any{"files": []map[string]any{{"path": "a.bin", "content": "x", "encoding": "hex"}}},
+			map[string]any{"files": []map[string]any{{"path": "a.sh", "content": "x", "mode": 512}}},
+			map[string]any{"files": []map[string]any{{"path": "a.md", "content": "x"}, {"path": "a.md", "content": "y"}}},
+			map[string]any{"delete": []string{"rules/keep.md"}, "files": []map[string]any{{"path": "../x", "content": "x"}}},
+			map[string]any{"files": []map[string]any{{"path": "rules/keep.md/x", "content": "x"}}},
+			map[string]any{"delete": []string{"sessions"}},
+		} {
+			r := e.do("POST", base+"/batch", c, bad)
+			assert.Equal(t, 400, r.status, "%s %v: %s", base, bad, r.body)
+			assert.Equal(t, "invalid_request", r.code(t))
+		}
+		assert.Equal(t, []string{"rules/keep.md"}, h2ListPaths(t, e, c, base+"/files"))
+	}
+
+	// 项目级：单文件超限 413；models.yml 400；未知项目 404 且不建目录
+	pbase := "/api/v1/projects/" + id + "/agent-config/batch"
+	r := e.do("POST", pbase, c, map[string]any{"files": []map[string]any{{"path": "big.md", "content": strings.Repeat("x", agentcfg.ProjectMaxFileSize+1)}}})
+	assert.Equal(t, 413, r.status, string(r.body))
+	r = e.do("POST", pbase, c, map[string]any{"files": []map[string]any{{"path": "models.yml", "content": "providers: {}\n"}}})
+	assert.Equal(t, 400, r.status, string(r.body))
+	for _, ghost := range []string{"prj_00000000000000000000000000", "nope"} {
+		r := e.do("POST", "/api/v1/projects/"+ghost+"/agent-config/batch", c, map[string]any{"files": []map[string]any{{"path": "a.md", "content": "x"}}})
+		assert.Equal(t, 404, r.status, string(r.body))
+		assert.Equal(t, "not_found", r.code(t))
+		_, err := os.Stat(filepath.Join(e.dataDir, agentcfg.ProjectsDirName, ghost))
+		assert.True(t, os.IsNotExist(err))
 	}
 }

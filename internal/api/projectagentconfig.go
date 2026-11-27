@@ -67,3 +67,10 @@ func (s *Server) ImportProjectAgentConfig(w http.ResponseWriter, r *http.Request
 		s.ompConfigChanged(id)
 	}
 }
+
+// ApplyProjectAgentConfigBatch 批量增删项目级配置文件。成功后防抖下发到该项目运行中的 orb（M13）。
+func (s *Server) ApplyProjectAgentConfigBatch(w http.ResponseWriter, r *http.Request, id apigen.ProjectIDPath) {
+	if h, ok := s.projectHome(w, r, id); ok && applyAgentBatch(w, r, h, nil) {
+		s.ompConfigChanged(id)
+	}
+}

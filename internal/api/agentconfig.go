@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net/http"
@@ -10,7 +12,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/secrets"
 )
 
-// importHeaderSlack 是 tar 包体在内容合计上限之外允许的头部余量。
+// importHeaderSlack 是 tar 包体（或批量变更的 JSON 请求体）在内容合计上限之外允许的头部余量。
 const importHeaderSlack = 32 << 20
 
 func agentFileJSON(f agentcfg.FileInfo) apigen.AgentConfigFile {
@@ -52,6 +54,13 @@ func (s *Server) DeleteAgentConfigFile(w http.ResponseWriter, r *http.Request, p
 // ImportAgentConfig 用 tar 包整体替换 omp-home。成功后防抖下发到运行中的 orb（M13）。
 func (s *Server) ImportAgentConfig(w http.ResponseWriter, r *http.Request) {
 	if importAgentFiles(w, r, s.Auth.Home, s.Auth.Vault) {
+		s.ompConfigChanged("")
+	}
+}
+
+// ApplyAgentConfigBatch 批量增删 omp-home 文件（多文件条目的导入、替换与删除）。成功后防抖下发到运行中的 orb（M13）。
+func (s *Server) ApplyAgentConfigBatch(w http.ResponseWriter, r *http.Request) {
+	if applyAgentBatch(w, r, s.Auth.Home, s.Auth.Vault) {
 		s.ompConfigChanged("")
 	}
 }
@@ -183,6 +192,59 @@ func importAgentFiles(w http.ResponseWriter, r *http.Request, h *agentcfg.Home, 
 	out := apigen.AgentConfigImportResult{
 		Files: make([]apigen.AgentConfigFile, 0, len(res.Files)), ExtractedSecrets: res.ExtractedSecrets,
 		Warnings: agentWarningsJSON(res.Warnings),
+	}
+	for _, f := range res.Files {
+		out.Files = append(out.Files, agentFileJSON(f))
+	}
+	WriteJSON(w, http.StatusOK, out)
+	return true
+}
+
+// applyAgentBatch 对配置根 h 执行一批文件变更；请求体上限 = h 的合计上限 + 头部余量。返回是否成功（失败时已写出错误）。
+func applyAgentBatch(w http.ResponseWriter, r *http.Request, h *agentcfg.Home, vault *secrets.Vault) bool {
+	body, err := readBody(r, int64(h.MaxTotalSize())+importHeaderSlack)
+	if err != nil {
+		writeErr(w, r, err)
+		return false
+	}
+	var req apigen.AgentConfigBatch
+	if err := json.Unmarshal(body, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "请求体不是有效 JSON: "+err.Error())
+		return false
+	}
+	batch := agentcfg.Batch{Delete: req.Delete, Files: make([]agentcfg.BatchFile, 0, len(req.Files))}
+	for _, f := range req.Files {
+		var content []byte
+		switch {
+		case f.Encoding == nil || *f.Encoding == apigen.UTF8:
+			content = []byte(f.Content)
+		case *f.Encoding == apigen.Base64:
+			if content, err = base64.StdEncoding.DecodeString(f.Content); err != nil {
+				WriteError(w, http.StatusBadRequest, "invalid_request", f.Path+": base64 解码失败: "+err.Error())
+				return false
+			}
+		default:
+			WriteError(w, http.StatusBadRequest, "invalid_request", f.Path+": encoding 须是 utf8 或 base64")
+			return false
+		}
+		var mode fs.FileMode
+		if f.Mode != nil {
+			if *f.Mode < 0 || *f.Mode > 0o777 {
+				WriteError(w, http.StatusBadRequest, "invalid_request", f.Path+": mode 须在 0–511 之间")
+				return false
+			}
+			mode = fs.FileMode(*f.Mode)
+		}
+		batch.Files = append(batch.Files, agentcfg.BatchFile{Path: f.Path, Content: content, Mode: mode})
+	}
+	res, err := h.Apply(r.Context(), batch, vault)
+	if err != nil {
+		writeErr(w, r, err)
+		return false
+	}
+	out := apigen.AgentConfigBatchResult{
+		Files: make([]apigen.AgentConfigFile, 0, len(res.Files)), Deleted: res.Deleted,
+		ExtractedSecrets: res.ExtractedSecrets, Warnings: agentWarningsJSON(res.Warnings),
 	}
 	for _, f := range res.Files {
 		out.Files = append(out.Files, agentFileJSON(f))

@@ -374,18 +374,183 @@ func (h *Home) Delete(p string) error {
 	if h.removed {
 		return ErrProjectRemoved
 	}
-	abs := h.abs(rel)
-	st, err := os.Lstat(abs)
+	st, err := os.Lstat(h.abs(rel))
 	if err != nil {
 		return err
 	}
 	if !st.Mode().IsRegular() {
 		return fs.ErrNotExist
 	}
+	return h.removeLocked(rel)
+}
+
+// BatchFile 是批量变更里要写入的一个文件；Mode 为 0 时取 0644。
+type BatchFile struct {
+	Path    string
+	Content []byte
+	Mode    fs.FileMode
+}
+
+// Batch 是一批文件变更：先删 Delete（每项是一个文件，或一个目录下的全部文件），再写 Files（覆盖已有）。
+type Batch struct {
+	Delete []string
+	Files  []BatchFile
+}
+
+// BatchResult 是批量变更结果：Files 为本批写入的文件（按路径排序），Deleted 为被删除且未被本批重新写入的文件（排序）。
+type BatchResult struct {
+	Files            []FileInfo
+	Deleted          []string
+	ExtractedSecrets []string
+	Warnings         []Warning
+}
+
+// Apply 原子地校验并执行一批文件变更（多文件技能、扩展、工具目录的导入 / 替换 / 删除）。整批先校验再落盘：
+// 路径非法或属于运行时数据、Files 内路径重复、内容不合规则、变更后同一路径既是文件又是目录 → ErrInvalidPath /
+// ErrExcludedPath / ErrInvalidContent；单文件、变更后整层的合计大小 / 文件数、两层下发预算超限 → ErrTooLarge；
+// 校验失败时不改任何文件。Delete 不匹配任何文件时忽略；目录删除只删 listLocked 列出、且不属于运行时数据的文件。
+// models.yml 做密钥抽取（同 Put）。
+func (h *Home) Apply(ctx context.Context, b Batch, vault *secrets.Vault) (BatchResult, error) {
+	res := BatchResult{Files: []FileInfo{}, Deleted: []string{}, ExtractedSecrets: []string{}, Warnings: []Warning{}}
+	if len(b.Delete) == 0 && len(b.Files) == 0 {
+		return res, fmt.Errorf("%w：delete 与 files 不能都为空", ErrInvalidContent)
+	}
+	dels := make([]string, 0, len(b.Delete))
+	for _, p := range b.Delete {
+		rel, err := h.clean(p)
+		if err != nil {
+			return res, fmt.Errorf("%q: %w", p, err)
+		}
+		dels = append(dels, rel)
+	}
+	type entry struct {
+		content []byte
+		mode    fs.FileMode
+	}
+	writes := make(map[string]entry, len(b.Files))
+	paths := make([]string, 0, len(b.Files))
+	fileMax, totalMax, filesMax := h.limits()
+	for _, f := range b.Files {
+		rel, err := h.clean(f.Path)
+		if err != nil {
+			return res, fmt.Errorf("%q: %w", f.Path, err)
+		}
+		if _, dup := writes[rel]; dup {
+			return res, fmt.Errorf("%w：%s 在 files 里出现多次", ErrInvalidPath, rel)
+		}
+		if len(f.Content) > fileMax {
+			return res, fmt.Errorf("%s: %w（单文件 %d MiB）", rel, ErrTooLarge, fileMax>>20)
+		}
+		if err := checkContent(rel, f.Content); err != nil {
+			return res, err
+		}
+		writes[rel] = entry{content: f.Content, mode: normalizeMode(f.Mode)}
+		paths = append(paths, rel)
+	}
+	sort.Strings(paths)
+	// 密钥抽取在锁外做（同 Put）：抽取后的正文才是落盘大小，配额与预算按它算
+	for _, p := range paths {
+		out, extracted, warns, err := importOne(ctx, p, writes[p].content, vault)
+		if err != nil {
+			return res, err
+		}
+		writes[p] = entry{content: out, mode: writes[p].mode}
+		res.ExtractedSecrets = append(res.ExtractedSecrets, extracted...)
+		res.Warnings = append(res.Warnings, warns...)
+	}
+
+	deliveryMu.Lock()
+	defer deliveryMu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.removed {
+		return res, ErrProjectRemoved
+	}
+	list, err := h.listLocked()
+	if err != nil {
+		return res, err
+	}
+	// 变更后的最终文件集合（相对路径 → 大小）
+	final := make(map[string]int64, len(list)+len(paths))
+	var removed []string
+	for _, f := range list {
+		if h.batchDeletes(dels, f.Path) {
+			removed = append(removed, f.Path)
+			continue
+		}
+		final[f.Path] = f.Size
+	}
+	for _, p := range paths {
+		final[p] = int64(len(writes[p].content))
+	}
+	// 同一路径不能既是文件又是目录（`a` 与 `a/b` 并存）
+	dirs := map[string]struct{}{}
+	for p := range final {
+		for d := path.Dir(p); d != "."; d = path.Dir(d) {
+			dirs[d] = struct{}{}
+		}
+	}
+	for p := range final {
+		if _, ok := dirs[p]; ok {
+			return res, fmt.Errorf("%w：%s 在变更后既是文件又是目录", ErrInvalidPath, p)
+		}
+	}
+	// 只删不写的批次不会让本层变大，不查配额与下发预算（已超限的配置也要能删）
+	if len(paths) > 0 {
+		var total, size int64
+		for p, n := range final {
+			total += n
+			size += EntrySize(p, n)
+		}
+		if total > int64(totalMax) || len(final) > filesMax {
+			return res, fmt.Errorf("%w（合计 %d MiB、%d 个文件）", ErrTooLarge, totalMax>>20, filesMax)
+		}
+		if err := h.checkDelivery(size); err != nil {
+			return res, err
+		}
+	}
+
+	for _, p := range removed {
+		if err := h.removeLocked(p); err != nil {
+			return res, err
+		}
+		if _, ok := writes[p]; !ok {
+			res.Deleted = append(res.Deleted, p)
+		}
+	}
+	for _, p := range paths {
+		if err := writeFileAtomic(h.abs(p), writes[p].content, writes[p].mode); err != nil {
+			return res, err
+		}
+		fi, err := fileInfo(p, h.abs(p))
+		if err != nil {
+			return res, err
+		}
+		res.Files = append(res.Files, fi)
+	}
+	if e, ok := writes[ModelsFile]; ok {
+		res.Warnings = append(res.Warnings, renderWarnings(e.content, vault)...)
+	}
+	return res, nil
+}
+
+// batchDeletes 报告现有文件 rel 是否被 dels 中某项（文件本身或其所在目录）删除；运行时数据（clean 拒绝的路径）不删。
+func (h *Home) batchDeletes(dels []string, rel string) bool {
+	for _, d := range dels {
+		if rel == d || strings.HasPrefix(rel, d+"/") {
+			_, err := h.clean(rel)
+			return err == nil
+		}
+	}
+	return false
+}
+
+// removeLocked 删除文件 rel，并顺手清掉变空的父目录。持写锁调用。
+func (h *Home) removeLocked(rel string) error {
+	abs := h.abs(rel)
 	if err := os.Remove(abs); err != nil {
 		return err
 	}
-	// 顺手清掉变空的父目录
 	for d := filepath.Dir(abs); d != h.dir && strings.HasPrefix(d, h.dir); d = filepath.Dir(d) {
 		if os.Remove(d) != nil {
 			break
