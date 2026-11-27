@@ -805,6 +805,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/agent-config/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量增删项目级 omp 配置文件（M12.2；语义同 `applyAgentConfigBatch`）
+         * @description 先删后写，整批先校验再执行，规则同 `applyAgentConfigBatch`；项目级另拒绝 `models.yml` 与 `plans/`（400 `invalid_request`），
+         *     配额同 `putProjectAgentConfigFile`（单文件 1 MiB、合计 16 MiB、2000 个文件，按变更后的整层计）。项目不存在 → 404 `not_found`。
+         */
+        post: operations["applyProjectAgentConfigBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/secrets": {
         parameters: {
             query?: never;
@@ -2647,6 +2670,30 @@ export interface paths {
          *     另有合计 128 MiB、10000 个文件的上限（413 `invalid_request`）。
          */
         post: operations["importAgentConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agent-config/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量增删 omp-home 文件（多文件技能、扩展与工具目录的导入、替换与删除）
+         * @description 先删后写：`delete` 的每一项删除该路径的文件，或该路径作为目录时其下的全部文件（不匹配任何文件不算错误）；随后写入 `files`。
+         *     「先删目录再写同一目录」即整体替换一个条目。整批先校验再执行：任一路径非法或属于运行时数据、`files` 内路径重复、
+         *     写入后同一路径既是文件又是目录、内容校验失败（同 `putAgentConfigFile`）、`encoding: base64` 解码失败 → 400 `invalid_request`，
+         *     不改动任何文件；单文件、合计、文件数或下发上限同 `putAgentConfigFile` 与 `importAgentConfig`（413 `invalid_request`）。
+         *     `delete` 与 `files` 不能都为空。成功后与单文件写入一样防抖下发。
+         */
+        post: operations["applyAgentConfigBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10756,6 +10803,35 @@ export interface components {
             extractedSecrets: string[];
             warnings: components["schemas"]["AgentConfigWarning"][];
         };
+        /** @description 一批文件变更：先删 `delete`，再写 `files` */
+        AgentConfigBatch: {
+            /** @description 要删除的路径（相对配置根）；是目录时删除其下全部文件，不匹配任何文件时忽略 */
+            delete?: string[];
+            /** @description 要写入的文件；已存在的覆盖 */
+            files?: components["schemas"]["AgentConfigBatchFile"][];
+        };
+        AgentConfigBatchFile: {
+            /** @description 相对配置根的路径，如 `skills/foo/scripts/run.sh` */
+            path: string;
+            /** @description 文件内容：`encoding` 为 `utf8`（缺省）时是原文，为 `base64` 时是标准 base64（二进制文件用） */
+            content: string;
+            /**
+             * @default utf8
+             * @enum {string}
+             */
+            encoding: "utf8" | "base64";
+            /** @description 文件权限（十进制表示的 Unix 权限位，如 493 = 0755）；缺省 0644 */
+            mode?: number;
+        };
+        AgentConfigBatchResult: {
+            /** @description 本次写入的文件（按路径排序） */
+            files: components["schemas"]["AgentConfigFile"][];
+            /** @description 本次删除且未被重新写入的文件路径（按路径排序） */
+            deleted: string[];
+            /** @description 本次从 models.yml 抽取进密钥库的密钥名 */
+            extractedSecrets: string[];
+            warnings: components["schemas"]["AgentConfigWarning"][];
+        };
         /** @description omp 配置在会话上的生效状态（M13） */
         AgentConfigApplyStatus: {
             /** @description 需重启才能让配置生效的会话，按线程 id 排序 */
@@ -14864,6 +14940,33 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    applyProjectAgentConfigBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ProjectIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentConfigBatch"];
+            };
+        };
+        responses: {
+            /** @description 变更结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigBatchResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listProjectSecrets: {
         parameters: {
             query?: never;
@@ -17702,6 +17805,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentConfigImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyAgentConfigBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentConfigBatch"];
+            };
+        };
+        responses: {
+            /** @description 变更结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigBatchResult"];
                 };
             };
             default: components["responses"]["Error"];

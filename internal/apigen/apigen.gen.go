@@ -35,6 +35,24 @@ func (e AgentAvatarSource) Valid() bool {
 	}
 }
 
+// Defines values for AgentConfigBatchFileEncoding.
+const (
+	Base64 AgentConfigBatchFileEncoding = "base64"
+	UTF8   AgentConfigBatchFileEncoding = "utf8"
+)
+
+// Valid indicates whether the value is a known member of the AgentConfigBatchFileEncoding enum.
+func (e AgentConfigBatchFileEncoding) Valid() bool {
+	switch e {
+	case Base64:
+		return true
+	case UTF8:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentStatus.
 const (
 	AgentStatusExited   AgentStatus = "exited"
@@ -4943,6 +4961,44 @@ type AgentConfigApplyStatus struct {
 
 	// Threads 需重启才能让配置生效的会话，按线程 id 排序
 	Threads []AgentConfigRestartThread `json:"threads"`
+}
+
+// AgentConfigBatch 一批文件变更：先删 `delete`，再写 `files`
+type AgentConfigBatch struct {
+	// Delete 要删除的路径（相对配置根）；是目录时删除其下全部文件，不匹配任何文件时忽略
+	Delete []string `json:"delete,omitempty"`
+
+	// Files 要写入的文件；已存在的覆盖
+	Files []AgentConfigBatchFile `json:"files,omitempty"`
+}
+
+// AgentConfigBatchFile defines model for AgentConfigBatchFile.
+type AgentConfigBatchFile struct {
+	// Content 文件内容：`encoding` 为 `utf8`（缺省）时是原文，为 `base64` 时是标准 base64（二进制文件用）
+	Content  string                        `json:"content"`
+	Encoding *AgentConfigBatchFileEncoding `json:"encoding,omitempty"`
+
+	// Mode 文件权限（十进制表示的 Unix 权限位，如 493 = 0755）；缺省 0644
+	Mode *int `json:"mode,omitempty"`
+
+	// Path 相对配置根的路径，如 `skills/foo/scripts/run.sh`
+	Path string `json:"path"`
+}
+
+// AgentConfigBatchFileEncoding defines model for AgentConfigBatchFile.Encoding.
+type AgentConfigBatchFileEncoding string
+
+// AgentConfigBatchResult defines model for AgentConfigBatchResult.
+type AgentConfigBatchResult struct {
+	// Deleted 本次删除且未被重新写入的文件路径（按路径排序）
+	Deleted []string `json:"deleted"`
+
+	// ExtractedSecrets 本次从 models.yml 抽取进密钥库的密钥名
+	ExtractedSecrets []string `json:"extractedSecrets"`
+
+	// Files 本次写入的文件（按路径排序）
+	Files    []AgentConfigFile    `json:"files"`
+	Warnings []AgentConfigWarning `json:"warnings"`
 }
 
 // AgentConfigFile defines model for AgentConfigFile.
@@ -15284,6 +15340,9 @@ type ProviderReplyFsParams struct {
 	XOrynStatus int `json:"X-Oryn-Status"`
 }
 
+// ApplyAgentConfigBatchJSONRequestBody defines body for ApplyAgentConfigBatch for application/json ContentType.
+type ApplyAgentConfigBatchJSONRequestBody = AgentConfigBatch
+
 // AnswerArtifactConsentJSONRequestBody defines body for AnswerArtifactConsent for application/json ContentType.
 type AnswerArtifactConsentJSONRequestBody = ArtifactConsentAnswer
 
@@ -15511,6 +15570,9 @@ type CreateProjectJSONRequestBody = ProjectCreate
 
 // UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
 type UpdateProjectJSONRequestBody = ProjectPatch
+
+// ApplyProjectAgentConfigBatchJSONRequestBody defines body for ApplyProjectAgentConfigBatch for application/json ContentType.
+type ApplyProjectAgentConfigBatchJSONRequestBody = AgentConfigBatch
 
 // CreateGitHubTriggerJSONRequestBody defines body for CreateGitHubTrigger for application/json ContentType.
 type CreateGitHubTriggerJSONRequestBody = GitHubTriggerInput
@@ -18253,6 +18315,9 @@ type ServerInterface interface {
 	// GetAgentConfigApplyStatus omp 配置在会话上的生效状态（M13）
 	// (GET /api/v1/agent-config/apply-status)
 	GetAgentConfigApplyStatus(w http.ResponseWriter, r *http.Request)
+	// ApplyAgentConfigBatch 批量增删 omp-home 文件（多文件技能、扩展与工具目录的导入、替换与删除）
+	// (POST /api/v1/agent-config/batch)
+	ApplyAgentConfigBatch(w http.ResponseWriter, r *http.Request)
 	// ListAgentConfigFiles omp-home 文件列表
 	// (GET /api/v1/agent-config/files)
 	ListAgentConfigFiles(w http.ResponseWriter, r *http.Request)
@@ -18991,6 +19056,9 @@ type ServerInterface interface {
 	// UpdateProject 修改项目
 	// (PATCH /api/v1/projects/{id})
 	UpdateProject(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
+	// ApplyProjectAgentConfigBatch 批量增删项目级 omp 配置文件（M12.2；语义同 `applyAgentConfigBatch`）
+	// (POST /api/v1/projects/{id}/agent-config/batch)
+	ApplyProjectAgentConfigBatch(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
 	// ListProjectAgentConfigFiles 项目级 omp 配置文件列表（M12.2；目录结构同仓库里的 `.omp/`，未写过时为空列表）
 	// (GET /api/v1/projects/{id}/agent-config/files)
 	ListProjectAgentConfigFiles(w http.ResponseWriter, r *http.Request, id ProjectIDPath)
@@ -19474,6 +19542,12 @@ type Unimplemented struct{}
 // GetAgentConfigApplyStatus omp 配置在会话上的生效状态（M13）
 // (GET /api/v1/agent-config/apply-status)
 func (_ Unimplemented) GetAgentConfigApplyStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ApplyAgentConfigBatch 批量增删 omp-home 文件（多文件技能、扩展与工具目录的导入、替换与删除）
+// (POST /api/v1/agent-config/batch)
+func (_ Unimplemented) ApplyAgentConfigBatch(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -20953,6 +21027,12 @@ func (_ Unimplemented) UpdateProject(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ApplyProjectAgentConfigBatch 批量增删项目级 omp 配置文件（M12.2；语义同 `applyAgentConfigBatch`）
+// (POST /api/v1/projects/{id}/agent-config/batch)
+func (_ Unimplemented) ApplyProjectAgentConfigBatch(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListProjectAgentConfigFiles 项目级 omp 配置文件列表（M12.2；目录结构同仓库里的 `.omp/`，未写过时为空列表）
 // (GET /api/v1/projects/{id}/agent-config/files)
 func (_ Unimplemented) ListProjectAgentConfigFiles(w http.ResponseWriter, r *http.Request, id ProjectIDPath) {
@@ -21915,6 +21995,20 @@ func (siw *ServerInterfaceWrapper) GetAgentConfigApplyStatus(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAgentConfigApplyStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ApplyAgentConfigBatch operation middleware
+func (siw *ServerInterfaceWrapper) ApplyAgentConfigBatch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyAgentConfigBatch(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -29156,6 +29250,32 @@ func (siw *ServerInterfaceWrapper) UpdateProject(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ApplyProjectAgentConfigBatch operation middleware
+func (siw *ServerInterfaceWrapper) ApplyProjectAgentConfigBatch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ProjectIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ApplyProjectAgentConfigBatch(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProjectAgentConfigFiles operation middleware
 func (siw *ServerInterfaceWrapper) ListProjectAgentConfigFiles(w http.ResponseWriter, r *http.Request) {
 
@@ -34286,6 +34406,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/v1/projects/{id}/agent-config/import", wrapper.ImportProjectAgentConfig)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/projects/{id}/agent-config/batch", wrapper.ApplyProjectAgentConfigBatch)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/projects/{id}/secrets", wrapper.ListProjectSecrets)
 	})
 	r.Group(func(r chi.Router) {
@@ -34605,6 +34728,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/agent-config/import", wrapper.ImportAgentConfig)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/agent-config/batch", wrapper.ApplyAgentConfigBatch)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/agent-config/apply-status", wrapper.GetAgentConfigApplyStatus)
