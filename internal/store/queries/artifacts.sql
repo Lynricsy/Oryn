@@ -90,6 +90,11 @@ ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, dealt = excl
 INSERT INTO artifact_designs (artifact_id, surface, direction) VALUES (@artifact_id, @surface, @direction)
 ON CONFLICT (artifact_id) DO UPDATE SET surface = excluded.surface, direction = excluded.direction;
 
+-- M34: variant themes (JSON object theme name -> Direction, keys in write order, oldest first, at most 12).
+-- name: SetArtifactDesignThemes :exec
+INSERT INTO artifact_designs (artifact_id, themes) VALUES (@artifact_id, @themes)
+ON CONFLICT (artifact_id) DO UPDATE SET themes = excluded.themes;
+
 -- M29: sticky ids already auto-delivered (JSON array).
 -- name: SetArtifactDesignDelivered :exec
 INSERT INTO artifact_designs (artifact_id, delivered) VALUES (@artifact_id, @delivered)

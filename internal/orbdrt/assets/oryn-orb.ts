@@ -698,10 +698,17 @@ function designArtifactTools(z: ExtensionAPI["zod"]): Pick<ToolDefinition, "name
 			description:
 				"在画布最近一次 design_directions 发出的 3 张牌里选定一个方向，返回可直接用的 token 文本。" +
 				DESIGN_SCOPE +
-				"设计画布返回 @theme 块，写进工作副本的 src/theme.css；HTML 画框画布返回 :root 变量，放进每个画框页面的 <style>。都不合适就再发一次牌，不要自己另编配色。",
+				"只给 pick 选定主方向：设计画布返回 @theme 块，写进工作副本的 src/theme.css；HTML 画框画布返回 :root 变量，放进每个画框页面的 <style>。" +
+				"pick + theme 把这张牌记成一个方案的主题，不动主方向：设计画布返回 :root[data-oryn-theme=\"<theme>\"] 规则，写进 src/themes/<theme>.css；HTML 画框画布的 :root 只放进这个方案的画框。" +
+				"只给 theme 把记下的方案主题提升为主方向，返回同 pick。都不合适就再发一次牌，不要自己另编配色。",
 			parameters: z.object({
 				id,
-				pick: z.number().int().min(1).max(3).describe("最近一次发出的牌的编号（1–3）"),
+				pick: z.number().int().min(1).max(3).optional().describe("最近一次发出的牌的编号（1–3）"),
+				theme: z
+					.string()
+					.regex(/^[a-z0-9][a-z0-9-]{0,31}$/)
+					.optional()
+					.describe("方案主题名。和 pick 一起给：把这张牌记成这个方案的主题；单独给：把它提升为主方向"),
 			}),
 			loadMode: "essential",
 		},

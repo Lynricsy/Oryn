@@ -286,7 +286,7 @@ const (
 	probeScriptPath = "dist/probe.js"
 )
 
-// probeConfig 是注入页面的 `window.__orynProbe`：aesthetic 打开后 8 条审美规则（画布选定了设计方向时），
+// probeConfig 是注入页面的 `window.__orynProbe`：aesthetic 打开后 8 条审美规则（画布选定了设计方向或记下了方案主题时），
 // surface 为 app 时探针再关掉 eyebrow-excess 与 split-repeat。
 type probeConfig struct {
 	Aesthetic bool   `json:"aesthetic"`
@@ -311,7 +311,7 @@ func (h *Host) withProbe(ctx context.Context, id string, version int, path strin
 	row, err := h.s.st.Q.GetArtifactDesign(ctx, id)
 	switch {
 	case err == nil:
-		cfg.Aesthetic = deref(row.Direction) != ""
+		cfg.Aesthetic = designAesthetic(row)
 		cfg.Surface = deref(row.Surface)
 	case !errors.Is(err, sql.ErrNoRows):
 		return nil, err

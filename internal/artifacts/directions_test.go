@@ -3,6 +3,8 @@ package artifacts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 	"github.com/Lynricsy/Oryn/internal/artifacts/design"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 )
 
 func dealtOf(t *testing.T, e *env, id string) []design.Direction {
@@ -182,4 +185,121 @@ func TestDesignDirectionPick(t *testing.T) {
 	mkThread(t, e.st, "thr_b", "")
 	_, err = agentCall(t, e.s, threadCaller("thr_b"), OpDesignDirections, `{"id":"`+id+`","surface":"landing"}`)
 	assert.Equal(t, CodeNotFound, code(err))
+}
+
+// themesOf 按写入顺序读 artifact_designs.themes。
+func themesOf(t *testing.T, e *env, id string) []designTheme {
+	t.Helper()
+	row, err := e.st.Q.GetArtifactDesign(context.Background(), id)
+	require.NoError(t, err)
+	out, err := parseThemes(row.Themes)
+	require.NoError(t, err)
+	return out
+}
+
+// M34 C3：pick + theme 把牌记成方案主题（作用域规则写进 src/themes/<theme>.css），不动主方向；只有方案主题时
+// design_head 的 aesthetic 也为真；重写同名主题移到末尾，超过 12 项淘汰最早写入的；参数组合不对回 invalid。
+func TestDesignDirectionTheme(t *testing.T) {
+	e := newEnv(t)
+	mkThread(t, e.st, "thr_a", "")
+	id := mkEmptyDesign(t, e, "thr_a")
+	c := threadCaller("thr_a")
+	internal := c
+	internal.Internal = true
+
+	_, err := agentCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`"}`)
+	require.Equal(t, CodeInvalid, code(err))
+	assert.Contains(t, err.Error(), "pick 或 theme")
+
+	cards := dealDetails(t, mustCall(t, e.s, c, OpDesignDirections, `{"id":"`+id+`","surface":"landing"}`))
+	for _, theme := range []string{"Calm", "-calm", "calm_b", "a234567890123456789012345678901234"} {
+		_, err := agentCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","pick":1,"theme":"`+theme+`"}`)
+		assert.Equal(t, CodeInvalid, code(err), theme)
+	}
+	_, err = agentCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","pick":4,"theme":"calm"}`)
+	assert.Equal(t, CodeInvalid, code(err))
+
+	r := mustCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","pick":1,"theme":"calm"}`)
+	scoped := design.ScopedThemeCSS("calm", cards[0])
+	assert.True(t, strings.HasPrefix(scoped, `:root[data-oryn-theme="calm"] {`+"\n"))
+	assert.Equal(t, strings.TrimPrefix(design.ThemeCSS(cards[0]), "@theme {"), strings.TrimPrefix(scoped, `:root[data-oryn-theme="calm"] {`), "声明与 ThemeCSS 相同")
+	assert.Contains(t, r.Text, scoped)
+	assert.Contains(t, r.Text, "src/themes/calm.css")
+	assert.Contains(t, r.Text, `theme: "calm"`, "说明之后怎么提升")
+	assert.NotContains(t, r.Text, "@theme")
+	st, err := e.s.Design(context.Background(), id)
+	require.NoError(t, err)
+	assert.Nil(t, st.Direction, "记方案主题不动主方向")
+	assert.Equal(t, []designTheme{{Name: "calm", Direction: cards[0]}}, themesOf(t, e, id))
+
+	// 只有方案主题、没有主方向：design_head 的审美规则照样打开
+	head := orbsock.DesignHead{}
+	require.NoError(t, json.Unmarshal([]byte(mustCall(t, e.s, internal, OpDesignHead, `{"id":"`+id+`"}`).Text), &head))
+	assert.True(t, head.Aesthetic)
+	assert.Equal(t, "landing", head.Surface)
+
+	// 重写同名主题移到末尾
+	mustCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","pick":2,"theme":"warm"}`)
+	mustCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","pick":3,"theme":"calm"}`)
+	assert.Equal(t, []designTheme{{Name: "warm", Direction: cards[1]}, {Name: "calm", Direction: cards[2]}}, themesOf(t, e, id))
+	// 超过 12 项淘汰最早写入的
+	for i := 1; i <= 11; i++ {
+		mustCall(t, e.s, c, OpDesignDirection, fmt.Sprintf(`{"id":"%s","pick":1,"theme":"t%d"}`, id, i))
+	}
+	got := themesOf(t, e, id)
+	require.Len(t, got, 12)
+	assert.Equal(t, "calm", got[0].Name, "warm 最早写入，被淘汰")
+	assert.Equal(t, "t11", got[11].Name)
+
+	// HTML 画框画布：:root 文本只放进这个方案的画框
+	doc := canvas.Doc{Canvases: []canvas.Canvas{{ID: canvas.DefaultCanvasID, Name: canvas.DefaultCanvasName}}}
+	h, err := e.s.Create(context.Background(), CreateParams{Title: "画布", ThreadID: "thr_a", Files: []FileChange{put(EntryCanvas, string(doc.JSON()))}})
+	require.NoError(t, err)
+	hc := dealDetails(t, mustCall(t, e.s, c, OpDesignDirections, `{"id":"`+h.ID+`","surface":"landing"}`))
+	r = mustCall(t, e.s, c, OpDesignDirection, `{"id":"`+h.ID+`","pick":2,"theme":"b"}`)
+	assert.Contains(t, r.Text, rootCSS(hc[1]))
+	assert.Contains(t, r.Text, "这个方案每个画框")
+	assert.NotContains(t, r.Text, "data-oryn-theme")
+	assert.Equal(t, []designTheme{{Name: "b", Direction: hc[1]}}, themesOf(t, e, h.ID))
+}
+
+// M34 C3：只给 theme 把记下的方案主题复制成主方向（回与 pick 相同的 token 文本）；没有记录的主题回 invalid。
+func TestDesignDirectionPromote(t *testing.T) {
+	e := newEnv(t)
+	mkThread(t, e.st, "thr_a", "")
+	id := mkEmptyDesign(t, e, "thr_a")
+	c := threadCaller("thr_a")
+
+	_, err := agentCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","theme":"calm"}`)
+	require.Equal(t, CodeInvalid, code(err))
+	assert.Contains(t, err.Error(), "这个主题不是来自方向牌，把它的变量直接抄进 src/theme.css 即可")
+
+	cards := dealDetails(t, mustCall(t, e.s, c, OpDesignDirections, `{"id":"`+id+`","surface":"landing"}`))
+	mustCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","pick":2,"theme":"calm"}`)
+	e.clk.add(1)
+	mustCall(t, e.s, c, OpDesignDirections, `{"id":"`+id+`","surface":"landing"}`)
+	_, err = agentCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","theme":"warm"}`)
+	assert.Equal(t, CodeInvalid, code(err))
+
+	r := mustCall(t, e.s, c, OpDesignDirection, `{"id":"`+id+`","theme":"calm"}`)
+	assert.Contains(t, r.Text, design.ThemeCSS(cards[1]), "提升的是记下的那张牌，不是最近一次发的牌")
+	assert.Contains(t, r.Text, "src/theme.css")
+	assert.NotContains(t, r.Text, "data-oryn-theme")
+	st, err := e.s.Design(context.Background(), id)
+	require.NoError(t, err)
+	var picked design.Direction
+	require.NoError(t, json.Unmarshal(st.Direction, &picked))
+	assert.Equal(t, cards[1], picked)
+	assert.Equal(t, []designTheme{{Name: "calm", Direction: cards[1]}}, themesOf(t, e, id), "提升不改 themes")
+	row, err := e.st.Q.GetArtifactDesign(context.Background(), id)
+	require.NoError(t, err)
+	assert.Equal(t, "landing", deref(row.Surface), "提升不清掉 surface")
+
+	// HTML 画框画布：没有记录的主题指向 :root
+	doc := canvas.Doc{Canvases: []canvas.Canvas{{ID: canvas.DefaultCanvasID, Name: canvas.DefaultCanvasName}}}
+	h, err := e.s.Create(context.Background(), CreateParams{Title: "画布", ThreadID: "thr_a", Files: []FileChange{put(EntryCanvas, string(doc.JSON()))}})
+	require.NoError(t, err)
+	_, err = agentCall(t, e.s, c, OpDesignDirection, `{"id":"`+h.ID+`","theme":"calm"}`)
+	require.Equal(t, CodeInvalid, code(err))
+	assert.Contains(t, err.Error(), ":root")
 }

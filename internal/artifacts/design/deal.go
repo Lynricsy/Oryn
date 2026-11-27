@@ -621,8 +621,20 @@ func parseHex(hex string) (float64, float64, float64) {
 // 正文覆盖 Tailwind 缺省的 `--font-sans`，有等宽字体时覆盖 `--font-mono`。只写 token，不负责加载字体文件。
 // d 应先通过 Validate。
 func ThemeCSS(d Direction) string {
+	return tokenBlock("@theme {", d)
+}
+
+// ScopedThemeCSS 是方案主题文件 src/themes/<name>.css 的内容：一条 `:root[data-oryn-theme="<name>"] {…}` 规则，
+// 声明与 ThemeCSS 完全相同（M34 C3）。规则不在任何 layer 里，覆盖 Tailwind @layer theme 里的基础 token。
+// name 应先匹配 ^[a-z0-9][a-z0-9-]{0,31}$，d 应先通过 Validate。
+func ScopedThemeCSS(name string, d Direction) string {
+	return tokenBlock(`:root[data-oryn-theme="`+name+`"] {`, d)
+}
+
+// tokenBlock 写 `<open>` 起头、`}` 收尾的 token 声明块，ThemeCSS 与 ScopedThemeCSS 共用。
+func tokenBlock(open string, d Direction) string {
 	var b strings.Builder
-	b.WriteString("@theme {\n")
+	b.WriteString(open + "\n")
 	for _, c := range d.Palette.Colors {
 		fmt.Fprintf(&b, "  --color-%s: %s;\n", c.Role, strings.ToLower(c.Hex))
 	}
