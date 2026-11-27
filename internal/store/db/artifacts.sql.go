@@ -60,7 +60,7 @@ func (q *Queries) GetArtifact(ctx context.Context, id string) (Artifact, error) 
 }
 
 const getArtifactDesign = `-- name: GetArtifactDesign :one
-SELECT artifact_id, surface, direction, dealt, auto_notes, delivered, dirty_at FROM artifact_designs WHERE artifact_id = ?1
+SELECT artifact_id, surface, direction, dealt, auto_notes, delivered, dirty_at, themes FROM artifact_designs WHERE artifact_id = ?1
 `
 
 // M29: per-artifact design state; no row = defaults (auto_notes 1).
@@ -75,6 +75,7 @@ func (q *Queries) GetArtifactDesign(ctx context.Context, artifactID string) (Art
 		&i.AutoNotes,
 		&i.Delivered,
 		&i.DirtyAt,
+		&i.Themes,
 	)
 	return i, err
 }
@@ -610,6 +611,22 @@ type SetArtifactDesignDirtyParams struct {
 // M29: notes became pending at dirty_at (NULL = clean).
 func (q *Queries) SetArtifactDesignDirty(ctx context.Context, arg SetArtifactDesignDirtyParams) error {
 	_, err := q.db.ExecContext(ctx, setArtifactDesignDirty, arg.ArtifactID, arg.DirtyAt)
+	return err
+}
+
+const setArtifactDesignThemes = `-- name: SetArtifactDesignThemes :exec
+INSERT INTO artifact_designs (artifact_id, themes) VALUES (?1, ?2)
+ON CONFLICT (artifact_id) DO UPDATE SET themes = excluded.themes
+`
+
+type SetArtifactDesignThemesParams struct {
+	ArtifactID string `json:"artifactId"`
+	Themes     string `json:"themes"`
+}
+
+// M34: variant themes (JSON object theme name -> Direction, keys in write order, oldest first, at most 12).
+func (q *Queries) SetArtifactDesignThemes(ctx context.Context, arg SetArtifactDesignThemesParams) error {
+	_, err := q.db.ExecContext(ctx, setArtifactDesignThemes, arg.ArtifactID, arg.Themes)
 	return err
 }
 

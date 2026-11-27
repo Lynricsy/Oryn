@@ -77,6 +77,7 @@ type ArtifactDesign struct {
 	AutoNotes  int64   `json:"autoNotes"`
 	Delivered  string  `json:"delivered"`
 	DirtyAt    *int64  `json:"dirtyAt"`
+	Themes     string  `json:"themes"`
 }
 
 type ArtifactFile struct {
