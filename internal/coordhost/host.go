@@ -872,8 +872,9 @@ func (h *Host) start(orbID string, a account) error {
 		if c.cleanupUID > 0 {
 			h.killUID(c.cleanupUID)
 		}
-		close(c.done)
+		// 先从 children 摘掉再关 done：等 done 的一方（stop / abort）返回时，children 里已经没有这个退出的子进程
 		h.onExit(c)
+		close(c.done)
 	}()
 	err = <-started
 	_ = childF.Close()
