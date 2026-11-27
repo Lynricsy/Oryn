@@ -615,7 +615,8 @@ func CleanTitle(t string) (string, error) {
 	return t, nil
 }
 
-// Rename 改标题（不产生版本；回收站里的不能改）。
+// Rename 改标题（不产生版本；回收站里的不能改）。Office 编辑占用期间回 locked（D16）：闸门与改名在同一写事务里，
+// 不会在检查之后、改名之前被新开的占用插进来。
 func (s *Service) Rename(ctx context.Context, id, title string) (Artifact, error) {
 	title, err := CleanTitle(title)
 	if err != nil {
@@ -628,7 +629,14 @@ func (s *Service) Rename(ctx context.Context, id, title string) (Artifact, error
 	if r.DeletedAt != nil {
 		return Artifact{}, deletedErr(id)
 	}
-	if _, err := s.st.Q.RenameArtifact(ctx, db.RenameArtifactParams{ID: id, Title: title}); err != nil {
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := officeGate(ctx, q, id); err != nil {
+			return err
+		}
+		_, err := q.RenameArtifact(ctx, db.RenameArtifactParams{ID: id, Title: title})
+		return err
+	})
+	if err != nil {
 		return Artifact{}, err
 	}
 	s.changed()

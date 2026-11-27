@@ -493,10 +493,21 @@ func TestOfficeAgentUpdateLocked(t *testing.T) {
 	_, err := agentCall(t, e.s, c, OpUpdate, update)
 	require.Equal(t, CodeLocked, code(err))
 	assert.Contains(t, err.Error(), "用户正在编辑器里编辑这个文档")
+	// 只改标题同样被占用挡住，标题不变
+	rename := `{"id":"` + id + `","title":"改名"}`
+	_, err = agentCall(t, e.s, c, OpUpdate, rename)
+	require.Equal(t, CodeLocked, code(err))
+	a, err := e.s.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "报告", a.Title)
 
 	require.NoError(t, e.s.CloseOffice(ctx, sess.ID))
 	e.clk.add(officeCloseGrace + time.Second)
 	e.s.SweepOffice(ctx)
 	out := textObj(t, mustCall(t, e.s, c, OpUpdate, update))
 	assert.EqualValues(t, 2, out["version"])
+	mustCall(t, e.s, c, OpUpdate, rename)
+	a, err = e.s.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "改名", a.Title, "占用释放后改名成功")
 }
