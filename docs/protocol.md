@@ -3299,4 +3299,4 @@ form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors <ancestors>
 - 审美规则开关：`direction` 非空或 `themes` 非空。
 - `design_head` 结果新增 `archived?: [帧 id]`（落选画框对应的帧，字典序）；orbd `design.check` 不点名帧时跳过它们，缓存匹配包含这个集合；`check_artifact` 不点名时同样跳过落选画框。
 - `design_notes` 结果新增 `picks: [{ref:"pick:<组>:<方案>", kind:"pick", new, group, variant, text, steps}]`；用户选定（`pickedBy` 为 `null`）随便签自动投递，ack 后键记入 `delivered`。
-- 交付：样机不传 `frames` 时排除落选画框，显式点名落选画框回 400 `invalid`；导出工程（含 eject、部署到 box）不打包落选帧文件与只被落选方案引用的主题文件，打包的 `src/variants.json` 去掉已选定的组（一个组都不剩时不打包），`oryn-frames.json` 帧项新增 `theme?`（eject 工程按路由在 `<html>` 上写 `data-oryn-theme`）；原型不含落选画框。
+- 交付：样机不传 `frames` 时排除落选画框，显式点名落选画框回 400 `invalid`；导出工程（含 eject、部署到 box）不打包落选帧文件与只被落选方案引用的主题文件，打包的 `src/variants.json` 去掉已选定的组（一个组都不剩时不打包），`oryn-frames.json` 帧项新增 `theme?`（eject 工程按路由在 `<html>` 上写 `data-oryn-theme`）；普通 zip 导出的 `canvas.json` 与概览页去掉落选画框、已选定的组与变空的「备选方案」页，落选画框的文件（设计画布另含只被落选帧引用的 `dist/assets/**`）不打包，`dist/frames.json` 去掉落选帧；原型不含落选画框。

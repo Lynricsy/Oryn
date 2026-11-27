@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"maps"
+	"mime/multipart"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 	"github.com/Lynricsy/Oryn/internal/artifacts/design"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/boxcfg"
@@ -558,4 +560,173 @@ func TestExportProjectVariants(t *testing.T) {
 		{ID: "home-b", Name: "首页 B", Theme: "warm"},
 		{ID: "hero-x", Name: "主视觉 X", Theme: "bold"},
 	}, meta.Frames)
+}
+
+// htmlVariantsCanvas 是带已选定方案组的 HTML 画框画布：方案 a（a.html）落选在「备选方案」页，b 选中，另有普通画框 p、
+// 未选定的组 hero（x、y）、备选方案页上的便签，以及一支从 b 指向 p 的箭头。
+const htmlVariantsCanvas = `{"format":3,"canvases":[{"id":"c1","name":"首页"},{"id":"alternates","name":"备选方案"}],"pages":[` +
+	`{"id":"pa","canvas":"alternates","name":"方案 A","file":"a.html","x":0,"y":0,"width":400,"height":300},` +
+	`{"id":"pb","canvas":"c1","name":"方案 B","file":"b.html","x":0,"y":0,"width":400,"height":300},` +
+	`{"id":"pp","canvas":"c1","name":"关于","file":"p.html","x":0,"y":400,"width":400,"height":300},` +
+	`{"id":"px","canvas":"c1","name":"主视觉 X","file":"x.html","x":500,"y":0,"width":400,"height":300},` +
+	`{"id":"py","canvas":"c1","name":"主视觉 Y","file":"y.html","x":1000,"y":0,"width":400,"height":300}],` +
+	`"notes":[{"id":"n1","canvas":"alternates","kind":"sticky","color":"yellow","x":0,"y":320,"text":"A 太冷"},` +
+	`{"id":"n2","canvas":"c1","kind":"arrow","color":"red","x1":0,"y1":0,"x2":10,"y2":10,"from":"pb","to":"pp"}],` +
+	`"groups":[{"id":"home","canvas":"c1","name":"首页首屏","variants":[` +
+	`{"id":"a","name":"冷静","note":"","theme":"","pages":["pa"]},{"id":"b","name":"暖调","note":"","theme":"","pages":["pb"]}],` +
+	`"picked":"b","pickedBy":null},` +
+	`{"id":"hero","canvas":"c1","name":"主视觉","variants":[` +
+	`{"id":"x","name":"X","note":"","theme":"","pages":["px"]},{"id":"y","name":"Y","note":"","theme":"","pages":["py"]}],` +
+	`"picked":null,"pickedBy":null}]}`
+
+// 普通 zip 导出同样一律排除落选方案（M34 C6）：HTML 画框画布的落选画框文件不打包，canvas.json 与生成的概览页用去掉落选
+// 画框、已选定组与空的「备选方案」页之后的文档；zip 原样导入回来是合法画布，里面也没有落选画框。
+func TestExportZipVariantsHTML(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, err := e.s.Create(ctx, CreateParams{Title: "首页方案", Files: []FileChange{
+		put(EntryCanvas, htmlVariantsCanvas), put("a.html", "<p>LOSER-A</p>"), put("b.html", "<p>B</p>"),
+		put("p.html", "<p>P</p>"), put("x.html", "<p>X</p>"), put("y.html", "<p>Y</p>"),
+	}})
+	require.NoError(t, err)
+	require.Equal(t, KindCanvas, a.Kind)
+
+	x, err := e.s.Export(ctx, a.ID, 0, ExportZip)
+	require.NoError(t, err)
+	got := unzip(t, exportBytes(t, x))
+	assert.ElementsMatch(t, []string{EntryCanvas, "b.html", "p.html", "x.html", "y.html", EntryHTML}, slices.Collect(maps.Keys(got)))
+
+	doc, err := canvas.Parse([]byte(got[EntryCanvas]))
+	require.NoError(t, err)
+	ids := func(d canvas.Doc) (pages, sheets, groups, notes []string) {
+		for _, p := range d.Pages {
+			pages = append(pages, p.ID)
+		}
+		for _, c := range d.Canvases {
+			sheets = append(sheets, c.ID)
+		}
+		for _, g := range d.Groups {
+			groups = append(groups, g.ID)
+		}
+		for _, n := range d.Notes {
+			notes = append(notes, n.ID)
+		}
+		return
+	}
+	pages, sheets, groups, notes := ids(doc)
+	assert.Equal(t, []string{"pb", "pp", "px", "py"}, pages)
+	assert.Equal(t, []string{"c1"}, sheets, "备选方案页空了一并去掉")
+	assert.Equal(t, []string{"hero"}, groups, "已选定的组整组去掉，未选定的保留")
+	assert.Equal(t, []string{"n2"}, notes, "备选方案页上的便签随页去掉")
+	assert.Empty(t, doc.Archived())
+
+	// 概览页用同一份投影
+	ov, err := canvas.Parse(overviewJSON(t, got[EntryHTML]).Doc)
+	require.NoError(t, err)
+	assert.Equal(t, doc, ov)
+	assert.NotContains(t, got[EntryHTML], "方案 A")
+
+	// 原样导入回来
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, name := range slices.Sorted(maps.Keys(got)) {
+		w, err := mw.CreateFormFile(name, name)
+		require.NoError(t, err)
+		_, _ = w.Write([]byte(got[name]))
+	}
+	require.NoError(t, mw.Close())
+	back, err := e.s.Import(ctx, multipart.NewReader(&buf, mw.Boundary()), ImportParams{Name: "首页方案"})
+	require.NoError(t, err)
+	assert.Equal(t, KindCanvas, back.Kind)
+	files, err := e.s.Files(ctx, back.ID, 0)
+	require.NoError(t, err)
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	assert.ElementsMatch(t, []string{EntryCanvas, "b.html", "p.html", "x.html", "y.html"}, paths)
+	backDoc, err := canvas.Parse([]byte(readFile(t, e.s, back.ID, 0, EntryCanvas)))
+	require.NoError(t, err)
+	assert.Equal(t, doc, backDoc)
+
+	// 没有选定时 zip 照旧整版打包
+	open := strings.Replace(htmlVariantsCanvas, `"picked":"b"`, `"picked":null`, 1)
+	a2, err := e.s.Create(ctx, CreateParams{Title: "未选定", Files: []FileChange{
+		put(EntryCanvas, open), put("a.html", "<p>A</p>"), put("b.html", "<p>B</p>"),
+		put("p.html", "<p>P</p>"), put("x.html", "<p>X</p>"), put("y.html", "<p>Y</p>"),
+	}})
+	require.NoError(t, err)
+	x, err = e.s.Export(ctx, a2.ID, 0, ExportZip)
+	require.NoError(t, err)
+	got = unzip(t, exportBytes(t, x))
+	assert.Equal(t, readFile(t, e.s, a2.ID, 0, EntryCanvas), got[EntryCanvas])
+	assert.Contains(t, got, "a.html")
+}
+
+// 设计画布的普通 zip 导出：落选帧的源码、产物入口与只被它引用的 dist/assets/**、只被落选方案用到的主题都不打包，
+// 共用的 chunk 保留；src/variants.json 与导出工程一样去掉已选定的组，dist/frames.json 去掉落选帧。
+func TestExportZipVariantsDesign(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	entry := func(id string) string {
+		return `<!doctype html><script type="module" src="./assets/` + id + `-AbCdEf12.js"></script>` +
+			`<link rel="modulepreload" href="./assets/shared-Zz99Yy88.js"><p>` + id + `</p>`
+	}
+	extra := map[string]string{
+		EntryCanvas:                      variantsCanvas,
+		"src/variants.json":              variantsManifest,
+		"src/themes/calm.css":            variantTheme("calm", "#0369a1"),
+		"src/themes/warm.css":            variantTheme("warm", "#c2410c"),
+		"src/themes/bold.css":            variantTheme("bold", "#7c3aed"),
+		"src/frames/home-a.tsx":          variantFrame("首页 A"),
+		"src/frames/home-b.tsx":          variantFrame("首页 B"),
+		"src/frames/home-c.tsx":          variantFrame("首页 C"),
+		"src/frames/hero-x.tsx":          variantFrame("主视觉 X"),
+		"src/frames/hero-y.tsx":          variantFrame("主视觉 Y"),
+		"dist/assets/shared-Zz99Yy88.js": "export const react = 1",
+		"dist/frames.json":               `[{"id":"login"},{"id":"home-a"},{"id":"home-b"},{"id":"home-c"},{"id":"hero-x"},{"id":"hero-y"}]`,
+	}
+	for _, f := range []string{"home-a", "home-b", "home-c", "hero-x", "hero-y"} {
+		extra["dist/"+f+".html"] = entry(f)
+		extra["dist/assets/"+f+"-AbCdEf12.js"] = "console.log(" + strconv.Quote(f) + ")"
+	}
+	a := mkDesignCanvas(t, e, "方案", extra)
+	x, err := e.s.Export(ctx, a.ID, 0, ExportZip)
+	require.NoError(t, err)
+	got := unzip(t, exportBytes(t, x))
+
+	for _, gone := range []string{"src/frames/home-a.tsx", "src/frames/home-c.tsx", "dist/home-a.html", "dist/home-c.html",
+		"dist/assets/home-a-AbCdEf12.js", "dist/assets/home-c-AbCdEf12.js", "src/themes/calm.css"} {
+		assert.NotContains(t, got, gone)
+	}
+	for _, kept := range []string{"src/frames/home-b.tsx", "dist/home-b.html", "dist/assets/home-b-AbCdEf12.js",
+		"dist/assets/shared-Zz99Yy88.js", "src/themes/warm.css", "src/themes/bold.css", "dist/login.html"} {
+		assert.Contains(t, got, kept)
+	}
+	for p, c := range got {
+		assert.NotContains(t, c, "首页 A", p)
+	}
+
+	var frames []struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got["dist/frames.json"]), &frames))
+	var frameIDs []string
+	for _, f := range frames {
+		frameIDs = append(frameIDs, f.ID)
+	}
+	assert.Equal(t, []string{"login", "home-b", "hero-x", "hero-y"}, frameIDs)
+
+	doc, err := canvas.Parse([]byte(got[EntryCanvas]))
+	require.NoError(t, err)
+	assert.Empty(t, doc.Archived())
+	require.Len(t, doc.Groups, 1)
+	assert.Equal(t, "hero", doc.Groups[0].ID)
+	for _, c := range doc.Canvases {
+		assert.NotEqual(t, canvas.AlternatesID, c.ID)
+	}
+	vf, err := design.ParseVariants([]byte(got[design.VariantsFile]), []string{"login", "signup", "home-b", "hero-x", "hero-y"}, []string{"warm", "bold"})
+	require.NoError(t, err)
+	require.Len(t, vf.Groups, 1)
+	assert.Equal(t, "hero", vf.Groups[0].ID)
 }

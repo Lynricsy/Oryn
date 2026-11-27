@@ -124,14 +124,31 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 			return err
 		}}, nil
 	case ExportZip:
+		// 画布有落选方案时按 canvasZipScope 投影：落选画框的文件不打包，canvas.json 与概览页用投影后的文档
+		sc, err := s.canvasZipScope(ctx, a, v, files)
+		if err != nil {
+			return Export{}, err
+		}
 		// 没有自己的 index.html 的画布补一个生成的概览页，解开后直接打开 index.html 就能看；再导入时会被去掉
 		overview, _, err := s.overviewFor(ctx, a, v.Version, "")
 		if err != nil {
 			return Export{}, err
 		}
+		if overview != nil && sc.proj != nil {
+			overview = canvasOverview(*sc.proj, a.Title, "")
+		}
 		return Export{Name: base + ".zip", ContentType: "application/zip", write: func(w io.Writer) error {
 			zw := zip.NewWriter(w)
 			for _, f := range files {
+				if b, ok := sc.replace[f.Path]; ok {
+					if err := zipBytes(zw, f.Path, b, v); err != nil {
+						return err
+					}
+					continue
+				}
+				if sc.drop[f.Path] {
+					continue
+				}
 				if err := s.zipFile(zw, f, v); err != nil {
 					return err
 				}
@@ -445,6 +462,171 @@ func deliveryScope(doc canvas.Doc, raw []byte) (projectScope, error) {
 	return sc, nil
 }
 
+// zipScope 是画布 zip 导出的交付范围（M34 C6：导出一律排除落选方案）。proj 非 nil 时是去掉落选画框后的 canvas.json
+// （概览页也用它），drop 是不打包的版本文件，replace 是改写后的内容（优先于 drop）。没有落选画框时三者都为空。
+type zipScope struct {
+	proj    *canvas.Doc
+	drop    map[string]bool
+	replace map[string][]byte
+}
+
+// distAssetRefRe 匹配构建产物入口 HTML 里对 ./assets/** 的引用（脚本、样式与 modulepreload）。
+var distAssetRefRe = regexp.MustCompile(`(?:src|href)="\./(assets/[^"?#]+)"`)
+
+// canvasZipScope 算出画布 zip 导出的交付范围。落选画框（Doc.Archived）从 canvas.json 里删掉（吸附的形状按删画框的
+// 规则级联），已选定的方案组整组去掉，「备选方案」页因此变空时一并去掉；落选画框的文件只在没有保留下来的画框引用时
+// 不打包。设计画布另按 deliveryScope 去掉落选帧源码、只被落选方案引用的主题并改写 src/variants.json，构建产物里只被
+// 落选帧入口引用的 dist/assets/** 不打包，dist/frames.json 去掉落选帧。投影后的 canvas.json 仍能按原样导入回来。
+func (s *Service) canvasZipScope(ctx context.Context, a Artifact, v Version, files []File) (zipScope, error) {
+	has := func(p string) bool { return slices.ContainsFunc(files, func(f File) bool { return f.Path == p }) }
+	if a.Kind != KindCanvas || !has(EntryCanvas) {
+		return zipScope{}, nil
+	}
+	raw, _, err := s.ReadFile(ctx, a.ID, v.Version, EntryCanvas)
+	if err != nil {
+		return zipScope{}, err
+	}
+	doc, err := canvas.Parse(raw)
+	if err != nil {
+		return zipScope{}, err
+	}
+	archived := doc.Archived()
+	if len(archived) == 0 {
+		return zipScope{}, nil
+	}
+	sc := zipScope{drop: map[string]bool{}, replace: map[string][]byte{}}
+	keep := map[string]bool{}
+	for _, pg := range doc.Pages {
+		if !archived[pg.ID] {
+			keep[pg.File] = true
+		}
+	}
+	var ops []canvas.Op
+	lost := map[string]bool{} // 落选帧 id（设计画布）
+	for _, pg := range doc.Pages {
+		if !archived[pg.ID] {
+			continue
+		}
+		ops = append(ops, canvas.Op{Op: canvas.OpRemove, ID: pg.ID})
+		if !keep[pg.File] {
+			sc.drop[pg.File] = true
+			if pg.Source != "" {
+				lost[frameID(pg.Source)] = true
+			}
+		}
+	}
+
+	if doc.Design != nil {
+		var manifest []byte
+		if has(design.VariantsFile) {
+			if manifest, _, err = s.ReadFile(ctx, a.ID, v.Version, design.VariantsFile); err != nil {
+				return zipScope{}, err
+			}
+		}
+		ds, err := deliveryScope(doc, manifest)
+		if err != nil {
+			return zipScope{}, err
+		}
+		for p := range ds.drop {
+			sc.drop[p] = true
+		}
+		if ds.variants != nil {
+			sc.replace[design.VariantsFile] = ds.variants
+		}
+		if err := s.distScope(ctx, a.ID, v.Version, files, lost, &sc); err != nil {
+			return zipScope{}, err
+		}
+	}
+
+	// 先删落选画框，再整组去掉已选定的组（选中方案的画框成了普通画框，与导出工程的 src/variants.json 一致），
+	// 最后「备选方案」页空了就去掉（它上面的标注是给落选画框的，一并去掉）。设计画布的组只能由封存维护，走 ApplySeal。
+	apply := canvas.Apply
+	if doc.Design != nil {
+		apply = canvas.ApplySeal
+	}
+	proj := doc
+	if err := apply(&proj, ops); err != nil {
+		return zipScope{}, err
+	}
+	var tidy []canvas.Op
+	for _, g := range proj.Groups {
+		if g.Picked != nil {
+			tidy = append(tidy, canvas.Op{Op: canvas.OpRemove, ID: g.ID})
+		}
+	}
+	if slices.ContainsFunc(proj.Canvases, func(c canvas.Canvas) bool { return c.ID == canvas.AlternatesID }) &&
+		!slices.ContainsFunc(proj.Pages, func(p canvas.Page) bool { return p.Canvas == canvas.AlternatesID }) &&
+		len(proj.Canvases) > 1 {
+		tidy = append(tidy, canvas.Op{Op: canvas.OpRemove, ID: canvas.AlternatesID})
+	}
+	if err := apply(&proj, tidy); err != nil {
+		return zipScope{}, err
+	}
+	sc.replace[EntryCanvas] = proj.JSON()
+	sc.proj = &proj
+	return sc, nil
+}
+
+// distScope 把设计画布构建产物里属于落选帧 lost 的部分记进 sc：只被落选帧入口 HTML 引用的 dist/assets/** 不打包，
+// dist/frames.json 去掉落选帧（落选帧的 dist/<id>.html 已由画框的 file 记入 drop）。
+func (s *Service) distScope(ctx context.Context, id string, version int, files []File, lost map[string]bool, sc *zipScope) error {
+	if len(lost) == 0 {
+		return nil
+	}
+	gone, used := map[string]bool{}, map[string]bool{}
+	for _, f := range files {
+		if !strings.HasPrefix(f.Path, "dist/") || strings.Contains(strings.TrimPrefix(f.Path, "dist/"), "/") || !IsHTML(f.Path) {
+			continue
+		}
+		b, _, err := s.ReadFile(ctx, id, version, f.Path)
+		if err != nil {
+			return err
+		}
+		refs := used
+		if sc.drop[f.Path] {
+			refs = gone
+		}
+		for _, m := range distAssetRefRe.FindAllSubmatch(b, -1) {
+			refs["dist/"+string(m[1])] = true
+		}
+	}
+	for p := range gone {
+		if !used[p] {
+			sc.drop[p] = true
+		}
+	}
+	const framesJSON = "dist/frames.json"
+	if !slices.ContainsFunc(files, func(f File) bool { return f.Path == framesJSON }) {
+		return nil
+	}
+	b, _, err := s.ReadFile(ctx, id, version, framesJSON)
+	if err != nil {
+		return err
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(b, &list); err != nil {
+		return err
+	}
+	kept := make([]json.RawMessage, 0, len(list))
+	for _, item := range list {
+		var f struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(item, &f); err != nil {
+			return err
+		}
+		if !lost[f.ID] {
+			kept = append(kept, item)
+		}
+	}
+	out, err := json.MarshalIndent(kept, "", "  ")
+	if err != nil {
+		return err
+	}
+	sc.replace[framesJSON] = append(out, '\n')
+	return nil
+}
+
 // slidesPDF 用控制面渲染器把幻灯片某个版本的查看器打印视图（`?view=print`，每张一页，`@page` 等于幻灯片尺寸）
 // 打印成 PDF：窗口等于幻灯片尺寸、倍率 1。渲染要在写响应头之前完成，失败才能映射成状态码。
 func (s *Service) slidesPDF(ctx context.Context, id string, version int) ([]byte, error) {
@@ -552,6 +734,16 @@ func (s *Service) zipFile(zw *zip.Writer, f File, v Version) error {
 		return err
 	}
 	_, err = io.Copy(w, rc)
+	return err
+}
+
+// zipBytes 把改写后的内容 b 以 name 写进 zip（时间戳同版本）。
+func zipBytes(zw *zip.Writer, name string, b []byte, v Version) error {
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate, Modified: v.CreatedAt})
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
 	return err
 }
 
