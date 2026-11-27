@@ -135,18 +135,21 @@ func (s *Service) reprepareForEnv(ctx context.Context, orbID string, providers [
 
 // stopEnvOnFailure 在 setup / resume 失败（参数生成失败、orbd 报错）、orb 将进入 failed 时调用：orbd 的环境没能按最新同意
 // 替换，orb 上还带着不被同意密钥的 agent 至少要停掉（failed 不进 ready，线程不会再拉起）。env_fallback 不收窄。
-func (s *Service) stopEnvOnFailure(ctx context.Context, l *orbLink, tracked bool, held []string, known bool) {
+// 返回 false 表示没能确认停下就断了 link：调用方不能进 failed（failed 拒绝重连，orbd 断线也不停 agent），要退回
+// connecting 由新 link 重来。
+func (s *Service) stopEnvOnFailure(ctx context.Context, l *orbLink, tracked bool, held []string, known bool) bool {
 	if !tracked {
-		return
+		return true
 	}
 	stale := []string{envUnknown}
 	if known {
 		stale = s.envUnconsented(ctx, held)
 	}
-	if len(stale) > 0 {
-		slog.Warn("orbs: setup / resume 失败，先停掉可能带着未同意降级密钥的 agent", "orb", l.orbID, "providers", stale)
-		s.stopEnvAgents(ctx, l, stale)
+	if len(stale) == 0 {
+		return true
 	}
+	slog.Warn("orbs: setup / resume 失败，先停掉可能带着未同意降级密钥的 agent", "orb", l.orbID, "providers", stale)
+	return s.stopEnvAgents(ctx, l, stale)
 }
 
 // stopEnvAgents 在新的 setup / resume 替换了 orbd 的环境之后停掉这台 orb 上的 agent：归属它的线程，以及本 link 的

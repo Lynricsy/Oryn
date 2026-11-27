@@ -275,6 +275,42 @@ func TestWithdrawEnvKeysAfterVaultKeyDeleted(t *testing.T) {
 	assert.Equal(t, `["groq"]`, *f.held(t), "orbd 环境没有换掉：记录不收窄")
 }
 
+// TestWithdrawEnvKeysFailureStopSurvivesLinkLoss：删掉密钥再撤回，resume 生成参数失败；进 failed 之前停 agent 时 link
+// 断开、agent.stop 没有得到确认（orbd 断线不停 agent）。orb 不能进 failed（failed 拒绝重连），而是退回 connecting；
+// 第二条 link 上重走本阶段、确认停下 agent 之后才进 failed。
+func TestWithdrawEnvKeysFailureStopSurvivesLinkLoss(t *testing.T) {
+	ctx := context.Background()
+	f := newEnvFixture(t, false, true)
+	var dropped atomic.Bool
+	f.o.mu.Lock()
+	f.o.fail = func(method string) error {
+		if method == "agent.stop" && dropped.CompareAndSwap(false, true) {
+			f.o.disconnect()
+			return errors.New("link gone before the stop was confirmed")
+		}
+		return nil
+	}
+	f.o.mu.Unlock()
+
+	ok, err := f.vault.Delete(ctx, agentcfg.ModelKeySecretName("groq"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	f.revoke(t)
+	f.h.svc.WithdrawEnvKeys(ctx, "consent")
+
+	require.Eventually(t, func() bool { return countEvent(f.h.eventSeq(f.orb.ID), "resuming>connecting") == 1 },
+		10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
+	assert.Zero(t, countEvent(f.h.eventSeq(f.orb.ID), "resuming>failed"), "停止没有确认：不进 failed")
+	require.Eventually(t, func() bool { return !f.h.svc.Connected(f.orb.ID) }, 5*time.Second, 20*time.Millisecond)
+
+	require.NoError(t, f.o.connect(), "connecting 的 orb 接受重连")
+	require.Eventually(t, func() bool { return countEvent(f.h.eventSeq(f.orb.ID), "resuming>failed") == 1 },
+		10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
+	assert.Equal(t, []string{"T-env", "T-env"}, f.stoppedThreads(t), "第二条 link 上确认停下")
+	assert.Empty(t, f.setupParams(t, "resume.run"))
+	assert.Equal(t, `["groq"]`, *f.held(t))
+}
+
 // TestWithdrawEnvKeysStopFailureHoldsReady：撤回后重走 resume，但 link 一直在线、agent.stop 返回错误（agent 可能还带着
 // 旧密钥在跑）：orb 不进 ready、env_fallback 不收窄，按退避重试 agent.stop；停下之后才进入 ready。
 func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {

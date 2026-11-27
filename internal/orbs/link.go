@@ -558,15 +558,30 @@ func (s *Service) runPhase(l *orbLink) {
 	// orb 上可能持有的环境变量降级 provider（AI 数据同意，见 envwithdraw.go）
 	tracked := envTracked(orb)
 	prevHeld, heldKnown := envHeldOf(orb)
+	// linkLost 处理 ctl 调用因 link 断开失败：退回 connecting（开始 hello 计时），若新 link 已 hello 则立即重来。
+	linkLost := func(during string) {
+		slog.Info(during+"期间 link 断开", "orb", l.orbID, "phase", phase)
+		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
+			s.advance(l.orbID)
+		}
+	}
+	// fail 让本阶段进 failed：之前先停掉还带着不被同意降级密钥的 agent（换不了环境，如密钥已从密钥库删除、模型配置因此
+	// 渲染失败）。没能确认停下就断了 link 时不进 failed（failed 拒绝重连，而 orbd 断线不停 agent），退回 connecting 由新
+	// link 重来。
+	fail := func(reason string, held []string, known bool) {
+		if !s.stopEnvOnFailure(ctx, l, tracked, held, known) {
+			linkLost("停止 agent ")
+			return
+		}
+		_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": reason})
+	}
 	gen := s.policyGeneration() // 读配置之前取代际：期间项目门禁被改时不写回旧策略（由 policyFor 按需重建）
 	var plan SetupPlan
 	if s.setup != nil {
 		plan, err = s.setup.Plan(ctx, orb)
 		if err != nil {
 			slog.Warn("生成 setup 参数失败", "orb", l.orbID, "err", err)
-			// 换不了环境：还带着不被同意密钥的 agent 先停掉（如降级密钥已从密钥库删除、模型配置因此渲染失败）
-			s.stopEnvOnFailure(ctx, l, tracked, prevHeld, heldKnown)
-			_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
+			fail(err.Error(), prevHeld, heldKnown)
 			return
 		}
 	} else {
@@ -583,13 +598,6 @@ func (s *Service) runPhase(l *orbLink) {
 		plan.Params.DeferResume = new(true)
 	}
 	s.setPolicy(l.orbID, plan.Egress, gen)
-	// linkLost 处理 ctl 调用因 link 断开失败：退回 connecting（开始 hello 计时），若新 link 已 hello 则立即重来。
-	linkLost := func(during string) {
-		slog.Info(during+"期间 link 断开", "orb", l.orbID, "phase", phase)
-		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": "link lost during " + phase}); moved {
-			s.advance(l.orbID)
-		}
-	}
 	// orbd 收到参数就会替换 setup 环境（应答丢失、脚本失败也一样），还没停掉的 agent 带着之前的环境：发出之前先把 orb 上
 	// 可能持有的降级 provider 记成之前的与本次下发的并集（不知道之前的就仍是不知道）。
 	held := append(slices.Clone(prevHeld), plan.EnvFallback...)
@@ -606,8 +614,7 @@ func (s *Service) runPhase(l *orbLink) {
 			return
 		}
 		slog.Warn("setup / resume 失败", "orb", l.orbID, "phase", phase, "err", err)
-		s.stopEnvOnFailure(ctx, l, tracked, held, heldKnown)
-		_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
+		fail(err.Error(), held, heldKnown)
 		return
 	}
 	if method == apigen.MethodSetupRun && res.Ok && res.SetupRan {
@@ -644,7 +651,7 @@ func (s *Service) runPhase(l *orbLink) {
 				return
 			}
 			slog.Warn("推迟的 resume 失败", "orb", l.orbID, "phase", phase, "err", err)
-			_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
+			fail(err.Error(), held, heldKnown)
 			return
 		}
 		detail["resumeOk"] = rres.Ok
