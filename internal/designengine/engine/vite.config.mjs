@@ -64,10 +64,11 @@ function escapeRegExp(s) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// react 与 react-dom（含子路径）一律按引擎目录解析，设计级依赖带来的另一份 React 不会进页面
+// react、react-dom 与 lucide-react（含子路径）一律按引擎目录解析：设计级依赖带来的另一份 React 不会进页面；三者都由引擎
+// 提供（技能要求设计不重复声明），也只有这样 optimizeDeps.include 才能在启动时从引擎解析到它们
 const engineRequire = createRequire(engineEntry);
 const pinnedReact = {
-	find: /^(react|react-dom)(\/.*)?$/,
+	find: /^(react|react-dom|lucide-react)(\/.*)?$/,
 	replacement: "$1$2",
 	customResolver(id, _importer, options) {
 		return this.resolve(id, engineEntry, { ...options, skipSelf: true });
@@ -112,6 +113,17 @@ export default defineConfig(({ command }) => {
 		],
 		optimizeDeps: {
 			entries: ["*.entry.tsx"],
+			// dev 在 design.open 时就起，那时往往还没有帧入口，扫描器找不到 React；等几个实时帧并发请求时才发现依赖、
+			// 重新预构建，加载中的帧会混用新旧两批 chunk（两份 React，白屏报 useEffect of null）。引擎提供的依赖在启动时
+			// 就预构建好，经 pinnedReact 按引擎目录解析。
+			include: [
+				"react",
+				"react/jsx-runtime",
+				"react/jsx-dev-runtime",
+				"react-dom",
+				"react-dom/client",
+				"lucide-react",
+			],
 		},
 		server: {
 			host: "127.0.0.1",

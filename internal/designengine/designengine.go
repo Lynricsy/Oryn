@@ -19,7 +19,7 @@ import (
 //
 // 手写常量而不在运行时计算：镜像构建脚本从本文件精确匹配取值作构建参数，Dockerfile 再按同一算法复算核对；
 // TestVersionMatchesContent 保证它与嵌入内容一致，改了引擎文件而没更新这里时测试失败并给出新值。
-const Version = "c05f843bbf87"
+const Version = "6eccabb0ab9c"
 
 // files 是引擎源的全部文件（引擎目录下，无子目录）。
 var files = []string{
