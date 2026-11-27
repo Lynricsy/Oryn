@@ -11,7 +11,8 @@ describe("视图运行时的高度", () => {
 			// 每个用例一个新窗口：install 在窗口上定义的全局只能定义一次。视口与内容高度由测试控制：jsdom 没有布局
 			const view = document.createElement("iframe");
 			document.body.appendChild(view);
-			const win = view.contentWindow as Window;
+			// 帧窗口带自己 realm 的 Event / MessageEvent 构造器（jsdom 只认本 realm 的事件）；Window 类型里没有声明它们
+			const win = view.contentWindow as Window & typeof globalThis;
 			const body = win.document.body;
 			let viewport = 160;
 			let extra = initialExtra;
