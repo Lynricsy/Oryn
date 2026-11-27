@@ -7,8 +7,9 @@
  * 回 `Host_PostmessageReady`，`Document_Loaded` 撤掉加载遮罩；`UI_Close` 等同「完成」。
  *
  * 「完成」：文档加载过就先发 `Action_Save`（不结束编辑、未修改不保存、要回执），最多等 `OFFICE_SAVE_WAIT_MS`
- * 的 `Action_Save_Resp`，再关闭会话（`DELETE`）、让 artifact 查询失效并回到查看器。卸载时同样先发 `Action_Save`
- * 后立即关闭：iframe 随之移除，引擎做一次退出保存，服务端在关闭宽限期内仍接受它。
+ * 的 `Action_Save_Resp`：明确 `success: true` 才关闭会话（`DELETE`）、让 artifact 查询失效并回到查看器；
+ * 回执是失败（含缺字段）时不关闭，编辑器留着并提示原因，「完成」可再试；等不到回执照常关闭并提示保存未确认。
+ * 卸载时同样先发 `Action_Save` 后立即关闭：iframe 随之移除，引擎做一次退出保存，服务端在关闭宽限期内仍接受它。
  * 自动保存只更新工作副本；显式保存、退出保存与会话过期时才由服务端落用户版本。
  */
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,6 +28,7 @@ import {
 	closeArtifactOfficeSession,
 	openArtifactOfficeSession,
 } from "../../api/artifact-queries";
+import { showToast } from "../../state/toasts";
 import { Icon } from "../ui/icons";
 import { Button, describeError, EmptyState, Spinner } from "../ui/primitives";
 
@@ -34,6 +36,15 @@ import { Button, describeError, EmptyState, Spinner } from "../ui/primitives";
 export const OFFICE_BEAT_MS = 60_000;
 /** 「完成」时等 `Action_Save_Resp` 的上限；超时照常关闭会话。 */
 export const OFFICE_SAVE_WAIT_MS = 10_000;
+/** 保存失败提示里引擎原因的上限（码元）。 */
+const MAX_REASON_CHARS = 200;
+
+/** 一次「完成」等保存回执的结果；`gone` = 等待期间编辑器已卸载。 */
+type SaveOutcome =
+	| { kind: "saved" }
+	| { kind: "failed"; reason: string }
+	| { kind: "timeout" }
+	| { kind: "gone" };
 
 /** 能在引擎里编辑的类型（PDF 只读）。 */
 const EDITABLE: Readonly<Record<string, true>> = {
@@ -223,31 +234,48 @@ function LiveEditor({
 	const formRef = useRef<HTMLFormElement>(null);
 	const [loaded, setLoaded] = useState(false);
 	const [saving, setSaving] = useState(false);
+	// 引擎回了保存失败：编辑器留着，提示原因，「完成」可再试
+	const [saveFailed, setSaveFailed] = useState<string | null>(null);
 	// 文档加载过才发 Action_Save（没加载完的帧不会回执）
 	const loadedRef = useRef(false);
 	// 会话已关闭（「完成」或卸载，只做一次）
 	const closedRef = useRef(false);
 	// 正在等 Action_Save_Resp：调用即结束等待
-	const saveWaitRef = useRef<(() => void) | null>(null);
+	const saveWaitRef = useRef<((outcome: SaveOutcome) => void) | null>(null);
 	const frameName = `oryn-office-${session.sessionId}`;
 	const { sessionId } = session;
 
 	const finish = async () => {
 		if (closedRef.current || saveWaitRef.current) return;
 		setSaving(true);
+		setSaveFailed(null);
 		if (loadedRef.current) {
-			await new Promise<void>((resolve) => {
-				const done = () => {
+			const outcome = await new Promise<SaveOutcome>((resolve) => {
+				const done = (o: SaveOutcome) => {
 					clearTimeout(timer);
 					saveWaitRef.current = null;
-					resolve();
+					resolve(o);
 				};
-				const timer = setTimeout(done, OFFICE_SAVE_WAIT_MS);
+				const timer = setTimeout(
+					() => done({ kind: "timeout" }),
+					OFFICE_SAVE_WAIT_MS,
+				);
 				saveWaitRef.current = done;
 				postToEngine(frameRef.current, origin, "Action_Save", SAVE_VALUES);
 			});
+			// 等待期间已卸载：卸载时已经关过
+			if (outcome.kind === "gone") return;
+			if (outcome.kind === "failed") {
+				setSaving(false);
+				setSaveFailed(
+					outcome.reason || t("artifacts.office.saveFailedGeneric"),
+				);
+				return;
+			}
+			// 没等到回执：照常关闭，iframe 移除时引擎做退出保存
+			if (outcome.kind === "timeout")
+				showToast({ text: t("artifacts.office.saveUnconfirmed") });
 		}
-		// 等待期间已卸载：卸载时已经关过
 		if (closedRef.current) return;
 		closedRef.current = true;
 		await closeArtifactOfficeSession(sessionId);
@@ -280,7 +308,18 @@ function LiveEditor({
 					}
 					break;
 				case "Action_Save_Resp":
-					saveWaitRef.current?.();
+					// 只有明确的 success: true 算保存成功；其余（含缺字段）都按失败
+					saveWaitRef.current?.(
+						msg.values.success === true
+							? { kind: "saved" }
+							: {
+									kind: "failed",
+									reason:
+										typeof msg.values.errorMsg === "string"
+											? msg.values.errorMsg.trim().slice(0, MAX_REASON_CHARS)
+											: "",
+								},
+					);
 					break;
 				case "UI_Close":
 					void finishRef.current();
@@ -295,7 +334,7 @@ function LiveEditor({
 		return () => {
 			window.removeEventListener("message", onMessage);
 			clearInterval(beat);
-			saveWaitRef.current?.();
+			saveWaitRef.current?.({ kind: "gone" });
 			if (closedRef.current) return;
 			closedRef.current = true;
 			if (loadedRef.current)
@@ -324,6 +363,18 @@ function LiveEditor({
 					{saving ? t("artifacts.office.saving") : t("artifacts.office.done")}
 				</Button>
 			</div>
+			{saveFailed !== null && (
+				<div
+					role="alert"
+					data-testid="office-editor-save-failed"
+					className="mb-2 flex shrink-0 items-center gap-2 rounded-lg border border-err/30 bg-err/5 px-3 py-1.5 text-err text-sm"
+				>
+					<Icon name="alert" size={14} className="shrink-0" />
+					<span className="min-w-0 flex-1 break-words">
+						{t("artifacts.office.saveFailed", { reason: saveFailed })}
+					</span>
+				</div>
+			)}
 			<div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-inset">
 				<form
 					ref={formRef}

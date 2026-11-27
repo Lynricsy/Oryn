@@ -3959,7 +3959,10 @@
 			"frameTitle": "Editor: {{title}}",
 			"openFailed": "Couldn't open the editor",
 			"back": "Back to viewer",
-			"editingElsewhere": "Being edited in the Office editor; other changes are rejected until the editor is saved and closed."
+			"editingElsewhere": "Being edited in the Office editor; other changes are rejected until the editor is saved and closed.",
+			"saveFailed": "Save failed: {{reason}}. Please try again.",
+			"saveFailedGeneric": "the editor couldn't save this document",
+			"saveUnconfirmed": "Save wasn't confirmed, so the editor was closed; the engine saves on exit."
 		},
 		"panel": {
 			"switch": "Switch artifact",

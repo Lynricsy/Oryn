@@ -3959,7 +3959,10 @@
 			"frameTitle": "编辑器：{{title}}",
 			"openFailed": "无法打开编辑器",
 			"back": "返回查看",
-			"editingElsewhere": "正在编辑器中编辑；保存并关闭编辑器之前，其他修改会被拒绝。"
+			"editingElsewhere": "正在编辑器中编辑；保存并关闭编辑器之前，其他修改会被拒绝。",
+			"saveFailed": "保存失败：{{reason}}，请重试。",
+			"saveFailedGeneric": "编辑器没能保存这个文档",
+			"saveUnconfirmed": "保存未确认，已关闭编辑器；引擎会在退出时保存。"
 		},
 		"panel": {
 			"switch": "切换 artifact",

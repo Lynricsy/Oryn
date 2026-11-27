@@ -13,6 +13,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
+import { dismissToast, toastsStore } from "../../state/toasts";
 import {
 	OFFICE_BEAT_MS,
 	OFFICE_SAVE_WAIT_MS,
@@ -73,6 +74,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	for (const x of toastsStore.getState().toasts) dismissToast(x.id);
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
@@ -226,7 +228,59 @@ describe("OfficeEditor", () => {
 		]);
 	});
 
-	it("等不到 Action_Save_Resp：10 秒后照常关闭会话", async () => {
+	it("引擎回保存失败：不关闭会话、编辑器留着并提示原因；再点完成且成功才关闭", async () => {
+		const onClose = vi.fn();
+		const { frame } = await mount(onClose);
+		loadDocument(frame);
+		log = [];
+		fireEvent.click(screen.getByTestId("office-editor-done"));
+		fromEngine(frame.contentWindow, "Action_Save_Resp", {
+			success: false,
+			errorMsg: "磁盘已满",
+		});
+		const alert = await screen.findByTestId("office-editor-save-failed");
+		expect(alert).toHaveTextContent(
+			i18n.t("artifacts.office.saveFailed", { reason: "磁盘已满" }),
+		);
+		await act(() => vi.advanceTimersByTimeAsync(OFFICE_SAVE_WAIT_MS * 2));
+		expect(log).toEqual(["post Action_Save"]);
+		expect(onClose).not.toHaveBeenCalled();
+		expect(screen.getByTestId("office-editor-frame")).toBeInTheDocument();
+		expect(screen.getByTestId("office-editor-done")).toBeEnabled();
+
+		// 缺 Values 也算失败，提示通用原因
+		fireEvent.click(screen.getByTestId("office-editor-done"));
+		expect(screen.queryByTestId("office-editor-save-failed")).toBeNull();
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: JSON.stringify({ MessageId: "Action_Save_Resp" }),
+					origin: ENGINE,
+					source: frame.contentWindow,
+				}),
+			);
+		});
+		expect(
+			await screen.findByTestId("office-editor-save-failed"),
+		).toHaveTextContent(
+			i18n.t("artifacts.office.saveFailed", {
+				reason: i18n.t("artifacts.office.saveFailedGeneric"),
+			}),
+		);
+		expect(log).toEqual(["post Action_Save", "post Action_Save"]);
+
+		fireEvent.click(screen.getByTestId("office-editor-done"));
+		fromEngine(frame.contentWindow, "Action_Save_Resp", { success: true });
+		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		expect(log).toEqual([
+			"post Action_Save",
+			"post Action_Save",
+			"post Action_Save",
+			`DELETE /api/v1/artifact-office-sessions/${SID}`,
+		]);
+	});
+
+	it("等不到 Action_Save_Resp：10 秒后照常关闭会话并提示保存未确认", async () => {
 		const onClose = vi.fn();
 		const { frame } = await mount(onClose);
 		loadDocument(frame);
@@ -240,6 +294,9 @@ describe("OfficeEditor", () => {
 			"post Action_Save",
 			`DELETE /api/v1/artifact-office-sessions/${SID}`,
 		]);
+		expect(toastsStore.getState().toasts.map((x) => x.text)).toContain(
+			i18n.t("artifacts.office.saveUnconfirmed"),
+		);
 	});
 
 	it("文档还没加载完就点完成：不等保存回执，直接关闭会话", async () => {
