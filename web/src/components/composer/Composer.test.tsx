@@ -242,7 +242,13 @@ describe("Composer", () => {
 		});
 
 		it("错误行保留，下一次提交时清掉", async () => {
-			cmd.mockRejectedValueOnce(new Error("orb 正忙"));
+			// 只让 prompt 失败：页脚的缓存读数挂载时也会发 get_session_stats
+			cmd.mockImplementation(
+				async (_tid: string, f: Record<string, unknown>) => {
+					if (f.type === "prompt") throw new Error("orb 正忙");
+					return {};
+				},
+			);
 			const remount = mountRemountable();
 			type("hi");
 			await act(async () => enter());
@@ -250,7 +256,7 @@ describe("Composer", () => {
 			remount();
 			expect(screen.getByRole("alert")).toHaveTextContent("orb 正忙");
 			expect(box().value).toBe("hi");
-			cmd.mockResolvedValueOnce({});
+			cmd.mockImplementation(async () => ({}));
 			await act(async () => enter());
 			expect(screen.queryByRole("alert")).toBeNull();
 			expect(box().value).toBe("");

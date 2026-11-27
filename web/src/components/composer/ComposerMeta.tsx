@@ -1,6 +1,6 @@
 /**
- * 输入坞的会话读数：模型与思考级别（ModelChip，在工具行）、上下文圆环（ContextRing）与会话成本、速度档位与输出速度（SessionReadout），
- * 后两者在页脚行右侧同一组。原线程底部状态栏的内容拆到这里。
+ * 输入坞的会话读数：模型与思考级别（ModelChip，在工具行）、提示缓存（PromptCacheReadout）、上下文圆环（ContextRing）与会话成本、
+ * 速度档位与输出速度（SessionReadout），后几者在页脚行右侧同一组。原线程底部状态栏的内容拆到这里。
  */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,7 @@ import { Icon } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
 import { Menu, type MenuItem } from "../ui/primitives";
 import { ThinkingMenu } from "../ui/ThinkingDial";
+import { PromptCacheReadout } from "./PromptCacheReadout";
 
 /**
  * 当前模型的全名与短名（认得出品牌时去掉系列名，logo 已说明）；输入坞的模型胶囊与收起后的信息条共用。
@@ -219,7 +220,7 @@ function SpeedControl({
 }
 
 /**
- * 页脚右侧读数：上下文占用、会话累计成本、速度档位与最近的输出速度。
+ * 页脚右侧读数：提示缓存、上下文占用、会话累计成本、速度档位与最近的输出速度。
  * 成本取统计接口的 `costUsd`（已含子 agent，与统计页同一口径；接口不可用时退回转录累计），点它进统计页并按本线程筛选。
  */
 export function SessionReadout({ threadId }: { threadId: string }): ReactNode {
@@ -227,6 +228,7 @@ export function SessionReadout({ threadId }: { threadId: string }): ReactNode {
 	const { cost, tps } = useSessionCost(threadId);
 	return (
 		<span className="inline-flex shrink-0 items-center gap-3 font-medium text-muted">
+			<PromptCacheReadout threadId={threadId} />
 			<ContextRing threadId={threadId} />
 			{/* 成本不配图标：formatCost 自带 $，本身就是读数的记号，再加货币图标会读成「$ $0.24」 */}
 			<Link

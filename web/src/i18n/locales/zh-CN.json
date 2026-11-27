@@ -624,6 +624,69 @@
 		"noModel": "模型未知",
 		"tps": "{{n}} tok/s"
 	},
+	"promptCache": {
+		"title": "提示缓存",
+		"hit": "命中 {{pct}}%",
+		"cached": "已缓存",
+		"refreshing": "续期中…",
+		"cold": "缓存已冷",
+		"resend": "重写 {{tokens}}",
+		"resendUpTo": "最多重写 {{tokens}}",
+		"reads": "读缓存 {{read}} · 新发 {{fresh}}",
+		"tokens": "{{tokens}} tokens",
+		"remaining": "剩余 · 存活 {{ttl}} · {{time}} 到期",
+		"persistentNote": "提供方不会让这份缓存过期。",
+		"refreshingNote": "存活期已到，续期请求还在途；结果出来前不算失效。",
+		"inferred": "会话重新打开后还没有新请求，状态按转录推断，续期情况未知。",
+		"badge": {
+			"warm": "有效",
+			"low": "即将过期",
+			"persistent": "不过期",
+			"refreshing": "续期中",
+			"cold": "已失效"
+		},
+		"rows": {
+			"reason": "失效原因",
+			"next": "下一条消息",
+			"hit": "会话命中率",
+			"cached": "缓存前缀",
+			"warming": "自动续期"
+		},
+		"reason": {
+			"expired": "存活期已到（{{time}}）",
+			"refresh-missed": "续期时缓存已失效",
+			"model": "模型 {{from}} → {{to}}",
+			"thinking": "思考级别 {{from}} → {{to}}",
+			"tools": "工具集变了",
+			"system-prompt": "系统提示词变了",
+			"retention": "缓存保留设置变了",
+			"compaction": "上下文已压缩"
+		},
+		"warming": {
+			"scheduled": "下次 {{time}}",
+			"scheduledNoTime": "已排期",
+			"until": "{{time}} 前停止",
+			"refreshing": "续期中",
+			"inactive": "已停止",
+			"inactiveReason": "已停止：{{reason}}",
+			"unknown": "未知"
+		},
+		"warmingReason": {
+			"waitingFirst": "等第一次请求",
+			"disabled": "未开启自动续期",
+			"contextChanged": "对话上下文变了",
+			"bridging": "压缩衔接中",
+			"economics": "无法估算续期是否划算",
+			"requestNoCache": "请求关闭了提示缓存",
+			"noLifetime": "缓存存活时长未知",
+			"settled": "本轮已结束",
+			"unsafeReplay": "请求无法安全重放",
+			"bridged": "已由压缩衔接",
+			"bridgeFailed": "压缩衔接失败",
+			"refreshFailed": "续期请求失败",
+			"refreshMissed": "续期时缓存已失效"
+		}
+	},
 	"mode": {
 		"compacting": "压缩中…",
 		"goal": "目标",

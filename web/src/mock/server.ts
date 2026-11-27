@@ -29,6 +29,7 @@ import { readConfigDoc } from "../lib/omp-config";
 import { parseSideQuestion } from "../lib/side-ask";
 import { parseModelSource } from "../lib/turn-role";
 import type {
+	PromptCacheStatus,
 	RpcBtwHistoryRecord,
 	RpcTerminalInfo,
 	SessionState,
@@ -751,6 +752,11 @@ export class MockServer {
 		{ recordId: string; timer: ReturnType<typeof setInterval> }
 	>();
 	private btwSeq = 0;
+	/**
+	 * 各线程提示缓存的最后触达时刻（`get_session_stats` 的 `promptCache.touchedAt`）：首次取数时记为 28 秒前，
+	 * 之后保持不变，页脚倒计时不会随每次取数回弹；5 分钟后照实变成「存活期已到」。
+	 */
+	readonly cacheTouchedAt = new Map<string, number>();
 	/**
 	 * 工具样例线程里一直在跑的后台任务 `bg_9`：第一次 `get_jobs` 起按时推输出帧（同 Core 的分离进度帧），
 	 * 跑满几行后结束并追加交付；`oryn_cancel_job` 可提前停止。
@@ -4348,6 +4354,7 @@ export class MockServer {
 					},
 					premiumRequests: 0,
 					cost: 0.2381,
+					promptCache: this.promptCacheStatus(threadId),
 				});
 			case "plan_approval":
 				this.planProposals.delete(threadId);
@@ -4526,6 +4533,36 @@ export class MockServer {
 			default:
 				return this.respond(socket, threadId, id, type, {});
 		}
+	}
+
+	/** 演示用提示缓存：Anthropic 5 分钟档，续期已排在触达后 4 分 30 秒，空闲 30 分钟后放弃。 */
+	private promptCacheStatus(threadId: string): PromptCacheStatus {
+		let touchedAt = this.cacheTouchedAt.get(threadId);
+		if (touchedAt === undefined) {
+			touchedAt = Date.now() - 28_000;
+			this.cacheTouchedAt.set(threadId, touchedAt);
+		}
+		const ttlMs = 300_000;
+		const expired = Date.now() >= touchedAt + ttlMs;
+		return {
+			state: expired ? "cold" : "warm",
+			...(expired
+				? { reason: { kind: "expired", at: touchedAt + ttlMs } }
+				: {}),
+			inferred: false,
+			tier: "short",
+			touchedAt,
+			ttlMs,
+			cachedTokens: 86_200,
+			nextTokens: 88_400,
+			warming: expired
+				? { state: "inactive", reason: "agent run settled" }
+				: {
+						state: "scheduled",
+						nextWarmAt: touchedAt + 270_000,
+						stopsAt: touchedAt + 1_800_000,
+					},
+		};
 	}
 
 	private waitFor(key: string): Promise<Json> {

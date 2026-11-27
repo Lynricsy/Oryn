@@ -624,6 +624,69 @@
 		"noModel": "Unknown model",
 		"tps": "{{n}} tok/s"
 	},
+	"promptCache": {
+		"title": "Prompt cache",
+		"hit": "hit {{pct}}%",
+		"cached": "cached",
+		"refreshing": "refreshing…",
+		"cold": "cache cold",
+		"resend": "re-sends {{tokens}}",
+		"resendUpTo": "re-sends ≤{{tokens}}",
+		"reads": "reads {{read}} · sends {{fresh}} new",
+		"tokens": "{{tokens}} tokens",
+		"remaining": "left · lives {{ttl}} · expires {{time}}",
+		"persistentNote": "The provider never expires this cache entry.",
+		"refreshingNote": "The lifetime is up but a refresh is in flight; not counted as lost until it answers.",
+		"inferred": "No request since the session was reopened: the state is inferred from the transcript and warming is unknown.",
+		"badge": {
+			"warm": "Live",
+			"low": "Expiring",
+			"persistent": "No expiry",
+			"refreshing": "Refreshing",
+			"cold": "Lost"
+		},
+		"rows": {
+			"reason": "Why lost",
+			"next": "Next message",
+			"hit": "Session hit rate",
+			"cached": "Cached prefix",
+			"warming": "Warming"
+		},
+		"reason": {
+			"expired": "lifetime ended ({{time}})",
+			"refresh-missed": "a refresh found it gone",
+			"model": "model {{from}} → {{to}}",
+			"thinking": "thinking {{from}} → {{to}}",
+			"tools": "tool set changed",
+			"system-prompt": "system prompt changed",
+			"retention": "cache retention setting changed",
+			"compaction": "context was compacted"
+		},
+		"warming": {
+			"scheduled": "next {{time}}",
+			"scheduledNoTime": "scheduled",
+			"until": "stops by {{time}}",
+			"refreshing": "refreshing now",
+			"inactive": "off",
+			"inactiveReason": "off: {{reason}}",
+			"unknown": "unknown"
+		},
+		"warmingReason": {
+			"waitingFirst": "waiting for the first request",
+			"disabled": "cache warming disabled",
+			"contextChanged": "conversation context changed",
+			"bridging": "bridge compaction in progress",
+			"economics": "cache economics unavailable",
+			"requestNoCache": "request disabled prompt caching",
+			"noLifetime": "cache lifetime unavailable",
+			"settled": "agent run settled",
+			"unsafeReplay": "request cannot be replayed safely",
+			"bridged": "bridged by compaction",
+			"bridgeFailed": "bridge compaction failed",
+			"refreshFailed": "refresh failed",
+			"refreshMissed": "refresh missed the cache"
+		}
+	},
 	"mode": {
 		"compacting": "Compacting…",
 		"goal": "Goal",

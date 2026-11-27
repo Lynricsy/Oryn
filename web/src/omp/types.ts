@@ -79,3 +79,50 @@ export type TodoItem = TodoPhase["tasks"][number];
 export type GoalModeState = NonNullable<RpcSessionState["goal"]>;
 export type ContextUsage = NonNullable<RpcSessionState["contextUsage"]>;
 export type OmpModel = NonNullable<RpcSessionState["model"]>;
+
+/**
+ * 下一次请求在 prompt cache 里能找到什么（Core `PromptCacheStatus`，见 oryn-core `modes/rpc/wire/state.ts`）。
+ * Core 19.2 起 `get_session_stats` 在运行时把它展开到应答上（rpc-mode 的 `{ ...stats, promptCache }`），
+ * 但生成的 rpc-types 里 `SessionStats` 没有声明这个字段，这里照 wire schema 补齐。
+ */
+export type PromptCacheColdReason =
+	| { kind: "expired"; at: number }
+	/** omp 的续缓存请求发现缓存已经没了 */
+	| { kind: "refresh-missed" }
+	| { kind: "model"; from: string; to: string }
+	| { kind: "thinking"; from: string; to: string }
+	| { kind: "tools" }
+	| { kind: "system-prompt" }
+	| { kind: "retention" }
+	| { kind: "compaction" };
+
+export interface PromptCacheWarming {
+	/** `scheduled`：已排好下一次续期；`refreshing`：续期请求在途；`inactive`：没有续期（原因见 `reason`）。 */
+	state: "scheduled" | "refreshing" | "inactive";
+	nextWarmAt?: number;
+	/** 续期放弃的时刻（空闲 30 分钟窗口，或流式期间续期不再划算）。 */
+	stopsAt?: number;
+	reason?: string;
+}
+
+export interface PromptCacheStatus {
+	/** `cold`：下一次请求要重写缓存前缀。 */
+	state: "warm" | "cold";
+	reason?: PromptCacheColdReason;
+	/** 从重新打开的会话转录推断，不是本进程见到的应答（思考级别、工具未知，也没有续期信息）。 */
+	inferred: boolean;
+	tier: "short" | "long";
+	/** 最后一次读或写这份缓存的请求发出时刻。 */
+	touchedAt: number;
+	/** 最后一次触达后的存活时长；提供方从不让它过期时缺省。 */
+	ttlMs?: number;
+	/** 热缓存能提供的提示词 token 数。 */
+	cachedTokens: number;
+	/** 下一次请求的提示词 token 估算。 */
+	nextTokens: number;
+	warming?: PromptCacheWarming;
+}
+
+export type SessionStatsData = ResponseData<"get_session_stats"> & {
+	promptCache?: PromptCacheStatus;
+};
