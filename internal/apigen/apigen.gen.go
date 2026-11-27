@@ -5181,7 +5181,7 @@ type AiDataRecipient struct {
 	// Host 上游主机（已知时）
 	Host *string `json:"host,omitempty"`
 
-	// ID 稳定标识，如 `model:anthropic`、`memory-embed:<host>`、`web:public`
+	// ID 稳定标识：模型上游为 `model:<provider>@<host>`（主机未知时 `model:<provider>`；同一 provider 下模型条目自带的 baseUrl 各是一条），另有 `memory-embed:<host>`、`memory-rerank:<host>`、`memory-decide:<host>`、`web:public`
 	ID string `json:"id"`
 
 	// Name 显示名（已知 provider 用其品牌名，否则为 provider 键或主机名）

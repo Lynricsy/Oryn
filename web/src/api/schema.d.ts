@@ -8334,7 +8334,7 @@ export interface components {
          */
         AiDataPurpose: "chat" | "memory" | "web";
         AiDataRecipient: {
-            /** @description 稳定标识，如 `model:anthropic`、`memory-embed:<host>`、`web:public` */
+            /** @description 稳定标识：模型上游为 `model:<provider>@<host>`（主机未知时 `model:<provider>`；同一 provider 下模型条目自带的 baseUrl 各是一条），另有 `memory-embed:<host>`、`memory-rerank:<host>`、`memory-decide:<host>`、`web:public` */
             id: string;
             /** @description 显示名（已知 provider 用其品牌名，否则为 provider 键或主机名） */
             name: string;

@@ -731,14 +731,14 @@ export class MockServer {
 	aiConsent: Schemas["AiDataConsent"] = {
 		recipients: [
 			{
-				id: "model:anthropic",
+				id: "model:anthropic@api.anthropic.com",
 				name: "Anthropic",
 				host: "api.anthropic.com",
 				purposes: ["chat"],
 			},
 		],
 		consentedAt: Date.now(),
-		consentedRecipientIds: ["model:anthropic"],
+		consentedRecipientIds: ["model:anthropic@api.anthropic.com"],
 		required: false,
 	};
 	/** 生成式 UI 总开关（`owner.generative_ui`，M33）。 */

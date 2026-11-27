@@ -94,65 +94,82 @@ type aiRecipientSources struct {
 	Web bool
 }
 
-// deriveAIRecipients 推导会收到主人个人数据做 AI 处理的第三方：
-//   - models.yml 里有凭据（apiKey）或自定义上游（baseUrl）的 provider，以及模型目录里出现的 provider → model:<key>（chat）；
-//     记忆用途选中的 provider 在同一条上追加 memory；
+// deriveAIRecipients 推导会收到主人个人数据做 AI 处理的第三方，按实际出站上游（provider + 主机）逐条列出：
+//   - models.yml 里有凭据（apiKey）或自定义上游（baseUrl）的 provider，以及模型目录里出现的 provider → 它的上游
+//     （顶层 baseUrl，缺省取内置上游）；provider 下各模型条目自带的 baseUrl 是另一条上游，同样列出——agentcfg 会把
+//     它们分别改写成独立的出站路由（`<key>.m<i>`），不列就会出现「同意框只写了 A、实际发给了 B」；
+//     记忆用途选中的 provider 在它的每条上游上追加 memory；
 //   - 记忆的嵌入 / 重排接口 → memory-embed:<host> / memory-rerank:<host>，助手记忆的判断模型 → memory-decide:<host>；
 //   - 助手联网 → web:public。
 //
+// 模型接收方的 id 是 `model:<key>@<host>`（主机未知时为 `model:<key>`）：上游换了主机，id 随之变化，界面重新征求同意。
 // 上游在本机、内网、链路本地或单标签主机名上的不算第三方；没写 baseUrl 的 ollama / lmstudio 同样排除。
 func deriveAIRecipients(src aiRecipientSources) []apigen.AiDataRecipient {
-	type modelProv struct {
-		host     string
-		purposes []apigen.AiDataPurpose
+	type modelRecip struct {
+		key, host string
+		purposes  []apigen.AiDataPurpose
 	}
-	models := map[string]*modelProv{}
+	models := map[string]*modelRecip{}
 	yml := modelsYMLProviders(src.ModelsYML)
-	addModel := func(key string, p apigen.AiDataPurpose) {
-		if key == "" {
-			return
-		}
-		host := urlHost(yml[key].BaseURL)
-		if host == "" {
-			host = urlHost(agentcfg.BuiltinBaseURLs[key])
-		}
+	addHost := func(key, host string, p apigen.AiDataPurpose) {
 		if (host == "" && localProviders[key]) || isLocalHost(host) {
 			return
 		}
-		m := models[key]
+		id := "model:" + key
+		if host != "" {
+			id += "@" + host
+		}
+		m := models[id]
 		if m == nil {
-			m = &modelProv{host: host}
-			models[key] = m
+			m = &modelRecip{key: key, host: host}
+			models[id] = m
 		}
 		if !slices.Contains(m.purposes, p) {
 			m.purposes = append(m.purposes, p)
 		}
 	}
-	for key, prov := range yml {
-		if prov.APIKey != "" || prov.BaseURL != "" {
-			addModel(key, apigen.AiDataPurposeChat)
+	// addProvider 列出 provider 的上游：withBase 时含顶层（或内置）上游，各模型条目自带的上游总是列出。
+	addProvider := func(key string, p apigen.AiDataPurpose, withBase bool) {
+		if key == "" {
+			return
 		}
+		prov := yml[key]
+		if withBase {
+			host := urlHost(prov.BaseURL)
+			if host == "" {
+				host = urlHost(agentcfg.BuiltinBaseURLs[key])
+			}
+			addHost(key, host, p)
+		}
+		for _, mb := range prov.ModelBaseURLs {
+			if host := urlHost(mb); host != "" {
+				addHost(key, host, p)
+			}
+		}
+	}
+	for key, prov := range yml {
+		addProvider(key, apigen.AiDataPurposeChat, prov.APIKey != "" || prov.BaseURL != "")
 	}
 	for _, key := range src.CatalogProviders {
-		addModel(key, apigen.AiDataPurposeChat)
+		addProvider(key, apigen.AiDataPurposeChat, true)
 	}
 	for _, key := range src.MemoryProviders {
-		addModel(key, apigen.AiDataPurposeMemory)
+		addProvider(key, apigen.AiDataPurposeMemory, true)
 	}
 
-	keys := make([]string, 0, len(models))
-	for k := range models {
-		keys = append(keys, k)
+	ids := make([]string, 0, len(models))
+	for id := range models {
+		ids = append(ids, id)
 	}
-	slices.Sort(keys)
-	out := make([]apigen.AiDataRecipient, 0, len(keys)+4)
-	for _, k := range keys {
-		m := models[k]
-		name := providerLabels[k]
+	slices.Sort(ids)
+	out := make([]apigen.AiDataRecipient, 0, len(ids)+4)
+	for _, id := range ids {
+		m := models[id]
+		name := providerLabels[m.key]
 		if name == "" {
-			name = k
+			name = m.key
 		}
-		out = append(out, apigen.AiDataRecipient{ID: "model:" + k, Name: name, Host: optHost(m.host), Purposes: m.purposes})
+		out = append(out, apigen.AiDataRecipient{ID: id, Name: name, Host: optHost(m.host), Purposes: m.purposes})
 	}
 	for _, ep := range []struct{ prefix, url string }{
 		{"memory-embed:", src.MemoryEmbedURL},
@@ -179,9 +196,12 @@ func deriveAIRecipients(src aiRecipientSources) []apigen.AiDataRecipient {
 type ymlProvider struct {
 	BaseURL string `yaml:"baseUrl"`
 	APIKey  string `yaml:"apiKey"`
+	// ModelBaseURLs 是 models[] 各条目自带的 baseUrl（非空的）。
+	ModelBaseURLs []string `yaml:"-"`
 }
 
-// modelsYMLProviders 解析 models.yml 的 providers；格式坏了或某个 provider 不是映射时跳过它。
+// modelsYMLProviders 解析 models.yml 的 providers；格式坏了或某个 provider 不是映射时跳过它，
+// models 里不是映射或没有 baseUrl 的条目跳过。
 func modelsYMLProviders(content []byte) map[string]ymlProvider {
 	var doc struct {
 		Providers map[string]yaml.Node `yaml:"providers"`
@@ -196,6 +216,22 @@ func modelsYMLProviders(content []byte) map[string]ymlProvider {
 			continue
 		}
 		p.APIKey, p.BaseURL = strings.TrimSpace(p.APIKey), strings.TrimSpace(p.BaseURL)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value != "models" || n.Content[i+1].Kind != yaml.SequenceNode {
+				continue
+			}
+			for _, m := range n.Content[i+1].Content {
+				var mb struct {
+					BaseURL string `yaml:"baseUrl"`
+				}
+				if m.Kind != yaml.MappingNode || m.Decode(&mb) != nil {
+					continue
+				}
+				if u := strings.TrimSpace(mb.BaseURL); u != "" {
+					p.ModelBaseURLs = append(p.ModelBaseURLs, u)
+				}
+			}
+		}
 		out[key] = p
 	}
 	return out
