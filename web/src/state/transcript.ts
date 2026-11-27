@@ -8,6 +8,7 @@
  * - 叠加层只渲染尚未被条目覆盖的在途消息（`(role,timestamp)`）与运行中工具（`toolCallId`）。
  * - 助手消息项带「走到它之前」的模型来源轨迹（`lib/turn-role.ts`），在途消息带分支末端的轨迹；回合头据此定身份。
  */
+
 import type { Entry } from "../api/client";
 import {
 	advanceTrail,
@@ -15,6 +16,11 @@ import {
 	parseModelSource,
 	type SourceTrail,
 } from "../lib/turn-role";
+import {
+	parseViewReceipt,
+	readViewAnswer,
+	type ViewAnswer,
+} from "../lib/view/answer";
 import { isRecord } from "../tool-render/util";
 import type { JsonRecord } from "./message-builder";
 import type { LiveTool, Notice, ThreadViewState } from "./thread-reducer";
@@ -267,10 +273,84 @@ function toolCallIdsOf(message: JsonRecord, into: Set<string>) {
 	}
 }
 
+/** 视图作答：toolCallId → 块路径 → 作答。 */
+export type ViewAnswers = Map<string, Map<string, ViewAnswer>>;
+
 export interface TranscriptModel {
 	items: TranscriptItem[];
 	toolResults: Map<string, JsonRecord>;
 	liveTools: Record<string, LiveTool>;
+	/** 视图（M33）已有的作答（C10）：来自主人消息里的回执与工具结果的 `details.view.answer`。 */
+	viewAnswers: ViewAnswers;
+}
+
+/** 用户消息的正文（文本块按段落拼接）。 */
+function userText(message: JsonRecord): string {
+	const c = message.content;
+	if (typeof c === "string") return c;
+	if (!Array.isArray(c)) return "";
+	return c
+		.map((b) => (isRecord(b) && b.type === "text" ? String(b.text ?? "") : ""))
+		.filter(Boolean)
+		.join("\n\n");
+}
+
+/** 主人亲自发出的视图回执：IRC 转述、合成消息不算（自动消息以 `[Oryn ` 开头，回执的格式本身就排除了它）。 */
+function receiptOf(message: JsonRecord) {
+	if (message.role !== "user") return null;
+	if (message.synthetic === true || isRecord(message.parentIrc)) return null;
+	return parseViewReceipt(userText(message));
+}
+
+/** 工具结果里阻塞作答带回的 `details.view.answer`。 */
+function resultAnswerOf(result: unknown): ViewAnswer | null {
+	if (!isRecord(result) || !isRecord(result.details)) return null;
+	const view = result.details.view;
+	return isRecord(view) ? readViewAnswer(view.answer) : null;
+}
+
+/**
+ * 汇总视图作答：活动分支上（含在途消息）主人消息里的回执，与工具结果（条目与已结束的实时工具）的 `details.view.answer`。
+ * 同一块有多条时取最早的一条（按条目序号；两台设备同时提交时以先到者为准）。
+ */
+function viewAnswersOf(
+	items: readonly TranscriptItem[],
+	entries: readonly Entry[],
+	liveTools: Record<string, LiveTool>,
+	lastSeq: number,
+): ViewAnswers {
+	const seen = new Map<
+		string,
+		Map<string, { seq: number; answer: ViewAnswer }>
+	>();
+	const add = (toolCallId: string, answer: ViewAnswer, seq: number) => {
+		let blocks = seen.get(toolCallId);
+		if (!blocks) {
+			blocks = new Map();
+			seen.set(toolCallId, blocks);
+		}
+		const prev = blocks.get(answer.block);
+		if (!prev || seq < prev.seq) blocks.set(answer.block, { seq, answer });
+	};
+	for (const it of items) {
+		if (it.kind !== "message") continue;
+		const receipt = receiptOf(it.message);
+		if (receipt) add(receipt.toolCallId, receipt.answer, it.seq);
+	}
+	for (const e of entries) {
+		const id = toolResultIdOf(e);
+		if (!id || !isRecord(e.payload)) continue;
+		const answer = resultAnswerOf(e.payload.message);
+		if (answer) add(id, answer, e.seq);
+	}
+	for (const [id, tool] of Object.entries(liveTools)) {
+		const answer = tool.ended ? resultAnswerOf(tool.result) : null;
+		if (answer) add(id, answer, lastSeq + 0.7);
+	}
+	const out: ViewAnswers = new Map();
+	for (const [id, blocks] of seen)
+		out.set(id, new Map([...blocks].map(([b, v]) => [b, v.answer])));
+	return out;
 }
 
 export function buildTranscript(
@@ -407,9 +487,19 @@ export function buildTranscript(
 				notice: n,
 			});
 		}
-		return { items: out, toolResults, liveTools: s.liveTools };
+		return {
+			items: out,
+			toolResults,
+			liveTools: s.liveTools,
+			viewAnswers: viewAnswersOf(out, s.entries, s.liveTools, lastSeq),
+		};
 	}
-	return { items, toolResults, liveTools: s.liveTools };
+	return {
+		items,
+		toolResults,
+		liveTools: s.liveTools,
+		viewAnswers: viewAnswersOf(items, s.entries, s.liveTools, lastSeq),
+	};
 }
 
 /** 本线程全部 assistant 消息的成本合计（美元）。 */

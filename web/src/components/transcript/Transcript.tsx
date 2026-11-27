@@ -42,6 +42,7 @@ import {
 	siteRoleFaces,
 	trailOf,
 } from "../../lib/turn-role";
+import { parseViewReceipt } from "../../lib/view/answer";
 import { useBreakpoint, useCoarsePointer } from "../../lib/viewport";
 import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
@@ -554,11 +555,14 @@ export function rowGaps(
 /** 已发出、尚未作为 user 条目出现的消息（客户端暂存，对应的 user 行到达即清除）。 */
 function PendingPrompt({ text }: { text: string }) {
 	const { t } = useTranslation();
+	// 视图作答的回执（M33）：与转录里的回执一样显示（小标 + 去掉 JSON 围栏的正文）
+	const receipt = parseViewReceipt(text);
 	return (
 		<div className="tx-enter-user flex flex-col items-end gap-1 pr-10 pb-3">
+			{receipt && <Badge icon="views">{t("view.receipt.badge")}</Badge>}
 			<span className="sr-only">{t("transcript.you")}</span>
 			<UserBubble avatar dim>
-				<UserText text={text} />
+				<UserText text={receipt?.display ?? text} />
 			</UserBubble>
 			<span className="inline-flex items-center gap-1 text-2xs text-faint">
 				<Icon name="clock" size={11} aria-hidden />

@@ -2,6 +2,7 @@
  * Tool renderer registry. Keys are current wire tool names.
  * `mcp__*` tools share the MCP renderer; unknown tools fall back to the generic JSON renderer.
  */
+import { VIEW_TOOL_HTML, VIEW_TOOL_UI } from "../lib/view/spec";
 import { genericRenderer } from "./generic";
 import { ARTIFACT_TOOLS, artifactRenderer } from "./tools/artifact";
 import { askRenderer } from "./tools/ask";
@@ -30,6 +31,7 @@ import { reflectRenderer } from "./tools/memory-reflect";
 import { retainRenderer } from "./tools/memory-retain";
 import { ORYN_TOOLS, orynRenderer } from "./tools/oryn";
 import { readRenderer } from "./tools/read";
+import { renderHtmlRenderer, renderUiRenderer } from "./tools/render-view";
 import { reportToolIssueRenderer } from "./tools/report-tool-issue";
 import { resolveRenderer } from "./tools/resolve";
 import { SANDBOX_TOOLS, sandboxRenderer } from "./tools/sandbox";
@@ -96,6 +98,9 @@ const RENDERERS: Record<string, ToolRenderer> = {
 	yield: yieldRenderer,
 	[XDEV_DOCS_TOOL]: xdevDocsRenderer,
 	[XDEV_DEVICE_TOOL]: xdevDeviceRenderer,
+	// 视图（M33）：orb / Runner 的扩展工具与全局助手的宿主工具同名，直出不套卡片
+	[VIEW_TOOL_UI]: renderUiRenderer,
+	[VIEW_TOOL_HTML]: renderHtmlRenderer,
 };
 
 // Oryn 宿主工具（M9）：只出现在协调对话里，与 omp 自带工具不重名

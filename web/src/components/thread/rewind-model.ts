@@ -10,6 +10,7 @@
 import type { Entry } from "../../api/client";
 import { parseAttachmentBlock } from "../../lib/attachments";
 import { parseOrynMessage } from "../../lib/oryn-message";
+import { parseViewReceipt } from "../../lib/view/answer";
 import type { JsonRecord } from "../../state/message-builder";
 import { branchPath, groupMainFiles } from "../../state/transcript";
 import { isRecord } from "../../tool-render/util";
@@ -144,11 +145,12 @@ function oneLine(text: string, limit = 80): string {
 	return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
 }
 
+/** 主人自己写的消息：IRC 转述、合成消息、自动消息（`[Oryn `）与视图回执（M33）都不算，不能「回到这里编辑」。 */
 function isRealUserMessage(msg: JsonRecord): boolean {
 	if (msg.role !== "user") return false;
 	if (msg.synthetic === true || isRecord(msg.parentIrc)) return false;
 	const { text } = parseAttachmentBlock(plainTextOfContent(msg.content));
-	return parseOrynMessage(text) === null;
+	return parseOrynMessage(text) === null && parseViewReceipt(text) === null;
 }
 
 /** 当前（最后一个）主会话文件的全部条目。 */
@@ -212,7 +214,10 @@ function targetsFromBranch(branch: readonly Entry[]): RewindTarget[] {
 				const raw = plainTextOfContent(msg.content);
 				const { text } = parseAttachmentBlock(raw);
 				const irc = isRecord(msg.parentIrc) ? msg.parentIrc : null;
-				const body = irc ? String(irc.body ?? text) : text;
+				// 视图回执（M33）预览显示作答正文，不露出标签与 JSON 围栏
+				const body = irc
+					? String(irc.body ?? text)
+					: (parseViewReceipt(text)?.display ?? text);
 				targets.push({
 					rowKey: `e${e.seq}`,
 					anchorEntryId: e.entryId,

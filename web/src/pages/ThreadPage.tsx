@@ -66,6 +66,7 @@ import { ToolsExpandContext } from "../components/transcript/active-tools";
 import {
 	TranscriptContext,
 	type TranscriptContextValue,
+	type TranscriptViewHost,
 } from "../components/transcript/context";
 import { Transcript } from "../components/transcript/Transcript";
 import { WorkingFooter } from "../components/transcript/WorkingFooter";
@@ -75,12 +76,14 @@ import { DOUBLE_ESC_MS } from "../lib/composer";
 import { useContextTarget } from "../lib/context-menu/registry";
 import { anchorOf } from "../lib/context-menu/selection";
 import { usePresence } from "../lib/presence";
+import { openThreadViewFrame, ViewFrameCache } from "../lib/view/frames";
 import {
 	useBreakpoint,
 	useSafeTop,
 	useViewportSegments,
 } from "../lib/viewport";
 import { realtime } from "../realtime/socket";
+import { submitViewAnswer } from "../state/actions";
 import {
 	enqueueComposerFiles,
 	getComposerDraft,
@@ -94,6 +97,7 @@ import {
 	useThread,
 } from "../state/stores";
 import { terminalHub } from "../state/terminals";
+import { dockPendingUi } from "../state/thread-reducer";
 import { buildTranscript } from "../state/transcript";
 import { PANEL_MIN_WIDTH, uiStore, useSidebarShown, useUi } from "../state/ui";
 
@@ -248,7 +252,8 @@ export function ThreadScreen({
 	const liveToolOrder = useThread(threadId, (s) => s.liveToolOrder);
 	const notices = useThread(threadId, (s) => s.notices);
 	const subagents = useThread(threadId, (s) => s.subagents);
-	const pendingUi = useThread(threadId, (s) => s.pendingUi);
+	// 视图的阻塞请求（M33）不进输入坞，由转录里对应的视图作答
+	const pendingUi = useThread(threadId, dockPendingUi);
 	const plan = useThread(threadId, (s) => s.planProposal);
 	const snapshotReceived = useThread(threadId, (s) => s.snapshotReceived);
 	const running = useThread(threadId, (s) => s.running);
@@ -345,6 +350,24 @@ export function ThreadScreen({
 		() => <WorkingFooter threadId={threadId} />,
 		[threadId],
 	);
+	// HTML 视图帧（M33）：按 toolCallId 缓存，离开线程时统一关帧
+	const viewFrames = useMemo(
+		() =>
+			new ViewFrameCache((toolCallId) =>
+				openThreadViewFrame(threadId, toolCallId),
+			),
+		[threadId],
+	);
+	useEffect(() => () => viewFrames.closeAll(), [viewFrames]);
+	const view: TranscriptViewHost = useMemo(
+		() => ({
+			answers: model.viewAnswers,
+			submit: (toolCallId, answer, text) =>
+				submitViewAnswer(threadId, toolCallId, answer, text),
+			openFrame: (toolCallId, fresh) => viewFrames.get(toolCallId, fresh),
+		}),
+		[model.viewAnswers, threadId, viewFrames],
+	);
 	const navigate = useNavigate();
 	const ctx: TranscriptContextValue = useMemo(
 		() => ({
@@ -364,6 +387,7 @@ export function ThreadScreen({
 				coordinator
 					? navigate(`/artifacts/${id}`)
 					: uiStore.getState().openArtifact(threadId, id),
+			view,
 		}),
 		[
 			threadId,
@@ -371,6 +395,7 @@ export function ThreadScreen({
 			model.liveTools,
 			subagents,
 			coordinator,
+			view,
 			navigate,
 		],
 	);

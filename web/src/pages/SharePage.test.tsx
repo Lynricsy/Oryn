@@ -801,3 +801,105 @@ describe("SharePage task 卡片的 agent 头像（M13 R9）", () => {
 		).toEqual(["scout", "reviewer", "task"]);
 	});
 });
+
+describe("SharePage 视图（M33）", () => {
+	const UI_ARGS = {
+		blocks: [
+			{
+				type: "form",
+				submitLabel: "确定",
+				fields: [{ name: "who", label: "姓名", kind: "text" }],
+			},
+			{
+				type: "actions",
+				buttons: [
+					{ label: "好", prompt: "好的" },
+					{ label: "不", prompt: "不要" },
+				],
+			},
+		],
+	};
+	function message(seq: number, message: Record<string, unknown>): Entry {
+		return {
+			seq,
+			file: "s.jsonl",
+			entryId: `e${seq}`,
+			parentId: seq > 1 ? `e${seq - 1}` : undefined,
+			type: "message",
+			payload: { type: "message", id: `e${seq}`, message },
+		};
+	}
+	const ENTRIES: Entry[] = [
+		entry(1, "user", "给我选项"),
+		message(2, {
+			role: "assistant",
+			content: [
+				{ type: "toolCall", id: "c1", name: "render_ui", arguments: UI_ARGS },
+				{
+					type: "toolCall",
+					id: "c2",
+					name: "render_html",
+					arguments: { html: "<p>hi</p>", title: "小工具" },
+				},
+			],
+			timestamp: 2,
+		}),
+		message(3, {
+			role: "toolResult",
+			toolCallId: "c1",
+			toolName: "render_ui",
+			content: [{ type: "text", text: "Rendered." }],
+			details: { view: { outcome: "rendered", spec: UI_ARGS } },
+			timestamp: 3,
+		}),
+		message(4, {
+			role: "toolResult",
+			toolCallId: "c2",
+			toolName: "render_html",
+			content: [{ type: "text", text: "Rendered." }],
+			details: { view: { outcome: "rendered", spec: { libs: [] } } },
+			timestamp: 4,
+		}),
+		message(5, {
+			role: "user",
+			content:
+				'<oryn-view-answer call="c1" block="1" choice="0">\n好的\n</oryn-view-answer>',
+			timestamp: 5,
+		}),
+	];
+
+	it("声明式视图只读：控件禁用、已作答显示作答；HTML 视图向公开端点申请帧", async () => {
+		stubFetch((path) => {
+			if (path === `/api/v1/public/shares/${SLUG}`)
+				return Response.json({ ...SHARE, lastSeq: 5, leafEntryId: "e5" });
+			if (path === `/api/v1/public/shares/${SLUG}/entries`)
+				return Response.json({
+					entries: ENTRIES,
+					hasMore: false,
+					lastSeq: 5,
+					leafEntryId: "e5",
+				});
+			if (path === `/api/v1/public/shares/${SLUG}/view-frames`)
+				return Response.json(
+					{ url: "https://a-tok.example.test/", token: "tok" },
+					{ status: 201 },
+				);
+			return Response.json({ code: "not_found" }, { status: 404 });
+		});
+		renderAt(SLUG);
+		const submit = await screen.findByRole("button", { name: "确定" });
+		expect(submit).toBeDisabled();
+		expect(screen.getByRole("button", { name: "好" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		expect(screen.getByRole("button", { name: "不" })).toBeDisabled();
+		// 回执显示成用户气泡 + 「来自视图」小标，正文是作答
+		expect(screen.getByText(T("view.receipt.badge"))).toBeInTheDocument();
+		expect(screen.getByText("好的")).toBeInTheDocument();
+		await waitFor(() =>
+			expect(urls).toContain(`/api/v1/public/shares/${SLUG}/view-frames`),
+		);
+		for (const u of urls) expect(u.startsWith("/api/v1/public/")).toBe(true);
+	});
+});

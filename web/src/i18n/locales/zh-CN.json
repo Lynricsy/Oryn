@@ -7260,6 +7260,15 @@
 		"more": "更多操作"
 	},
 	"view": {
+		"receipt": {
+			"badge": "来自视图"
+		},
+		"state": {
+			"loading": "正在生成视图…",
+			"failed": "视图没有显示：这次调用没有成功",
+			"awaiting": "agent 正在等你在这个视图里操作",
+			"offline": "连接已断开，作答没有发出"
+		},
 		"block": {
 			"chart": "图表",
 			"chartFailed": "图表没能加载，刷新页面后重试",

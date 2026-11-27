@@ -36,6 +36,7 @@ import { contentTabs } from "../../lib/orb-features";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { useThread } from "../../state/stores";
 import { useTerminals } from "../../state/terminals";
+import { dockPendingUi } from "../../state/thread-reducer";
 import {
 	hasUnseenChanges,
 	type PanelTab,
@@ -315,7 +316,7 @@ function useTabDots(
 	);
 	const awaiting = useThread(
 		threadId,
-		(s) => s.pendingUi.length > 0 || s.planProposal !== null,
+		(s) => dockPendingUi(s).length > 0 || s.planProposal !== null,
 	);
 	const unseenArtifacts = useUnseenArtifacts(
 		threadId,

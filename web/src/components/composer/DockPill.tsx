@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import { formatCost } from "../../lib/format";
 import { isThreadBusy } from "../../state/actions";
 import { useThread } from "../../state/stores";
+import { dockPendingUi } from "../../state/thread-reducer";
 import { Ring, thresholdTone } from "../ui/data";
 import { Icon } from "../ui/icons";
 import { ModelLogo } from "../ui/ModelLogo";
@@ -83,7 +84,8 @@ export function DockPill({
 	onExpand: (e: MouseEvent<HTMLButtonElement>) => void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const pending = useThread(threadId, (s) => s.pendingUi.length);
+	// 视图的阻塞请求（M33）在转录里作答，不算输入坞里「待你处理」的事
+	const pending = useThread(threadId, (s) => dockPendingUi(s).length);
 	const plan = useThread(threadId, (s) => s.planProposal !== null);
 	const busy = useThread(threadId, isThreadBusy);
 	const ctx = useThread(threadId, (s) => s.state?.contextUsage);

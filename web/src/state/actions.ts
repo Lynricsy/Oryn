@@ -11,6 +11,7 @@ import {
 	type Thread,
 	unwrap,
 } from "../api/client";
+import i18n from "../i18n";
 import type { ComposerAction } from "../lib/composer";
 import { formatCount, formatDuration } from "../lib/format";
 import {
@@ -19,6 +20,11 @@ import {
 	type SlashAction,
 	type SlashContext,
 } from "../lib/slash";
+import {
+	buildViewReceipt,
+	encodeAwaitValue,
+	type ViewAnswer,
+} from "../lib/view/answer";
 import type {
 	ExtensionUiResponse,
 	ImageContent,
@@ -29,6 +35,8 @@ import type {
 } from "../omp/types";
 import { realtime } from "../realtime/socket";
 import { getThreadStore, indexStore, type ThreadStore } from "./stores";
+import { viewAwaitCallIdOf, viewAwaitOf } from "./thread-reducer";
+import { clearViewInFlight, markViewInFlight } from "./view-inflight";
 
 /** agent 是否忙：忙时新消息按 steer / 排队处理，而不是直接 prompt。 */
 export function isThreadBusy(s: ThreadStore): boolean {
@@ -321,6 +329,50 @@ export function answerUi(
 			.getState()
 			.apply([{ type: "ui.resolved", requestId: response.id }]);
 	return ok;
+}
+
+/**
+ * 提交视图作答（C4 / C5）：这次调用正挂起等待作答时作为工具结果返回（`answerUi`），否则作为主人的下一条消息
+ * （回执，`sendGeneratedPrompt`）。提交期间该块记为在途（立即锁定），发送失败时清掉并抛出。
+ */
+export async function submitViewAnswer(
+	threadId: string,
+	toolCallId: string,
+	answer: ViewAnswer,
+	text: string,
+): Promise<void> {
+	markViewInFlight(threadId, toolCallId, answer);
+	try {
+		const req = viewAwaitOf(getThreadStore(threadId).getState(), toolCallId);
+		if (req) {
+			const ok = answerUi(threadId, {
+				type: "extension_ui_response",
+				id: req.id,
+				value: encodeAwaitValue(answer, text),
+			});
+			if (!ok) throw new Error(i18n.t("view.state.offline"));
+			return;
+		}
+		await sendGeneratedPrompt(
+			threadId,
+			buildViewReceipt(toolCallId, answer, text),
+		);
+	} catch (e) {
+		clearViewInFlight(threadId, toolCallId, answer.block);
+		throw e;
+	}
+}
+
+/** 主人改为直接打字：先撤销本线程所有挂起的视图请求，那些调用以「改用文字回复」结束（C5）。 */
+export function dismissViewAwaits(threadId: string): void {
+	for (const req of getThreadStore(threadId).getState().pendingUi) {
+		if (viewAwaitCallIdOf(req) !== null)
+			answerUi(threadId, {
+				type: "extension_ui_response",
+				id: req.id,
+				cancelled: true,
+			});
+	}
 }
 
 /**

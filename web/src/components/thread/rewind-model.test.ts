@@ -177,6 +177,20 @@ describe("buildRewindTargets", () => {
 		const entries: Entry[] = [userMsg("u1", null, "hi")];
 		expect(buildRewindTargets(entries, "")).toEqual([]);
 	});
+
+	it("视图回执（M33）不是主人自己写的回合，预览显示作答正文", () => {
+		seq = 0;
+		const receipt =
+			'<oryn-view-answer call="c1" block="0">\n出行\n- 城市: 北京\n\n```json\n{"city":"bj"}\n```\n</oryn-view-answer>';
+		const entries: Entry[] = [
+			userMsg("u1", null, "hi"),
+			userMsg("u2", "u1", receipt),
+		];
+		const [first, second] = buildRewindTargets(entries, "u2");
+		expect(first?.isUserTurn).toBe(true);
+		expect(second?.isUserTurn).toBe(false);
+		expect(second?.preview).toBe("出行 - 城市: 北京");
+	});
 });
 
 describe("siblingBranchesFor", () => {

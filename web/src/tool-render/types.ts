@@ -13,6 +13,7 @@
  */
 import type { ComponentType } from "react";
 import type { AgentVisualState } from "../components/ui/AgentStatusAvatar";
+import type { ViewAnswer } from "../lib/view/answer";
 
 export interface ToolResultText {
 	type: "text";
@@ -86,6 +87,20 @@ export interface ToolRenderHost {
 	 * 不给时渲染器只用各 agent 的默认字形，不读任何设置。
 	 */
 	AgentAvatar?: ComponentType<AgentAvatarProps>;
+	/** 视图（M33）的作答与帧；不给时视图只读显示、没有作答记录。 */
+	view?: ViewHost;
+}
+
+/** 视图（M33，docs/plan-m33.md 的 C10）的宿主能力。 */
+export interface ViewHost {
+	/** 这次调用在转录里已有的作答（含在途提交）：块路径 → 作答。 */
+	answers(toolCallId: string): ReadonlyMap<string, ViewAnswer>;
+	/** 这次调用是否正挂起等待作答（`await`）。 */
+	awaiting(toolCallId: string): boolean;
+	/** 提交作答：挂起时作为工具结果返回，否则作为下一条消息。只读页不提供。 */
+	submit?(toolCallId: string, answer: ViewAnswer, text: string): Promise<void>;
+	/** 申请 HTML 视图帧，返回帧根地址；`fresh` = 旧帧失效，重新申请。 */
+	openFrame?(toolCallId: string, fresh?: boolean): Promise<string>;
 }
 
 /** `ToolRenderHost.AgentAvatar` 的参数。 */
@@ -114,6 +129,22 @@ export interface ToolRenderProps {
 	host?: ToolRenderHost;
 }
 
+/**
+ * 直出渲染器的参数（C10）：不套卡片外壳，三种规格来源都传下来——结果的 `details.view.spec`（在 `result` 里）、
+ * `tool_execution_start` 的已修复参数（`liveArgs`）、toolCall 块里的原始参数（`args`，流式中是残缺对象）。
+ */
+export type ToolInlineProps = ToolRenderProps & {
+	toolCallId: string;
+	/** 参数仍在流式。 */
+	streaming?: boolean;
+	/** 已收到 `tool_execution_start`（参数已通过校验、调用已开始执行）。 */
+	started?: boolean;
+	/** `tool_execution_start` 带来的已修复参数（去掉了意图字段）。 */
+	liveArgs?: Record<string, unknown>;
+	/** 根元素的 ref（宿主在上面登记右键菜单）。 */
+	rootRef?: (el: HTMLDivElement | null) => void;
+};
+
 export interface ToolRenderer {
 	/**
 	 * 头部摘要：一行内联内容（不得渲染块级元素）。有意图（`i`）时头部一直显示意图（收起、展开都一样），
@@ -137,4 +168,6 @@ export interface ToolRenderer {
 	Result?: ComponentType<ToolRenderProps>;
 	/** 为真时渲染器自己展示 partial，ToolView 不再输出文本尾巴。 */
 	livePartial?: boolean;
+	/** 直出：有它时不出卡片外壳（头部 / 展开体）、不随批次开合，直接渲染它（视图）。 */
+	Inline?: ComponentType<ToolInlineProps>;
 }

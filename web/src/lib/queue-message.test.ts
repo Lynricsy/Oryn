@@ -163,3 +163,21 @@ describe("queue-message：排队消息格式解析与保真编辑", () => {
 		).toEqual([optSameTextDiffAtt, optIdentical]);
 	});
 });
+
+describe("queue-message：视图回执（M33）", () => {
+	const receipt =
+		'<oryn-view-answer call="c1" block="0">\n出行\n- 城市: 北京\n\n```json\n{"city":"bj"}\n```\n</oryn-view-answer>';
+
+	it("正文显示作答（去掉 JSON 围栏），带出解析后的回执", () => {
+		const parsed = parseQueueMessage(receipt);
+		expect(parsed.body).toBe("出行\n- 城市: 北京");
+		expect(parsed.viewReceipt?.toolCallId).toBe("c1");
+		expect(parsed.oryn).toBeNull();
+	});
+
+	it("正文没改时 rebuild 原样保留回执，改了就成普通消息", () => {
+		const parsed = parseQueueMessage(receipt);
+		expect(parsed.rebuild(parsed.body)).toBe(receipt);
+		expect(parsed.rebuild("改成别的")).toBe("改成别的");
+	});
+});

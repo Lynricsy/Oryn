@@ -44,6 +44,7 @@ import { releaseSplash } from "../lib/boot-splash";
 import { formatDateTime } from "../lib/format";
 import { parseTitleCard } from "../lib/title";
 import { advanceTrail, EMPTY_TRAIL } from "../lib/turn-role";
+import { openShareViewFrame, ViewFrameCache } from "../lib/view/frames";
 import { useBreakpoint } from "../lib/viewport";
 import {
 	fetchShare,
@@ -406,6 +407,13 @@ function ShareView({
 		[entries, leaf, liveMessage, liveTools, liveToolOrder],
 	);
 	const agentFaces = identity?.agents;
+	// 视图（M33）：只读——显示已有作答、控件禁用；HTML 视图的帧走公开端点，离开页面时统一关帧
+	const viewFrames = useMemo(
+		() =>
+			new ViewFrameCache((toolCallId) => openShareViewFrame(slug, toolCallId)),
+		[slug],
+	);
+	useEffect(() => () => viewFrames.closeAll(), [viewFrames]);
 	const ctx: TranscriptContextValue = useMemo(
 		() => ({
 			threadId: key,
@@ -419,8 +427,20 @@ function ShareView({
 			readOnly: true,
 			identities,
 			agentFaces,
+			view: {
+				answers: model.viewAnswers,
+				openFrame: (toolCallId, fresh) => viewFrames.get(toolCallId, fresh),
+			},
 		}),
-		[key, model.toolResults, model.liveTools, identities, agentFaces],
+		[
+			key,
+			model.toolResults,
+			model.liveTools,
+			model.viewAnswers,
+			identities,
+			agentFaces,
+			viewFrames,
+		],
 	);
 	const assets: AssetUrls = useMemo(
 		() => ({

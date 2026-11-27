@@ -39,6 +39,7 @@ import { realtime } from "../../realtime/socket";
 import {
 	commandTimeout,
 	describeSlashResult,
+	dismissViewAwaits,
 	isModeCommand,
 	isThreadBusy,
 	LONG_COMMAND_TIMEOUT_MS,
@@ -606,6 +607,8 @@ export const Composer = memo(function Composer({
 					}
 					return;
 				}
+				// 主人改为直接打字：挂起等待作答的视图调用先以「改用文字回复」结束，消息随后送达（C5）
+				dismissViewAwaits(threadId);
 				const outText = outgoing("", sent);
 				const frame = promptFrame(
 					mode,
@@ -725,6 +728,8 @@ export const Composer = memo(function Composer({
 					return;
 				}
 			}
+			// 主人改为直接打字：挂起等待作答的视图调用先以「改用文字回复」结束，消息随后送达（C5）
+			dismissViewAwaits(threadId);
 			const effectiveMode: SendMode =
 				asText.kind === "queue" ? "follow_up" : mode;
 			const body =

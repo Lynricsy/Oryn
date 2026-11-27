@@ -19,6 +19,7 @@ import {
 	filterUnmatchedOptimistic,
 	type OptimisticAttachmentMeta,
 } from "../lib/queue-message";
+import { viewAwaitCallId } from "../lib/view/answer";
 import type {
 	ExtensionUiRequest,
 	ImageContent,
@@ -1163,6 +1164,44 @@ export function applyUiResolved(
 ): ThreadViewState {
 	if (!s.pendingUi.some((r) => r.id === requestId)) return s;
 	return { ...s, pendingUi: s.pendingUi.filter((r) => r.id !== requestId) };
+}
+
+/** 这个 UI 请求是视图的阻塞请求时，对应的 toolCallId（C5：`input` 且 placeholder 带 `oryn-view:` 标记）。 */
+export function viewAwaitCallIdOf(req: ExtensionUiRequest): string | null {
+	return viewAwaitCallId(
+		req.method,
+		"placeholder" in req ? req.placeholder : undefined,
+	);
+}
+
+const dockPendingCache = new WeakMap<
+	readonly ExtensionUiRequest[],
+	ExtensionUiRequest[]
+>();
+
+/**
+ * 输入坞要处理的 UI 请求：去掉视图的阻塞请求（它们由转录里对应的视图作答）。没有视图请求时原样返回同一个数组，
+ * 有时按 `pendingUi` 的引用缓存——可直接作 store 选择器。
+ */
+export function dockPendingUi(
+	s: Pick<ThreadViewState, "pendingUi">,
+): ExtensionUiRequest[] {
+	if (!s.pendingUi.some((r) => viewAwaitCallIdOf(r) !== null))
+		return s.pendingUi;
+	let out = dockPendingCache.get(s.pendingUi);
+	if (!out) {
+		out = s.pendingUi.filter((r) => viewAwaitCallIdOf(r) === null);
+		dockPendingCache.set(s.pendingUi, out);
+	}
+	return out;
+}
+
+/** 这次视图调用挂起等待作答的请求（`await`）；没有时为 undefined。 */
+export function viewAwaitOf(
+	s: Pick<ThreadViewState, "pendingUi">,
+	toolCallId: string,
+): ExtensionUiRequest | undefined {
+	return s.pendingUi.find((r) => viewAwaitCallIdOf(r) === toolCallId);
 }
 
 /** `thread.snapshot`：以服务端缓冲为准重建叠加层与 agent 状态；已有条目保留（随后按 afterSeq 补发）。 */

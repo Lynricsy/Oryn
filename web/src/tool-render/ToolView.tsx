@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
 import { useExpand } from "../lib/use-expand";
+import { VIEW_TOOL_HTML, VIEW_TOOL_UI } from "../lib/view/spec";
 import { Elapsed } from "./parts";
 import {
 	baseToolName,
@@ -26,6 +27,7 @@ import {
 } from "./tools/xdev";
 import type {
 	ToolJobMark,
+	ToolRenderer,
 	ToolRenderHost,
 	ToolRenderProps,
 	ToolResultLike,
@@ -83,6 +85,9 @@ const TOOL_ICON: Record<string, IconName> = {
 	computer_record: "videoCamera",
 	[XDEV_DOCS_TOOL]: "info",
 	[XDEV_DEVICE_TOOL]: "device",
+	// 视图（M33）直出、不出卡片头部；图标只在其它列出工具的地方用到
+	[VIEW_TOOL_UI]: "views",
+	[VIEW_TOOL_HTML]: "appWindow",
 };
 
 type ToolCat = "read" | "edit" | "exec" | "web" | "agent" | "other";
@@ -130,6 +135,8 @@ const TOOL_CAT: Record<string, ToolCat> = {
 	ida: "exec",
 	tts: "exec",
 	[XDEV_DOCS_TOOL]: "read",
+	[VIEW_TOOL_UI]: "agent",
+	[VIEW_TOOL_HTML]: "agent",
 };
 
 // Artifacts 工具（M14）一律用 shapes 图标；会写入的归 edit，其余归 read
@@ -173,6 +180,14 @@ export interface ToolViewProps {
 	job?: ToolJobMark;
 	/** 卡片根元素的 ref（宿主在上面登记右键菜单）。 */
 	rootRef?: (el: HTMLDivElement | null) => void;
+	/** 这次调用的 id：直出渲染器（视图）按它取作答、申请帧。 */
+	toolCallId?: string;
+	/** 参数仍在流式（直出渲染器据此禁用控件、显示骨架）。 */
+	streaming?: boolean;
+	/** 已收到 `tool_execution_start`。 */
+	started?: boolean;
+	/** `tool_execution_start` 带来的已修复参数（直出渲染器的规格来源之一，C10）。 */
+	liveArgs?: unknown;
 }
 
 function normalizeArgs(raw: unknown): {
@@ -192,19 +207,8 @@ function normalizeArgs(raw: unknown): {
 	return { args, intent };
 }
 
+/** 解析渲染器、构造参数：有直出渲染器（视图）时直接渲染它，不出卡片外壳；其余走工具卡。 */
 export function ToolView(props: ToolViewProps): ReactNode {
-	const { t } = useTranslation();
-	// 用户点过头部后以用户为准；否则跟随宿主给的 defaultOpen。expandEpoch 变化时清掉手动覆写。
-	const [userOpen, setUserOpen] = useState<boolean | null>(null);
-	const [prevEpoch, setPrevEpoch] = useState(props.expandEpoch);
-	if (props.expandEpoch !== prevEpoch) {
-		setPrevEpoch(props.expandEpoch);
-		setUserOpen(null);
-	}
-	const open = userOpen ?? props.defaultOpen ?? false;
-	// 展开体开合：卡片整体按裁切露出 / 收起，下方内容跟着平移（见 lib/use-expand）；收起动画期间仍挂着（aria-expanded 已经是收起）
-	const cardRef = useRef<HTMLDivElement | null>(null);
-	const body = useExpand<HTMLDivElement>(open, cardRef);
 	const { args: outerArgs, intent: argIntent } = normalizeArgs(
 		props.name === "ask" && typeof props.args === "string"
 			? { html: props.args }
@@ -219,8 +223,6 @@ export function ToolView(props: ToolViewProps): ReactNode {
 	});
 	const intent = props.intent?.trim() || argIntent || xdev?.intent;
 	const wireName = xdev?.tool ?? props.name;
-	// 助手的电脑（M19）：`computer_<x>` 的卡片与 `<x>` 相同（渲染器、图标、类别），头部多一个「电脑」小标
-	const computer = isComputerTool(wireName);
 	const name = baseToolName(wireName);
 	const unwrap = (r: ToolResultLike | undefined) =>
 		xdev?.unwrap ? unwrapXdevResult(r) : r;
@@ -235,12 +237,69 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		startedAt: props.startedAt,
 		host: props.host,
 	};
+	if (renderer.Inline)
+		return (
+			<renderer.Inline
+				{...renderProps}
+				toolCallId={props.toolCallId ?? ""}
+				streaming={props.streaming}
+				started={props.started}
+				liveArgs={
+					props.liveArgs === undefined
+						? undefined
+						: normalizeArgs(props.liveArgs).args
+				}
+				rootRef={props.rootRef}
+			/>
+		);
+	return (
+		<ToolCardChrome
+			props={props}
+			renderer={renderer}
+			renderProps={renderProps}
+			intent={intent}
+			wireName={wireName}
+			label={xdev?.label ?? name}
+		/>
+	);
+}
+
+/** 工具卡：头部（图标、名字、意图或摘要、读数、状态）+ 可展开体。 */
+function ToolCardChrome({
+	props,
+	renderer,
+	renderProps,
+	intent,
+	wireName,
+	label,
+}: {
+	props: ToolViewProps;
+	renderer: ToolRenderer;
+	renderProps: ToolRenderProps;
+	intent: string | undefined;
+	wireName: string;
+	label: string;
+}): ReactNode {
+	const { t } = useTranslation();
+	// 用户点过头部后以用户为准；否则跟随宿主给的 defaultOpen。expandEpoch 变化时清掉手动覆写。
+	const [userOpen, setUserOpen] = useState<boolean | null>(null);
+	const [prevEpoch, setPrevEpoch] = useState(props.expandEpoch);
+	if (props.expandEpoch !== prevEpoch) {
+		setPrevEpoch(props.expandEpoch);
+		setUserOpen(null);
+	}
+	const open = userOpen ?? props.defaultOpen ?? false;
+	// 展开体开合：卡片整体按裁切露出 / 收起，下方内容跟着平移（见 lib/use-expand）；收起动画期间仍挂着（aria-expanded 已经是收起）
+	const cardRef = useRef<HTMLDivElement | null>(null);
+	const body = useExpand<HTMLDivElement>(open, cardRef);
+	// 助手的电脑（M19）：`computer_<x>` 的卡片与 `<x>` 相同（渲染器、图标、类别），头部多一个「电脑」小标
+	const computer = isComputerTool(wireName);
+	const name = renderProps.name;
 	// MCP 工具（顶层或 `xd://mcp__…`）：头部名字写成 server / tool，完整工具名放进 title
 	const mcp = mcpOrigin(
 		name,
 		(renderProps.result ?? renderProps.partial)?.details,
 	);
-	const label = xdev?.label ?? name;
 
 	const job = props.job;
 	const isError = props.result?.isError === true;

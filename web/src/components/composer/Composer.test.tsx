@@ -157,6 +157,31 @@ describe("Composer", () => {
 		expect(box().value).toBe("");
 	});
 
+	it("发消息前先撤销本线程挂起的视图请求（M33 C5），其余请求不动", async () => {
+		cmd.mockResolvedValue({});
+		getThreadStore(A)
+			.getState()
+			.apply(
+				[
+					{ id: "v1", method: "input", placeholder: "oryn-view:call_1" },
+					{ id: "u1", method: "confirm", message: "" },
+				].map((r) => ({
+					type: "frame" as const,
+					frame: { type: "extension_ui_request", title: "t", ...r } as never,
+				})),
+			);
+		wrap(<Composer threadId={A} />);
+		type("改用文字回答");
+		enter();
+		expect(
+			getThreadStore(A)
+				.getState()
+				.pendingUi.map((r) => r.id),
+		).toEqual(["u1"]);
+		expect(framesOf("prompt")).toMatchObject([{ message: "改用文字回答" }]);
+		await act(async () => undefined);
+	});
+
 	it("/vibe 斜杠命令按应答更新开关，第二次关闭（W12）", async () => {
 		cmd.mockImplementation(async (_tid: string, f: Record<string, unknown>) => {
 			if (f.type === "set_vibe_mode") return { enabled: f.enabled };

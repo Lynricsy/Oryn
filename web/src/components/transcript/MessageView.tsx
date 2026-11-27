@@ -9,6 +9,7 @@ import {
 	type ReactNode,
 	useContext,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -50,6 +51,8 @@ import {
 import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
 import { parseTitleCard } from "../../lib/title";
 import { useExpand } from "../../lib/use-expand";
+import { parseViewReceipt, type ViewAnswer } from "../../lib/view/answer";
+import { VIEW_TOOL_HTML, VIEW_TOOL_UI } from "../../lib/view/spec";
 import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
@@ -59,9 +62,11 @@ import {
 	useIndex,
 	useThread,
 } from "../../state/stores";
+import { viewAwaitOf } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
+import { useViewInFlight } from "../../state/view-inflight";
 import { ToolView, type ToolViewProps } from "../../tool-render/ToolView";
-import type { ToolResultLike } from "../../tool-render/types";
+import type { ToolResultLike, ViewHost } from "../../tool-render/types";
 import { isRecord, resultTextOf, toolSubject } from "../../tool-render/util";
 import { Markdown } from "../markdown/Markdown";
 import { Badge, Callout, Stat } from "../ui/data";
@@ -737,7 +742,10 @@ function UserMessage({
 	const synthetic = message.synthetic === true;
 	const steer = message.steering === true || message.liveSteered === true;
 	const body = irc ? String(irc.body ?? text) : text;
-	const oryn = irc ? null : parseOrynMessage(body);
+	// 视图作答的回执（M33，C4）：普通用户气泡加「来自视图」小标，正文去掉末尾给模型读的 JSON 围栏
+	const receipt = irc || synthetic ? null : parseViewReceipt(text);
+	const shown = receipt?.display ?? body;
+	const oryn = irc || receipt ? null : parseOrynMessage(body);
 	// agent 发来的消息：发起方的名字取索引里的当前标题（比首行里的快照新）
 	const senderId = oryn?.header.kind === "message" ? oryn.header.threadId : "";
 	const senderTitle = useIndex((s) =>
@@ -748,15 +756,15 @@ function UserMessage({
 				senderTitle ? parseTitleCard(senderTitle).text : undefined,
 			)
 		: "";
-	// 用户自己写的消息才能「回到这里编辑」：agent / 定时等发来的消息、IRC 转述、合成消息不算
-	const rewindable = !oryn && !irc && !synthetic;
+	// 用户自己写的消息才能「回到这里编辑」：agent / 定时等发来的消息、IRC 转述、合成消息、视图回执不算
+	const rewindable = !oryn && !irc && !synthetic && !receipt;
 	const ctxRef = useContextTarget<HTMLDivElement>({
 		items: () => [
 			{
 				key: "message",
 				items: messageMenuItems({
 					entryId,
-					copyText: () => text,
+					copyText: () => shown,
 					copyLabel: t("contextMenu.copyMessage"),
 					rewindable,
 					ctx,
@@ -768,7 +776,7 @@ function UserMessage({
 	const menu = (
 		<MessageMenu
 			entryId={entryId}
-			copyText={() => text}
+			copyText={() => shown}
 			rewindable={rewindable}
 		/>
 	);
@@ -822,15 +830,16 @@ function UserMessage({
 				{menu}
 			</div>
 		);
-	const quoted = splitLeadingQuote(body);
+	const quoted = splitLeadingQuote(shown);
 	return (
 		<div
 			ref={ctxRef}
 			className="group/msg flex flex-col items-end gap-1"
 			data-ask-scope="user"
 		>
-			{(irc || synthetic || steer) && (
+			{(irc || synthetic || steer || receipt) && (
 				<div className="flex max-w-full flex-wrap justify-end gap-1">
+					{receipt && <Badge icon="views">{t("view.receipt.badge")}</Badge>}
 					{irc && (
 						<Badge icon="chats">
 							{t("transcript.ircFrom", { from: String(irc.from ?? "") })}
@@ -854,7 +863,7 @@ function UserMessage({
 						{quoted.rest && <UserText text={quoted.rest} />}
 					</>
 				) : (
-					body && <UserText text={body} />
+					shown && <UserText text={shown} />
 				)}
 				<Images content={message.content} />
 				<AttachmentChips attachments={attachments} />
@@ -1063,6 +1072,39 @@ function threadOrbFileUrl(threadId: string, path: string): string | null {
 	}).downloadUrl(path);
 }
 
+const NO_VIEW_ANSWERS: ReadonlyMap<string, ViewAnswer> = new Map();
+
+/**
+ * 视图调用（M33）的 `ViewHost`：转录推导出的作答叠加在途作答（同一块以转录里的为准）、挂起状态、提交与帧。
+ * 非视图调用为 undefined（钩子照常调用，选择器对它们恒为假）。
+ */
+function useViewHost(
+	ctx: TranscriptContextValue,
+	toolCallId: string,
+	isView: boolean,
+): ViewHost | undefined {
+	const inFlight = useViewInFlight(ctx.threadId, toolCallId);
+	const awaiting = useThread(
+		ctx.threadId,
+		(s) => isView && viewAwaitOf(s, toolCallId) !== undefined,
+	);
+	const known = ctx.view?.answers.get(toolCallId);
+	const submit = ctx.view?.submit;
+	const openFrame = ctx.view?.openFrame;
+	return useMemo(() => {
+		if (!isView) return undefined;
+		const answers: ReadonlyMap<string, ViewAnswer> = inFlight
+			? new Map([...Object.entries(inFlight), ...(known ?? [])])
+			: (known ?? NO_VIEW_ANSWERS);
+		return {
+			answers: () => answers,
+			awaiting: () => awaiting,
+			submit,
+			openFrame,
+		};
+	}, [isView, inFlight, known, awaiting, submit, openFrame]);
+}
+
 /** 工具卡片：调用参数来自 toolCall 块（或实时帧），结果来自 toolResult 条目（或 tool_execution_end）。 */
 export function ToolCard({
 	toolCallId,
@@ -1097,6 +1139,11 @@ export function ToolCard({
 	const partial = resultTextOf(partialResult);
 	const toolName = live?.toolName ?? name;
 	const toolArgs = args ?? live?.args;
+	const view = useViewHost(
+		ctx,
+		toolCallId,
+		toolName === VIEW_TOOL_UI || toolName === VIEW_TOOL_HTML,
+	);
 	const cardRef = useRef<HTMLDivElement | null>(null);
 	const ctxRef = useContextTarget<HTMLDivElement>({
 		items: (req) => {
@@ -1178,13 +1225,18 @@ export function ToolCard({
 			return items.length ? [{ key: "tool", items }] : null;
 		},
 	});
-	const view: ToolViewProps = {
+	const cardView: ToolViewProps = {
 		rootRef: (el) => {
 			cardRef.current = el;
 			ctxRef(el);
 		},
 		name: toolName,
 		args: toolArgs,
+		// 视图（直出）另要这几项：规格来源与调用状态（C10）
+		toolCallId,
+		streaming: streamingArgs === true,
+		started: live !== undefined,
+		liveArgs: live?.args,
 		result: result
 			? { ...result, isError: result.isError || live?.isError }
 			: undefined,
@@ -1198,7 +1250,7 @@ export function ToolCard({
 		host:
 			// 只读（分享页）不提供子 agent 转录查看；头像在分享页只用公开身份（见 AgentAvatar）
 			ctx.readOnly
-				? { AgentAvatar }
+				? { AgentAvatar, view }
 				: {
 						hasAgent: () => true,
 						openAgent: (id) => ctx.openSubagent(id),
@@ -1211,6 +1263,7 @@ export function ToolCard({
 						// computer_record 的录像：存进助手文件库的那份；只读的分享页不给，卡片只显示电脑上的路径
 						libraryFileUrl: (id) => assistantFileContentUrl(id),
 						AgentAvatar,
+						view,
 					},
 	};
 	// 转入后台的调用：卡片跟着任务的实时状态走（头部标记、最近输出、任务入口）
@@ -1219,10 +1272,10 @@ export function ToolCard({
 			threadId={ctx.threadId}
 			toolCallId={toolCallId}
 			openable={!ctx.readOnly}
-			view={view}
+			view={cardView}
 		/>
 	) : (
-		<ToolView {...view} />
+		<ToolView {...cardView} />
 	);
 }
 

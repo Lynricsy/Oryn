@@ -114,6 +114,14 @@ function toFieldValue(v: unknown): FieldValue {
 	return null;
 }
 
+/** 表单取值的宽容读取；`__proto__` 键跳过（JSON 里写进来的会被当成原型赋值）。 */
+function toFieldValues(raw: object): Record<string, FieldValue> {
+	const values: Record<string, FieldValue> = {};
+	for (const [k, v] of Object.entries(raw))
+		if (k !== "__proto__") values[k] = toFieldValue(v);
+	return values;
+}
+
 /** 去掉作答正文末尾的 JSON 围栏（显示用）。 */
 export function stripAnswerJson(text: string): string {
 	return text.replace(/\n*```json\n[\s\S]*?\n```\s*$/, "").trimEnd();
@@ -131,9 +139,7 @@ export function parseViewReceipt(message: string): ParsedViewReceipt | null {
 	} else if (choice !== undefined) {
 		answer = { block, kind: "action", choice: Number(choice) };
 	} else {
-		const values: Record<string, FieldValue> = {};
-		for (const [k, v] of Object.entries(lastJsonFence(text) ?? {}))
-			values[k] = toFieldValue(v);
+		const values = toFieldValues(lastJsonFence(text) ?? {});
 		answer = { block, kind: "form", values };
 	}
 	return {
@@ -159,9 +165,7 @@ export function readViewAnswer(raw: unknown): ViewAnswer | null {
 	if (a.kind === "action" && typeof a.choice === "number")
 		return { block: a.block, kind: "action", choice: a.choice };
 	if (a.kind === "form" && typeof a.values === "object" && a.values !== null) {
-		const values: Record<string, FieldValue> = {};
-		for (const [k, v] of Object.entries(a.values)) values[k] = toFieldValue(v);
-		return { block: a.block, kind: "form", values };
+		return { block: a.block, kind: "form", values: toFieldValues(a.values) };
 	}
 	return null;
 }

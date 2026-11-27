@@ -2,6 +2,7 @@
 import { createContext, useContext } from "react";
 import type { Schemas } from "../../api/client";
 import type { RoleFace } from "../../lib/turn-role";
+import type { ViewAnswer } from "../../lib/view/answer";
 import type { JsonRecord } from "../../state/message-builder";
 import type { LiveTool, SubagentLive } from "../../state/thread-reducer";
 
@@ -40,6 +41,18 @@ export interface TranscriptContextValue {
 	 * agent 显示默认字形；非只读时不看它，由头像自己读站内的 agent 头像设置。
 	 */
 	agentFaces?: readonly Schemas["PublicAgentIdentity"][];
+	/** 视图（M33）的作答与帧；不给时视图只读显示、没有作答记录。 */
+	view?: TranscriptViewHost;
+}
+
+/** 转录宿主给视图的能力（`ToolCard` 据此为每次调用构造 `ViewHost`）。 */
+export interface TranscriptViewHost {
+	/** 转录里已有的作答（`TranscriptModel.viewAnswers`）。 */
+	answers: ReadonlyMap<string, ReadonlyMap<string, ViewAnswer>>;
+	/** 提交作答；只读页不给。 */
+	submit?(toolCallId: string, answer: ViewAnswer, text: string): Promise<void>;
+	/** 申请 HTML 视图帧。 */
+	openFrame?(toolCallId: string, fresh?: boolean): Promise<string>;
 }
 
 export const TranscriptContext = createContext<TranscriptContextValue | null>(

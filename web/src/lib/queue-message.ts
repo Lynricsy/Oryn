@@ -11,6 +11,7 @@ import type { RpcQueuedMessage } from "../omp/types";
 import { type MessageAttachment, parseAttachmentBlock } from "./attachments";
 import { type OrynMessage, parseOrynMessage } from "./oryn-message";
 import { composeQuoted, splitLeadingQuote } from "./quote";
+import { type ParsedViewReceipt, parseViewReceipt } from "./view/answer";
 
 export interface OptimisticAttachmentMeta {
 	/** 线程附件 `att_…` 或助手库文件 `afl_…` 的 id（随 `<oryn-attachments>` 块投递）。 */
@@ -41,6 +42,8 @@ export interface ParsedQueueMessage {
 	attachments: MessageAttachment[];
 	/** 从末尾 `oryn-data-<16hex>` 块解析出的 artifact 标题（若有）。 */
 	artifactTitle: string | null;
+	/** 视图作答的回执（M33）：正文是去掉 JSON 围栏的作答。 */
+	viewReceipt: ParsedViewReceipt | null;
 	/** 把用户编辑后的新正文拼回原始完整消息（保留前导引用、选区块与附件块）。 */
 	rebuild: (nextBody: string) => string;
 }
@@ -163,6 +166,23 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 		}
 	}
 
+	// 视图回执：显示作答正文；编辑后不再是回执（正文没改时原样保留）
+	const viewReceipt = parseViewReceipt(rest);
+	if (viewReceipt) {
+		return {
+			oryn: null,
+			quote: null,
+			body: viewReceipt.display,
+			attachments: attParsed.attachments,
+			artifactTitle,
+			viewReceipt,
+			rebuild: (nextBody: string) =>
+				nextBody === viewReceipt.display
+					? normalized
+					: `${nextBody}${artifactSuffix}${attachmentSuffix}`,
+		};
+	}
+
 	const oryn = parseOrynMessage(rest);
 	if (oryn) {
 		return {
@@ -171,6 +191,7 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 			body: oryn.body,
 			attachments: attParsed.attachments,
 			artifactTitle,
+			viewReceipt: null,
 			rebuild: (nextBody: string) =>
 				`${nextBody}${artifactSuffix}${attachmentSuffix}`,
 		};
@@ -186,6 +207,7 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 		body,
 		attachments: attParsed.attachments,
 		artifactTitle,
+		viewReceipt: null,
 		rebuild: (nextBody: string) => {
 			const withQuote = quote ? composeQuoted(quote, nextBody) : nextBody;
 			const withArtifact = artifactSuffix
