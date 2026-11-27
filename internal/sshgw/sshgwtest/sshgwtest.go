@@ -122,10 +122,17 @@ func (f *FakeSSHD) DirectTCPIPCount() int {
 
 // SendForwardedTCPIP 对最近一个已登录的客户端连接主动打开一条 forwarded-tcpip 通道。
 // 对方拒绝时返回 *ssh.OpenChannelError；对方接受时立即关掉通道并返回 nil。
+// 客户端的握手比服务端登记连接（f.last）先返回，所以最多等 5 秒让连接登记上。
 func (f *FakeSSHD) SendForwardedTCPIP() error {
-	f.mu.Lock()
-	conn := f.last
-	f.mu.Unlock()
+	var conn *ssh.ServerConn
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		f.mu.Lock()
+		conn = f.last
+		f.mu.Unlock()
+		if conn != nil || time.Now().After(deadline) {
+			break
+		}
+	}
 	if conn == nil {
 		return errors.New("sshgwtest: 没有已登录的客户端连接")
 	}
