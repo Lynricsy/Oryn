@@ -93,7 +93,12 @@ beforeEach(() => {
 					{ status: 201 },
 				);
 			if (path === "/api/v1/artifacts/capabilities")
-				return Response.json({ frames: "host", render: false, sample: false });
+				return Response.json({
+					frames: "host",
+					render: false,
+					sample: false,
+					office: { edit: false, convert: false },
+				});
 			return new Response(null, { status: 204 });
 		}),
 	);

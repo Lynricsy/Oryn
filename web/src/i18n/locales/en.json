@@ -3949,6 +3949,18 @@
 			"failed": "Can't show this artifact right now",
 			"retry": "Retry"
 		},
+		"office": {
+			"edit": "Edit",
+			"editTitle": "Edit in the Office editor",
+			"done": "Done",
+			"saving": "Saving…",
+			"opening": "Opening the editor…",
+			"hint": "Autosave only updates the draft; clicking Done creates a new version.",
+			"frameTitle": "Editor: {{title}}",
+			"openFailed": "Couldn't open the editor",
+			"back": "Back to viewer",
+			"editingElsewhere": "Being edited in the Office editor; other changes are rejected until the editor is saved and closed."
+		},
 		"panel": {
 			"switch": "Switch artifact",
 			"expand": "Open full view",

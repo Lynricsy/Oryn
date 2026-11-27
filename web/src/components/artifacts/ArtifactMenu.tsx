@@ -375,6 +375,8 @@ export function ArtifactMenu({
 
 	const render = caps.data?.render === true;
 	const renderReason = caps.data?.renderReason;
+	// 配置了 Office 引擎（M32）时 Office 类型的 PDF 由引擎转换，不依赖渲染器
+	const convert = caps.data?.office.convert === true;
 	// 卡片上不另发 /design 请求；仅当查看器缓存明确标明非设计画布时隐藏工程导出与部署
 	const designCache = qc.getQueryData<ArtifactDesign>(artifactQk.design(a.id));
 	const showDesignDelivery =
@@ -386,6 +388,12 @@ export function ArtifactMenu({
 		...(!render
 			? { title: renderReason ?? t("artifacts.menu.pngUnavailable") }
 			: {}),
+		onSelect: () => void exportTyped(a, "pdf", t),
+	};
+	// 引擎转换的 PDF：始终可用
+	const enginePdfItem: MenuItem = {
+		key: "pdf",
+		label: t("artifacts.export.pdf"),
 		onSelect: () => void exportTyped(a, "pdf", t),
 	};
 	const originalItem: MenuItem = {
@@ -424,17 +432,19 @@ export function ArtifactMenu({
 			case "docm":
 			case "pptx":
 			case "pptm":
-				return [originalItem, pdfItem];
+				return [originalItem, convert ? enginePdfItem : pdfItem];
 			case "xlsx":
 			case "xlsm":
-				// 表格的 PDF 需要 Office 引擎（M32）
+				// 表格的 PDF 只能由 Office 引擎转换（M32）
 				return [
 					originalItem,
-					{
-						...pdfItem,
-						disabled: true,
-						title: t("artifacts.export.needsEngine"),
-					},
+					convert
+						? enginePdfItem
+						: {
+								...pdfItem,
+								disabled: true,
+								title: t("artifacts.export.needsEngine"),
+							},
 				];
 			default:
 				return [originalItem];

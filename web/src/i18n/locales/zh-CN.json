@@ -3949,6 +3949,18 @@
 			"failed": "暂时无法显示这个 artifact",
 			"retry": "重试"
 		},
+		"office": {
+			"edit": "编辑",
+			"editTitle": "在 Office 编辑器里编辑",
+			"done": "完成",
+			"saving": "正在保存…",
+			"opening": "正在打开编辑器…",
+			"hint": "自动保存只更新草稿；点「完成」后生成新版本。",
+			"frameTitle": "编辑器：{{title}}",
+			"openFailed": "无法打开编辑器",
+			"back": "返回查看",
+			"editingElsewhere": "正在编辑器中编辑；保存并关闭编辑器之前，其他修改会被拒绝。"
+		},
 		"panel": {
 			"switch": "切换 artifact",
 			"expand": "放大查看",

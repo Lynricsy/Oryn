@@ -15,6 +15,8 @@
  * 右面板里选择模式下选中的元素经 `onSelection` 交给输入区的引用条（3.5）。
  * 演示（6.8）：页面与画布类型在顶栏有「演示」（`Presenter`；画布的演示器在编辑器里，从画框名称行也能「从这页演示」）；
  * 画布的评论面板里点锚点会聚焦到它所在的画框。
+ * Office 编辑（M32）：配置了引擎时 Word / Excel / PowerPoint 跟随最新版本时顶栏有「编辑」，帧换成 `OfficeEditor`，
+ * 编辑态没有评论模式与图钉；别处有编辑占用（详情的 `editing`）且自己不在编辑时帧上方出提示条。
  */
 import {
 	type ReactNode,
@@ -34,6 +36,7 @@ import {
 	type ArtifactVersion,
 	openArtifactLink,
 	useArtifact,
+	useArtifactCapabilities,
 	useArtifactComments,
 	useArtifactDesign,
 	useRestoreArtifactVersion,
@@ -67,6 +70,7 @@ import {
 	type PresentRequest,
 } from "./canvas/CanvasEditor";
 import { EditPanel } from "./EditPanel";
+import { isOfficeEditable, OfficeEditor } from "./OfficeEditor";
 import {
 	type AnchorPickMessage,
 	type FramePost,
@@ -196,6 +200,7 @@ export function ArtifactViewer({
 	const detail = useArtifact(artifactId);
 	const undelete = useUndeleteArtifact();
 	const restore = useRestoreArtifactVersion();
+	const caps = useArtifactCapabilities();
 	const [reloadNonce, setReloadNonce] = useState(0);
 	const [blocked, setBlocked] = useState<string | null>(null);
 	const [openError, setOpenError] = useState<unknown>(null);
@@ -227,6 +232,8 @@ export function ArtifactViewer({
 		path: string;
 		seq: number;
 	} | null>(null);
+	// 正在 Office 编辑器里编辑的 artifact（M32）；面板切到别的 artifact 时自然失效
+	const [officeOpen, setOfficeOpen] = useState<string | null>(null);
 	const chromeLeft = !useSidebarShown() && variant === "page";
 	const rootRef = useRef<HTMLDivElement>(null);
 	const width = useWidth(rootRef);
@@ -252,9 +259,22 @@ export function ArtifactViewer({
 	const canSelect = !!live && !pinnedVersion && artifact?.kind === "web";
 	const canCanvasSelect =
 		!!live && !pinnedVersion && artifact?.kind === "canvas" && !!onSelection;
-	// 类型化 artifact 的查看器：只有评论模式（点选与图钉由查看器经 `__orynViewer` 桥做），锚点的 path 恒为入口
+	// Office 编辑（M32）：配置了引擎、跟随最新版本、可编辑的 Office 类型
+	const canEdit =
+		!!live &&
+		!pinnedVersion &&
+		caps.data?.office.edit === true &&
+		isOfficeEditable(artifact?.type);
+	// 编辑态：帧换成编辑器
+	const inEditor = officeOpen === artifactId && canEdit;
+	// 条件不再满足（选了旧版本、被删除、引擎下线）时编辑器卸载并关闭会话，之后要重新点「编辑」
+	useEffect(() => {
+		if (!canEdit) setOfficeOpen(null);
+	}, [canEdit]);
+	// 类型化 artifact 的查看器：只有评论模式（点选与图钉由查看器经 `__orynViewer` 桥做），锚点的 path 恒为入口；编辑态没有
 	const entry = typedEntry(artifact?.type);
-	const canAnchor = !!live && !pinnedVersion && typed && entry !== null;
+	const canAnchor =
+		!!live && !pinnedVersion && typed && entry !== null && !inEditor;
 	const activeMode = canSelect
 		? mode
 		: canAnchor && mode === "comment"
@@ -504,6 +524,13 @@ export function ArtifactViewer({
 		);
 	};
 
+	const openEditor = () => {
+		setMode(null);
+		setDraft(null);
+		setPresenting(false);
+		setOfficeOpen(artifactId);
+	};
+
 	const toggleHistory = () => {
 		setSegment("side");
 		setSide((s) => (s === "history" && showSide ? null : "history"));
@@ -553,6 +580,14 @@ export function ArtifactViewer({
 				deletedAt={artifact.deletedAt}
 				restoring={undelete.isPending}
 				onRestore={() => undelete.mutate(artifactId)}
+			/>
+		);
+	else if (inEditor)
+		body = (
+			<OfficeEditor
+				artifactId={artifactId}
+				title={title}
+				onClose={() => setOfficeOpen(null)}
 			/>
 		);
 	else if (artifact?.kind === "canvas")
@@ -727,6 +762,28 @@ export function ArtifactViewer({
 								)}
 							</span>
 						)}
+						{canEdit &&
+							!inEditor &&
+							(tight ? (
+								<IconButton
+									icon="edit"
+									box="sm"
+									size={15}
+									data-testid="artifact-office-edit"
+									label={t("artifacts.office.editTitle")}
+									onClick={openEditor}
+								/>
+							) : (
+								<Button
+									size="sm"
+									icon="edit"
+									data-testid="artifact-office-edit"
+									title={t("artifacts.office.editTitle")}
+									onClick={openEditor}
+								>
+									{t("artifacts.office.edit")}
+								</Button>
+							))}
 						{(artifact.kind === "web" || artifact.kind === "canvas") && (
 							<IconButton
 								icon="play"
@@ -852,6 +909,18 @@ export function ArtifactViewer({
 				<div
 					className={`flex min-h-0 min-w-0 flex-1 flex-col ${sideOnly ? "hidden" : ""}`}
 				>
+					{live && detail.data?.editing && !inEditor && (
+						<div
+							role="status"
+							data-testid="artifact-office-editing"
+							className="flex shrink-0 items-center gap-2 border-border border-b bg-inset px-3 py-1.5 text-sm"
+						>
+							<Icon name="edit" size={14} className="shrink-0 text-muted" />
+							<span className="min-w-0 flex-1 truncate">
+								{t("artifacts.office.editingElsewhere")}
+							</span>
+						</div>
+					)}
 					{pinnedVersion && live && (
 						<div
 							role="status"

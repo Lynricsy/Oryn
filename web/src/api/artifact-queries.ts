@@ -475,6 +475,46 @@ export function uploadArtifactVersion(
 	);
 }
 
+export type ArtifactOfficeSession = Schemas["ArtifactOfficeSession"];
+
+/** 为 Office artifact 建编辑会话（M32）；同一 artifact 已有编辑占用时加入同一文档。 */
+export function openArtifactOfficeSession(
+	id: string,
+	locale?: string,
+): Promise<ArtifactOfficeSession> {
+	return unwrap(
+		api.POST("/api/v1/artifacts/{id}/office-sessions", {
+			params: { path: { id } },
+			body: locale ? { locale } : {},
+		}),
+	);
+}
+
+/** 编辑会话的心跳：刷新会话与占用的活动时刻。 */
+export async function beatArtifactOfficeSession(
+	sessionId: string,
+): Promise<void> {
+	await unwrap(
+		api.POST("/api/v1/artifact-office-sessions/{sessionId}/beat", {
+			params: { path: { sessionId } },
+		}),
+	);
+}
+
+/**
+ * 关闭编辑会话（只标记关闭，引擎在宽限期内仍可做退出保存）；失败（会话已过期、orynd 重启过）无需处理，
+ * 会话与占用会被服务端清扫。
+ */
+export async function closeArtifactOfficeSession(
+	sessionId: string,
+): Promise<void> {
+	await api
+		.DELETE("/api/v1/artifact-office-sessions/{sessionId}", {
+			params: { path: { sessionId } },
+		})
+		.catch(() => undefined);
+}
+
 /** 申请一个查看帧（`version` 缺省 = 跟随最新版本）。 */
 export function openArtifactFrame(
 	id: string,

@@ -97,6 +97,7 @@ function setupFetch() {
 					render: renderOk,
 					renderReason: renderOk ? undefined : "找不到 Chromium",
 					sample: false,
+					office: { edit: false, convert: false },
 				});
 			}
 			if (

@@ -1,5 +1,6 @@
 /**
- * ArtifactViewer：顶栏、观看登记、被拦截跳转的提示条、各空态与「在浏览器中打开」。
+ * ArtifactViewer：顶栏、观看登记、被拦截跳转的提示条、各空态与「在浏览器中打开」；Office 编辑按钮的显示条件、
+ * 进入编辑器与「正在编辑器中编辑」提示条。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -41,6 +42,8 @@ function artifact(
 
 let detail: Response | (() => Response);
 let opened: string[];
+// 能力里的 `office.edit`（配置了 Office 引擎）
+let officeEdit: boolean;
 
 function wrap(node: ReactNode) {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -53,6 +56,7 @@ function wrap(node: ReactNode) {
 
 beforeEach(() => {
 	opened = [];
+	officeEdit = false;
 	detail = () =>
 		Response.json({
 			artifact: artifact(),
@@ -107,6 +111,24 @@ beforeEach(() => {
 				return Response.json({ url: "https://a-top.example.test/" });
 			if (path === `/api/v1/artifacts/${ID}/restore`)
 				return Response.json(artifact());
+			if (path === "/api/v1/artifacts/capabilities")
+				return Response.json({
+					frames: "host",
+					render: false,
+					sample: false,
+					office: { edit: officeEdit, convert: officeEdit },
+				});
+			if (path === `/api/v1/artifacts/${ID}/office-sessions`)
+				return Response.json(
+					{
+						sessionId: "aos_01JDNAWEB0000000000000000A",
+						actionUrl:
+							"https://office.example.test/browser/x/cool.html?WOPISrc=w",
+						accessToken: "k".repeat(43),
+						accessTokenTtl: NOW + 3_600_000,
+					},
+					{ status: 201 },
+				);
 			return new Response(null, { status: 204 });
 		}),
 	);
@@ -525,5 +547,67 @@ describe("ArtifactViewer", () => {
 		expect(posted).toContainEqual(
 			expect.objectContaining({ kind: "select-source", src: null }),
 		);
+	});
+
+	describe("Office 编辑", () => {
+		function officeDetail(type: "docx" | "pdf", editing = false) {
+			const entry = type === "docx" ? "document.docx" : "document.pdf";
+			detail = () =>
+				Response.json({
+					artifact: artifact({ kind: "document", type, title: "季度报告" }),
+					version: 3,
+					head: 3,
+					files: [{ path: entry, size: 100, sha256: "a".repeat(64) }],
+					capabilities: [],
+					threads: [],
+					...(editing ? { editing: true } : {}),
+				});
+		}
+
+		it("没配引擎时没有「编辑」；配了引擎只有可编辑的 Office 类型有", async () => {
+			officeDetail("docx");
+			const first = wrap(<ArtifactViewer artifactId={ID} variant="page" />);
+			await screen.findByTestId("artifact-mode-comment");
+			await act(async () => {});
+			expect(screen.queryByTestId("artifact-office-edit")).toBeNull();
+			first.unmount();
+
+			officeEdit = true;
+			officeDetail("pdf");
+			const second = wrap(<ArtifactViewer artifactId={ID} variant="page" />);
+			await screen.findByTestId("artifact-mode-comment");
+			await act(async () => {});
+			expect(screen.queryByTestId("artifact-office-edit")).toBeNull();
+			second.unmount();
+
+			officeDetail("docx");
+			wrap(<ArtifactViewer artifactId={ID} variant="page" />);
+			expect(
+				await screen.findByTestId("artifact-office-edit"),
+			).toHaveTextContent(i18n.t("artifacts.office.edit"));
+		});
+
+		it("点「编辑」帧换成编辑器，评论模式按钮隐藏；没有提示条", async () => {
+			vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(
+				() => undefined,
+			);
+			officeEdit = true;
+			officeDetail("docx");
+			wrap(<ArtifactViewer artifactId={ID} variant="page" />);
+			fireEvent.click(await screen.findByTestId("artifact-office-edit"));
+			expect(await screen.findByTestId("office-editor")).toBeInTheDocument();
+			expect(screen.queryByTestId("artifact-frame")).toBeNull();
+			expect(screen.queryByTestId("artifact-mode-comment")).toBeNull();
+			expect(screen.queryByTestId("artifact-office-edit")).toBeNull();
+			expect(screen.queryByTestId("artifact-office-editing")).toBeNull();
+		});
+
+		it("别处有编辑占用时显示「正在编辑器中编辑」提示条", async () => {
+			officeDetail("docx", true);
+			wrap(<ArtifactViewer artifactId={ID} variant="page" />);
+			expect(
+				await screen.findByTestId("artifact-office-editing"),
+			).toHaveTextContent(i18n.t("artifacts.office.editingElsewhere"));
+		});
 	});
 });

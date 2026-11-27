@@ -126,7 +126,12 @@ beforeEach(() => {
 					projects: [{ id: "prj_1", name: "Oryn" }],
 				});
 			if (url.pathname === "/api/v1/artifacts/capabilities")
-				return Response.json({ frames: "host", render: false, sample: false });
+				return Response.json({
+					frames: "host",
+					render: false,
+					sample: false,
+					office: { edit: false, convert: false },
+				});
 			if (url.pathname.endsWith("/restore")) return Response.json(trashed[0]);
 			return new Response(null, { status: 204 });
 		}),

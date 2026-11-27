@@ -1,7 +1,7 @@
 /**
  * ArtifactMenu：导出原始文件（单文件 `format=html`、多文件 `format=zip`）、文档与幻灯片的导出子菜单、下载 PNG 与 PDF
  * 在渲染不可用时置灰并给出原因、删除后 toast 带撤销、回收站里只有恢复与永久删除；Office 类型的导出子菜单（原件、PDF、
- * Excel 的 PDF 需要引擎）与查看器里的「上传新版本」（409 时提示刷新重试）。
+ * Excel 的 PDF 需要引擎，配置了引擎时 Office 的 PDF 都放开）与查看器里的「上传新版本」（409 时提示刷新重试）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -37,6 +37,8 @@ const ARTIFACT: Schemas["Artifact"] = {
 let files: string[];
 let requests: { method: string; url: URL }[];
 let downloads: string[];
+// 能力里的 `office.convert`（配置了 Office 引擎）
+let officeConvert: boolean;
 
 function mount(
 	place: ArtifactMenuPlace = "card",
@@ -60,6 +62,7 @@ beforeEach(() => {
 	files = ["index.html"];
 	requests = [];
 	downloads = [];
+	officeConvert = false;
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -105,6 +108,7 @@ beforeEach(() => {
 					render: false,
 					renderReason: "找不到 Chromium",
 					sample: false,
+					office: { edit: officeConvert, convert: officeConvert },
 				});
 			if (url.pathname === `/api/v1/artifacts/${ID}/upload`)
 				return Response.json(
@@ -313,6 +317,26 @@ describe("ArtifactMenu", () => {
 			"title",
 			i18n.t("artifacts.export.needsEngine"),
 		);
+	});
+
+	it("配置了 Office 引擎：Excel 与 Word 的 PDF 都放开，不再依赖渲染器", async () => {
+		officeConvert = true;
+		for (const over of [
+			{ type: "xlsx", kind: "sheet" },
+			{ type: "docx", kind: "document" },
+		] as const) {
+			const view = mount("card", over);
+			fireEvent.click(screen.getByTestId("artifact-menu"));
+			fireEvent.click(item(i18n.t("artifacts.menu.export")));
+			await waitFor(() =>
+				expect(item(i18n.t("artifacts.export.pdf"))).toBeEnabled(),
+			);
+			expect(item(i18n.t("artifacts.export.pdf"))).not.toHaveAttribute("title");
+			fireEvent.click(item(i18n.t("artifacts.export.pdf")));
+			await waitFor(() => expect(exportRequests()).toContain("pdf"));
+			requests = [];
+			view.unmount();
+		}
 	});
 
 	it("PDF：导出子菜单只有原件", () => {
