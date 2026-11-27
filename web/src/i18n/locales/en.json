@@ -648,7 +648,7 @@
 		"rows": {
 			"reason": "Why lost",
 			"next": "Next message",
-			"hit": "Session hit rate",
+			"hit": "Context hit rate",
 			"cached": "Cached prefix",
 			"warming": "Warming"
 		},

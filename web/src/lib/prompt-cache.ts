@@ -71,7 +71,7 @@ export function promptCacheView(
 	return cold({ kind: "expired", at: expiresAt });
 }
 
-/** 会话的缓存命中率：读缓存占全部提示词的比例；没有任何缓存读写（模型不缓存）时为 undefined。 */
+/** 当前活动上下文的缓存命中率（取 `get_session_stats.tokens`）：读缓存占全部提示词的比例；没有任何缓存读写（模型不缓存）时为 undefined。 */
 export function cacheHitRatio(tokens: {
 	input: number;
 	cacheRead: number;
