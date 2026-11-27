@@ -22,7 +22,7 @@ func TestSPAHeaders(t *testing.T) {
 		"index.html":    {Data: []byte(`<!doctype html><script type="module" src="/assets/app.js"></script>`)},
 		"assets/app.js": {Data: []byte(`console.log(1)`)},
 		"favicon.svg":   {Data: []byte(`<svg/>`)},
-	}, "")
+	}, "", "")
 	for _, p := range []string{"/", "/t/T-1", "/pair", "/assets/app.js", "/favicon.svg"} {
 		rec := get(t, h, p)
 		if rec.Code != http.StatusOK {
@@ -50,7 +50,7 @@ func TestSPAHeaders(t *testing.T) {
 }
 
 func TestPlaceholderScriptHashAllowed(t *testing.T) {
-	h := handler(fstest.MapFS{}, "")
+	h := handler(fstest.MapFS{}, "", "")
 	rec := get(t, h, "/")
 	csp := rec.Header().Get("Content-Security-Policy")
 	if rec.Header().Get("X-Frame-Options") != "DENY" || !strings.Contains(csp, "frame-ancestors 'none'") {
@@ -69,8 +69,8 @@ func TestPlaceholderScriptHashAllowed(t *testing.T) {
 // 启用 portal 时 frame-src 放行 portal 泛域名，其余指令（含 frame-ancestors 'none'）不变；占位页同样处理。
 func TestFrameSrc(t *testing.T) {
 	const src = "https://*.orb.example.com"
-	spa := handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}, src)
-	for _, h := range []http.Handler{spa, handler(fstest.MapFS{}, src)} {
+	spa := handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}, src, "")
+	for _, h := range []http.Handler{spa, handler(fstest.MapFS{}, src, "")} {
 		rec := get(t, h, "/")
 		csp := rec.Header().Get("Content-Security-Policy")
 		if !strings.Contains(csp, "frame-src "+src+";") || strings.Contains(csp, "frame-src 'none'") {
@@ -80,9 +80,27 @@ func TestFrameSrc(t *testing.T) {
 			t.Fatalf("防嵌入头被改：%q", csp)
 		}
 	}
-	rec := get(t, handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}, ""), "/")
+	rec := get(t, handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}, "", ""), "/")
 	if got := rec.Header().Get("Content-Security-Policy"); got != ContentSecurityPolicy {
 		t.Fatalf("未启用 portal 时 CSP 应不变：%q", got)
+	}
+}
+
+// 配置了 Office 引擎时引擎源追加到 frame-src（编辑器 iframe）与 form-action（令牌表单），其余不变。
+func TestOfficeSrc(t *testing.T) {
+	const office = "https://office.example.com"
+	for _, c := range []struct{ frameSrc, wantFrame string }{
+		{"'self'", "frame-src 'self' " + office + ";"},
+		{"", "frame-src " + office + ";"},
+	} {
+		rec := get(t, handler(fstest.MapFS{"index.html": {Data: []byte(`<!doctype html>`)}}, c.frameSrc, office), "/")
+		csp := rec.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, c.wantFrame) || !strings.Contains(csp, "form-action 'self' "+office+";") {
+			t.Fatalf("引擎源未追加：%q", csp)
+		}
+		if !strings.Contains(csp, "frame-ancestors 'none'") {
+			t.Fatalf("防嵌入头被改：%q", csp)
+		}
 	}
 }
 
@@ -90,7 +108,7 @@ func TestManifestContentType(t *testing.T) {
 	h := handler(fstest.MapFS{
 		"index.html":           {Data: []byte(`<!doctype html>`)},
 		"manifest.webmanifest": {Data: []byte(`{"name":"Oryn"}`)},
-	}, "")
+	}, "", "")
 	rec := get(t, h, "/manifest.webmanifest")
 	if got := rec.Header().Get("Content-Type"); got != "application/manifest+json" {
 		t.Fatalf("Content-Type = %q", got)

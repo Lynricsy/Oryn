@@ -103,9 +103,59 @@ type ArtifactsRender struct {
 	Dir string `yaml:"dir"`
 }
 
+// ArtifactsOffice 是 Office 引擎（WOPI 客户端，参考实现 Collabora Online；M32）。三个地址都是不带路径与查询的
+// http(s) 绝对地址，加载时去掉结尾斜杠。
+type ArtifactsOffice struct {
+	// URL 是浏览器访问引擎的地址（编辑器 iframe 与表单提交的目标）；空 = 不启用引擎。
+	URL string `yaml:"url"`
+	// InternalURL 是控制面访问引擎的地址（discovery、能力、转换）；空 = 同 URL。
+	InternalURL string `yaml:"internal_url"`
+	// WOPIBase 是引擎回调控制面 WOPI 端点的地址；空 = public_url。
+	WOPIBase string `yaml:"wopi_base"`
+}
+
+// Enabled 报告是否配置了引擎。
+func (o ArtifactsOffice) Enabled() bool { return o.URL != "" }
+
+// Internal 返回控制面访问引擎的地址（缺省同 URL）。
+func (o ArtifactsOffice) Internal() string {
+	if o.InternalURL != "" {
+		return o.InternalURL
+	}
+	return o.URL
+}
+
+// validate 校验三个地址：都是不带路径、查询与片段的 http(s) 绝对地址；internal_url 与 wopi_base 只在配置了 url 时有意义。
+func (o ArtifactsOffice) validate() []error {
+	var errs []error
+	for _, f := range []struct{ key, v string }{{"url", o.URL}, {"internal_url", o.InternalURL}, {"wopi_base", o.WOPIBase}} {
+		if f.v == "" {
+			continue
+		}
+		u, err := url.Parse(f.v)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			errs = append(errs, fmt.Errorf("artifacts.office.%s %q 必须是不带路径与查询的 http(s) 绝对地址", f.key, f.v))
+		}
+	}
+	if o.URL == "" && (o.InternalURL != "" || o.WOPIBase != "") {
+		errs = append(errs, errors.New("artifacts.office.internal_url 与 wopi_base 需要同时配置 artifacts.office.url"))
+	}
+	return errs
+}
+
 // Artifacts 是 M14 Artifacts 的配置。
 type Artifacts struct {
 	Render ArtifactsRender `yaml:"render"`
+	Office ArtifactsOffice `yaml:"office"`
+}
+
+// OfficeWOPIBase 返回引擎回调控制面的地址（artifacts.office.wopi_base，缺省 public_url；不带结尾斜杠）。
+func (c Orynd) OfficeWOPIBase() string {
+	if c.Artifacts.Office.WOPIBase != "" {
+		return c.Artifacts.Office.WOPIBase
+	}
+	return strings.TrimRight(c.PublicURL, "/")
 }
 
 // Repos 是项目仓库的控制面裸仓库（M24 阶段 ②）。
@@ -381,6 +431,9 @@ func LoadOrynd(path string) (Orynd, error) {
 	}
 	c.GitHub.APIURL = strings.TrimRight(c.GitHub.APIURL, "/")
 	c.GitHub.WebURL = strings.TrimRight(c.GitHub.WebURL, "/")
+	for _, p := range []*string{&c.Artifacts.Office.URL, &c.Artifacts.Office.InternalURL, &c.Artifacts.Office.WOPIBase} {
+		*p = strings.TrimRight(*p, "/")
+	}
 	if err := c.Validate(); err != nil {
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
@@ -483,6 +536,7 @@ func (c Orynd) Validate() error {
 	if c.Artifacts.Render.User == "root" {
 		errs = append(errs, errors.New("artifacts.render.user 不能是 root"))
 	}
+	errs = append(errs, c.Artifacts.Office.validate()...)
 	errs = append(errs, c.Sandbox.validate()...)
 	return errors.Join(errs...)
 }

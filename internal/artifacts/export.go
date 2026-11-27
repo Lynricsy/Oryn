@@ -10,7 +10,9 @@ import (
 	"io"
 	"math"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/artifacts/canvas"
 	"github.com/Lynricsy/Oryn/internal/artifacts/design"
+	"github.com/Lynricsy/Oryn/internal/artifacts/office"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/designengine"
 )
@@ -172,6 +175,12 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 		}}, nil
 	case ExportPDF:
 		var out []byte
+		if officeEditable[a.Type] {
+			// 有引擎转换时 Word / Excel / PowerPoint 一律走引擎（高保真，不受内置打印的预览上限约束）
+			if e := s.officeConverter(ctx); e != nil {
+				return s.enginePDF(ctx, e, a, files, base)
+			}
+		}
 		switch a.Type {
 		case TypeSlides:
 			out, err = s.slidesPDF(ctx, a.ID, v.Version)
@@ -359,6 +368,44 @@ func (s *Service) officePDF(ctx context.Context, id string, version int, typ str
 		return nil, fmt.Errorf("把 artifact %s 版本 %d 打印成 PDF 失败：%w", id, version, err)
 	}
 	return out, nil
+}
+
+// enginePDF 用 Office 引擎把入口文件转成 PDF。转换在返回之前完成（失败时调用方还能回错误状态）：结果写进一个
+// 已解除链接的临时文件，Write 从它流出并关闭。
+func (s *Service) enginePDF(ctx context.Context, e *office.Engine, a Artifact, files []File, base string) (Export, error) {
+	entry := TypeEntry(a.Type)
+	i := slices.IndexFunc(files, func(f File) bool { return f.Path == entry })
+	if i < 0 {
+		return Export{}, opErr(CodeInvalid, "这个版本里没有入口文件 %s。", entry)
+	}
+	src, err := s.c.open(files[i].Sha256)
+	if err != nil {
+		return Export{}, err
+	}
+	defer src.Close()
+	rc, err := e.Convert(ctx, src, entry, "pdf")
+	if err != nil {
+		return Export{}, opErr(CodeRenderUnavailable, "Office 引擎没能把它转成 PDF：%v", err)
+	}
+	defer rc.Close()
+	tmp, err := os.CreateTemp(filepath.Join(s.c.dir, ".tmp"), "pdf-*")
+	if err != nil {
+		return Export{}, err
+	}
+	_ = os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, rc); err != nil {
+		_ = tmp.Close()
+		return Export{}, opErr(CodeRenderUnavailable, "Office 引擎没能把它转成 PDF：%v", err)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		_ = tmp.Close()
+		return Export{}, err
+	}
+	return Export{Name: base + ".pdf", ContentType: "application/pdf", write: func(w io.Writer) error {
+		defer tmp.Close()
+		_, err := io.Copy(w, tmp)
+		return err
+	}}, nil
 }
 
 // slideSize 返回幻灯片画板的尺寸（CSS 像素），与查看器的 slideSize 同值：16:9 为 1280×720，4:3 为 960×720。

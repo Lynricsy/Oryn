@@ -107,6 +107,33 @@ sandbox: { enabled: true, max_per_orb: 2, max_total: 8, idle: "30m", max_lifetim
 
 校验失败时 orynd 拒绝启动，错误以 `sandbox.<键>` 开头。控制面默认开着，但 provider 默认不提供沙箱：只有在 `provider.yaml` 里显式开启的 provider（docker 见[第 5 节](#5-本机-docker-provider)，Firecracker 见[第 12 节](#12-firecracker-providerm11b)）才参与调度，所以不改 provider 配置就没有任何行为变化。沙箱里跑的是 provider 镜像或根盘自带的 `orbd`，开启前要重建镜像（`make image`，Firecracker 另需重装根盘）；已有 orb 里的 agent 要等这台 orb 重建后才有沙箱工具。
 
+### Office 引擎（M32）
+
+可选。部署 Collabora Online（CODE）后，Word / Excel / PowerPoint artifact 可以在浏览器里所见即所得编辑，旧版与 OpenDocument 文件（`.doc .xls .ppt .odt .ods .odp`）导入时自动转成 OOXML，Word / Excel / PowerPoint 的 PDF 导出改由引擎高保真转换（不受内置打印 64 MiB 的上限约束）。不部署时这些入口按 M31 的行为处理：编辑按钮不出现，旧版格式导入回 `unsupported_format`，Excel 的 PDF 导出回「需要 Office 引擎」。
+
+```yaml
+artifacts:
+  office:
+    url: "https://office.example.com"        # 浏览器访问引擎的地址；空（缺省）= 不启用
+    internal_url: "http://127.0.0.1:9980"    # 控制面访问引擎（discovery、能力、转换）；空 = 同 url
+    wopi_base: ""                            # 引擎回调控制面 WOPI 端点的地址；空 = public_url
+```
+
+三个地址都必须是不带路径与查询的 http(s) 绝对地址，否则 orynd 拒绝启动（错误以 `artifacts.office.` 开头）；只写 `internal_url` 或 `wopi_base` 而不写 `url` 同样报错。配置了 `url` 时主站 CSP 的 `frame-src` 与 `form-action` 会追加这个源（编辑器 iframe 与令牌表单）。
+
+部署步骤：
+
+1. 起引擎：在 `deploy/collabora/` 写 `.env`（`ORYN_PUBLIC_URL` = 引擎回调的 Oryn 源，即 `wopi_base` 或 `public_url`；`OFFICE_HOST` = 引擎域名），`docker compose -f deploy/collabora/compose.yaml up -d`。引擎只发布在 `127.0.0.1:9980`，宏执行与管理控制台关闭，转换接口只放行本机与 docker 网桥。
+2. 反代：把 `deploy/openresty/oryn-office.conf` 放进与 `oryn.conf` 同一个 http 块，换成实际域名并申请证书（见[第 3 节](#3-反代1panel-openresty)）。
+3. 在 `orynd.yaml` 加上面的 `artifacts.office`，重启 orynd。`GET /api/v1/artifacts/capabilities` 的 `office.edit` 与 `office.convert` 都为 `true` 即接通；不可用时 `office.reason` 给出原因（discovery 与能力缓存 10 分钟，失败缓存 30 秒）。
+
+编辑会话的行为：
+
+- 引擎经 `<wopi_base>/wopi/files/<artifact id>` 回调 orynd（不经登录 Cookie，凭 32 字节随机访问令牌，库里只存哈希；令牌 12 小时过期）。discovery 里有 `proof-key` 时 orynd 校验每个回调的 `X-WOPI-Proof`；默认 CODE 镜像不发签名，这时只凭令牌并记一条日志。引擎必须能访问 `wopi_base`，浏览器必须能访问 `url`。
+- 版本只在显式保存、退出编辑器、会话过期三个时刻且内容有变时落下，作者是用户；引擎每 30 秒的自动保存只更新工作副本。
+- 编辑期间这个 artifact 的其他写入（agent 的 `update_artifact`、恢复版本、上传新版本）回 423 `locked`。关闭编辑器后宽限 30 秒（等引擎的退出保存），最后一次活动 30 分钟后占用也会过期；释放时工作副本与最新版本不同就落一个备注为「编辑器自动保存」的版本。orynd 每 15 秒清扫一次，启动时先清扫一轮。
+- 去掉 `artifacts.office` 重启后，遗留的占用照常按上面的规则释放。
+
 ## 3. 反代（1Panel OpenResty）
 
 1. 在 1Panel「网站」中创建两个反向代理站点，或直接把 `deploy/openresty/oryn.conf` 放进 OpenResty 的 `conf.d`，把示例域名替换为实际域名：
@@ -116,6 +143,7 @@ sandbox: { enabled: true, max_per_orb: 2, max_total: 8, idle: "30m", max_lifetim
 3. 配置要点（示例文件已包含）：`proxy_http_version 1.1`、`Upgrade`/`Connection` 头（WebSocket 与 orb link）、`proxy_read_timeout 3600s`、`proxy_buffering off`、`client_max_body_size 600m`。
 4. 托管仓库（M24）：主域名另有 `location /git/ { client_max_body_size 0; … }`，其余各行与 `location /` 相同。主人本机的 `git push` 与 Git LFS 上传经这里到达 orynd，托管仓库不设大小上限，所以这条路径不限请求体，其余路径仍是 `600m`。数据盘由 orynd 自己保护（可用空间低于 `repos.min_free_gb` 时拒绝推送与上传）。orb 的推送与上传在 orb link 里传输，不受这条上限影响。自己写反代配置时同样要给 `/git/` 放开请求体上限并关闭请求缓冲（`proxy_request_buffering off`），否则大推送会被 413 拒绝，或先整个缓冲到反代的磁盘上。
 5. 公开入口：`/api/v1/public/` 下的路径不需要登录，必须能从公网直接到达，不要在反代上给它们加 IP 白名单、Basic Auth 或单点登录。其中 `/api/v1/public/github/webhook` 收 GitHub 的仓库 webhook，`/api/v1/public/hooks/` 收定时的入站 Webhook（M31，见 [features.md](features.md#入站-webhook)）。后者的请求体上限（64 KiB）与按来源 IP 的限流由 orynd 执行，不需要单独的 `location`；限流靠反代传来的 `X-Real-IP`（示例文件已设置），不传时所有调用方共用反代的回环地址、一起被限流。
+6. Office 引擎（M32，可选）：引擎单独一个域名，`deploy/openresty/oryn-office.conf` 是对应的虚拟主机（WebSocket 升级、长超时、挡掉公网的 `/cool/convert-to`）。引擎回调 orynd 的 `/wopi/` 走主域名的 `location /`，不需要单独配置。
 
 ## 4. 启动控制面并初始化
 

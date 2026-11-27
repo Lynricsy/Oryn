@@ -18,6 +18,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
+	"github.com/Lynricsy/Oryn/internal/artifacts/office"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/artifacts/sample"
 	"github.com/Lynricsy/Oryn/internal/attachments"
@@ -516,6 +517,11 @@ func (s *Server) init(ctx context.Context) error {
 	go s.Attachments.Run(runCtx)
 	go s.Library.Run(runCtx)
 	go s.Artifacts.Run(runCtx)
+	// M32 Office 编辑：配置了引擎时接上；会话与占用的清扫总在跑（去掉引擎配置后也要释放遗留的占用）
+	if oc := cfg.Artifacts.Office; oc.Enabled() {
+		s.Artifacts.UseOffice(office.New(office.Config{URL: oc.URL, InternalURL: oc.Internal()}), cfg.OfficeWOPIBase())
+	}
+	go s.Artifacts.RunOffice(runCtx)
 	go s.Artifacts.RunActivity(runCtx)
 	go s.Artifacts.RecoverNotes(runCtx)
 	go s.LibrarySync.Run(runCtx)
@@ -550,7 +556,9 @@ func (s *Server) init(ctx context.Context) error {
 	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), "/orb/v1/whoami": s.Orbs.WhoamiHandler(), api.WSPath: s.Hub}
 	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
 	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
-	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc()))
+	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc(), ""))
+	// WOPI 端点（M32）：引擎凭访问令牌回调，不经 /api/v1 的鉴权组
+	mounts[artifacts.WOPIPathPrefix+"*"] = s.Artifacts.WOPIHandler()
 	mounts["/f/*"] = s.Share.FileHandler()
 	mounts[desktop.WSPath] = s.Desktop.WSHandler()
 	mounts[browserrelay.WSPath] = s.BrowserRelay.WSHandler()

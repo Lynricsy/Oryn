@@ -500,6 +500,41 @@ func TestSandboxConfig(t *testing.T) {
 	assert.Equal(t, 2, got.Sandbox.MaxPerOrb, "未写的键保持默认")
 }
 
+// M32：artifacts.office 的三个地址（缺省、去结尾斜杠与校验）。
+func TestArtifactsOfficeConfig(t *testing.T) {
+	base := DefaultOrynd()
+	base.PublicURL = "https://oryn.example.com/"
+	require.NoError(t, base.Validate())
+	assert.False(t, base.Artifacts.Office.Enabled())
+	assert.Equal(t, "https://oryn.example.com", base.OfficeWOPIBase(), "wopi_base 缺省 public_url")
+	for want, o := range map[string]ArtifactsOffice{
+		"artifacts.office.url":                              {URL: "office.example.com"},
+		"artifacts.office.url \"ftp":                        {URL: "ftp://office.example.com"},
+		"artifacts.office.url \"https://o.example.com/cool": {URL: "https://o.example.com/cool"},
+		"artifacts.office.internal_url":                     {URL: "https://o.example.com", InternalURL: "http://coolwsd:9980?x=1"},
+		"artifacts.office.wopi_base":                        {URL: "https://o.example.com", WOPIBase: "https://user@oryn.example.com"},
+		"需要同时配置 artifacts.office.url":                       {InternalURL: "http://coolwsd:9980"},
+	} {
+		c := base
+		c.Artifacts.Office = o
+		assert.ErrorContains(t, c.Validate(), want)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "orynd.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("public_url: https://oryn.example.com\ndata_dir: "+dir+
+		"\nartifacts: {office: {url: \"https://office.example.com/\", internal_url: \"http://127.0.0.1:9980\", wopi_base: \"http://172.17.0.1:7600/\"}}\n"), 0o600))
+	got, err := LoadOrynd(path)
+	require.NoError(t, err)
+	o := got.Artifacts.Office
+	assert.True(t, o.Enabled())
+	assert.Equal(t, "https://office.example.com", o.URL)
+	assert.Equal(t, "http://127.0.0.1:9980", o.Internal())
+	assert.Equal(t, "http://172.17.0.1:7600", got.OfficeWOPIBase())
+	o.InternalURL = ""
+	assert.Equal(t, "https://office.example.com", o.Internal(), "internal_url 缺省同 url")
+}
+
 // M30：provider.yaml 的 docker.sandbox / firecracker.sandbox。
 func TestProviderSandboxConfig(t *testing.T) {
 	dir := t.TempDir()

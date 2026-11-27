@@ -43,13 +43,14 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 // Handler 提供静态文件；找不到的非 API 路径回退到 index.html（客户端路由）。
 // frameSrc 非空时，CSP 的 `frame-src 'none'` 换成 `frame-src <frameSrc>`：启用 portal 时为
 // `<scheme>://*.<portal_domain>[:port]`（线程页内嵌 portal 与 artifact 帧）；未启用时为 `'self'`（artifact
-// 帧走主域的 /_af/ 回退路径）。`frame-ancestors 'none'` 与 X-Frame-Options 不变。
-func Handler(frameSrc string) http.Handler {
+// 帧走主域的 /_af/ 回退路径）。officeSrc 是 Office 引擎的源（M32，未配置为空）：非空时追加到 frame-src
+// （编辑器 iframe）与 form-action（把访问令牌以表单 POST 进 iframe）。`frame-ancestors 'none'` 与 X-Frame-Options 不变。
+func Handler(frameSrc, officeSrc string) http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic(err)
 	}
-	return handler(sub, frameSrc)
+	return handler(sub, frameSrc, officeSrc)
 }
 
 // Asset 返回内嵌构建产物里的一个文件（如 `sandbox/runtime.js`）；不存在（没跑过 make web）时 ok 为假。
@@ -61,12 +62,16 @@ func Asset(name string) ([]byte, bool) {
 	return b, err == nil
 }
 
-// withFrameSrc 按 frameSrc 改写 CSP 的 frame-src 指令。
-func withFrameSrc(csp, frameSrc string) string {
-	if frameSrc == "" {
-		return csp
+// withSources 按 frameSrc 改写 CSP 的 frame-src 指令，并把 officeSrc 追加到 frame-src 与 form-action。
+func withSources(csp, frameSrc, officeSrc string) string {
+	frames := strings.TrimSpace(frameSrc + " " + officeSrc)
+	if frames != "" {
+		csp = strings.Replace(csp, "frame-src 'none'", "frame-src "+frames, 1)
 	}
-	return strings.Replace(csp, "frame-src 'none'", "frame-src "+frameSrc, 1)
+	if officeSrc != "" {
+		csp = strings.Replace(csp, "form-action 'self'", "form-action 'self' "+officeSrc, 1)
+	}
+	return csp
 }
 
 func setSecurityHeaders(h http.Header, csp string) {
@@ -76,10 +81,10 @@ func setSecurityHeaders(h http.Header, csp string) {
 	h.Set("Referrer-Policy", "same-origin")
 }
 
-func handler(sub fs.FS, frameSrc string) http.Handler {
+func handler(sub fs.FS, frameSrc, officeSrc string) http.Handler {
 	if _, err := fs.Stat(sub, "index.html"); err != nil {
 		// 未执行 make web：返回内置占位页；其内联脚本以哈希放行
-		csp := withFrameSrc(placeholderCSP, frameSrc)
+		csp := withSources(placeholderCSP, frameSrc, officeSrc)
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			setSecurityHeaders(w.Header(), csp)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -87,7 +92,7 @@ func handler(sub fs.FS, frameSrc string) http.Handler {
 			_, _ = w.Write([]byte(placeholder))
 		})
 	}
-	csp := withFrameSrc(ContentSecurityPolicy, frameSrc)
+	csp := withSources(ContentSecurityPolicy, frameSrc, officeSrc)
 	files := http.FileServerFS(sub)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w.Header(), csp)

@@ -95,7 +95,7 @@ func NewRouter(s *Server) http.Handler {
 			r.Handle(prefix+"/*", http.HandlerFunc(notFound))
 		}
 	})
-	r.Handle("/*", webui.Handler(s.FrameSrc))
+	r.Handle("/*", webui.Handler(s.FrameSrc, s.Config.Artifacts.Office.URL))
 	return r
 }
 

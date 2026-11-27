@@ -1,0 +1,37 @@
+# Oryn Office 引擎（M32）：Collabora Online（CODE），给 Office artifact 提供浏览器编辑与高保真转换。
+#
+# 用法（详见 docs/deploy.md「Office 引擎（M32）」）：
+#   1. 在本目录写 .env（或在 shell 里导出）：
+#        ORYN_PUBLIC_URL=https://oryn.example.com      # Oryn 的公开源（orynd.yaml 的 public_url；配置了 artifacts.office.wopi_base 时写它）
+#        OFFICE_HOST=office.example.com                # 浏览器访问引擎的主机名（orynd.yaml 的 artifacts.office.url 去掉 https://）
+#   2. docker compose -f deploy/collabora/compose.yaml up -d
+#   3. 反代加 deploy/openresty/oryn-office.conf 的虚拟主机；orynd.yaml 加
+#        artifacts: { office: { url: "https://office.example.com", internal_url: "http://127.0.0.1:9980" } }
+#      后重启 orynd。
+#
+# 要点：
+#   - 引擎只发布在 127.0.0.1:9980，浏览器经反代（TLS 在反代终结：ssl.enable=false + ssl.termination=true）访问；
+#   - aliasgroup1 是允许的 WOPI 宿主：引擎只回调这个源的 /wopi/files/…（即 orynd 的 WOPI 端点）；
+#   - net.post_allow 只放行本机与 docker 网桥（orynd 的 internal_url 请求从网桥地址到达）调用 convert-to，
+#     反代虚拟主机另外挡掉公网的 /cool/convert-to；
+#   - 宏一律不执行（security.enable_macros_execution=false，也是镜像缺省）；管理控制台关闭；
+#   - 镜像按 digest 固定（2026-11-27 验收用的 CODE 26.04.6.2）；升级时换 digest 并重跑 accept:m32-office-engine。
+name: oryn-collabora
+
+services:
+  code:
+    image: collabora/code@sha256:a2f5d4e88addd46033d8440f7a13b82f7e6fe444bf8c6b5a3eadc789f0b5342b
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9980:9980"
+    environment:
+      aliasgroup1: ${ORYN_PUBLIC_URL:?需要 ORYN_PUBLIC_URL}
+      server_name: ${OFFICE_HOST:?需要 OFFICE_HOST}
+      dictionaries: "en_US zh_CN"
+      extra_params: >-
+        --o:ssl.enable=false
+        --o:ssl.termination=true
+        --o:net.post_allow.host[0]=127\.0\.0\.1
+        --o:net.post_allow.host[1]=172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+
+        --o:security.enable_macros_execution=false
+        --o:admin_console.enable=false

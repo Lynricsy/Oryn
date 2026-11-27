@@ -87,6 +87,23 @@ type ArtifactFile struct {
 	Size       int64  `json:"size"`
 }
 
+type ArtifactOfficeHold struct {
+	ArtifactID  string  `json:"artifactId"`
+	Lock        string  `json:"lock"`
+	BaseVersion int64   `json:"baseVersion"`
+	DraftSha    *string `json:"draftSha"`
+	DraftSize   *int64  `json:"draftSize"`
+}
+
+type ArtifactOfficeSession struct {
+	ID         string `json:"id"`
+	ArtifactID string `json:"artifactId"`
+	TokenHash  string `json:"tokenHash"`
+	CreatedAt  int64  `json:"createdAt"`
+	ActiveAt   int64  `json:"activeAt"`
+	ClosingAt  *int64 `json:"closingAt"`
+}
+
 type ArtifactPublication struct {
 	ID             string  `json:"id"`
 	ArtifactID     string  `json:"artifactId"`

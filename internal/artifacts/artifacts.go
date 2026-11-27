@@ -310,6 +310,8 @@ type Service struct {
 	samples sampleSet
 	// notes 是设计画布便签的自动投递（notes.go）。
 	notes notesSet
+	// office 是 Office 引擎与 WOPI 配置（office_session.go）。
+	office officeSet
 }
 
 // holdContent 取内容存储的读锁并返回释放函数。凡是先把内容落进存储、再在事务里插引用行的写入路径，
@@ -832,6 +834,11 @@ func (s *Service) Purge(ctx context.Context) {
 	}
 	s.c.gc(ctx, &s.contentMu, func(ctx context.Context, sha string) (bool, error) {
 		n, err := s.st.Q.CountArtifactFilesBySHA(ctx, sha)
+		if err != nil || n > 0 {
+			return n > 0, err
+		}
+		// 编辑器自动保存的工作副本还没落成版本，也算引用
+		n, err = s.st.Q.CountArtifactOfficeDraftsBySHA(ctx, &sha)
 		return n > 0, err
 	}, now.Add(-orphanGrace), s.gcBeforeLock)
 }

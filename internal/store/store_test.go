@@ -34,9 +34,10 @@ import (
 // M19：assistant_settings、assistant_confirmations、assistant_inbox；
 // M24 阶段 ②：project_repos、repo_pushes、repo_commit_threads；阶段 ③：project_webhooks；
 // M26：research_topics、research_runs、research_mined、research_settings；
-// M27：thread_browser_relay_bindings；M29：artifact_designs；M30：sandboxes；M31：schedule_webhooks；设置页运维参数：config_overrides）。
+// M27：thread_browser_relay_bindings；M29：artifact_designs；M30：sandboxes；M31：schedule_webhooks；设置页运维参数：config_overrides；
+// M32：artifact_office_sessions、artifact_office_holds）。
 var m2Tables = []string{
-	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_designs", "artifact_files", "artifact_publications", "artifact_versions", "artifacts", "assistant_confirmations", "assistant_files", "assistant_inbox", "assistant_settings", "attachments", "blobs", "box_activity", "box_apps", "box_deploys", "box_releases", "box_secrets", "boxes", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "config_overrides", "coord_actions", "device_pairings",
+	"agent_avatars", "artifact_comment_threads", "artifact_comments", "artifact_consents", "artifact_data", "artifact_data_totals", "artifact_designs", "artifact_files", "artifact_office_holds", "artifact_office_sessions", "artifact_publications", "artifact_versions", "artifacts", "assistant_confirmations", "assistant_files", "assistant_inbox", "assistant_settings", "attachments", "blobs", "box_activity", "box_apps", "box_deploys", "box_releases", "box_secrets", "boxes", "browser_profile_events", "browser_profiles", "budget", "budget_alerts", "config_overrides", "coord_actions", "device_pairings",
 	"devices", "entries", "entry_cursors", "github_audit", "github_autoclose", "github_deliveries", "github_hooks", "github_identities",
 	"github_oauth_app", "github_oauth_states", "github_outbox", "github_prepare", "github_pulls", "github_releases", "github_repo_watches", "github_self_keys",
 	"github_self_writes", "github_sender_runs", "github_triggers", "github_watches", "jobs", "memory_candidates", "memory_documents", "memory_endpoints",

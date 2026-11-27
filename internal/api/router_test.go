@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/Lynricsy/Oryn/internal/config"
 )
 
 // 鉴权中间件拒绝一切时，免鉴权路径仍可访问，受保护路径返回 401。
@@ -110,4 +112,17 @@ func TestRouterFrameSrcCSP(t *testing.T) {
 			assert.Contains(t, csp, "frame-ancestors 'none'", p)
 		}
 	}
+}
+
+// 配置了 Office 引擎（artifacts.office.url）时 SPA 的 CSP 在 frame-src 与 form-action 里追加引擎源。
+func TestRouterOfficeCSP(t *testing.T) {
+	var cfg config.Orynd
+	cfg.Artifacts.Office.URL = "https://office.example.com"
+	h := NewRouter(&Server{Deps: Deps{FrameSrc: "'self'", Config: cfg}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/artifacts/x", nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	assert.Contains(t, csp, "frame-src 'self' https://office.example.com;")
+	assert.Contains(t, csp, "form-action 'self' https://office.example.com;")
+	assert.Contains(t, csp, "frame-ancestors 'none'")
 }

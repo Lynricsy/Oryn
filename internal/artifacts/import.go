@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/html"
+
+	"github.com/Lynricsy/Oryn/internal/artifacts/office"
 )
 
 // 导入特有的错误码（REST：too_many 413，其余 400）。
@@ -117,10 +119,18 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 	}
 	if len(paths) == 1 && !strings.Contains(paths[0], "/") {
 		if typ := OfficeTypeByExt(paths[0]); typ != "" {
-			return s.importOffice(ctx, p, typ, paths[0], st)
+			return s.importOffice(ctx, p, typ, paths[0], st.writes[paths[0]])
 		}
 		if target, ok := LegacyOfficeExt(paths[0]); ok {
-			return Artifact{}, opErr(CodeUnsupportedFormat, "%s 是旧版或 OpenDocument 格式。把文件交给 Agent 转成 %s，或部署 Office 引擎后再导入。", paths[0], target)
+			e := s.officeConverter(ctx)
+			if e == nil {
+				return Artifact{}, opErr(CodeUnsupportedFormat, "%s 是旧版或 OpenDocument 格式。把文件交给 Agent 转成 %s，或部署 Office 引擎后再导入。", paths[0], target)
+			}
+			f, err := s.convertLegacy(ctx, e, paths[0], target, st.writes[paths[0]])
+			if err != nil {
+				return Artifact{}, err
+			}
+			return s.importOffice(ctx, p, target, paths[0], f)
 		}
 	}
 	if c := CaseClash(paths); c != "" {
@@ -157,10 +167,10 @@ func officeName(name string) bool {
 	return legacy || OfficeTypeByExt(name) != ""
 }
 
-// importOffice 把单个 Office 文件导入成类型化 artifact：入口改名为该类型的 Entry，标题取文件名去掉扩展名；
-// 校验不过回 bad_office 并保留问题说明。
-func (s *Service) importOffice(ctx context.Context, p ImportParams, typ, name string, st staged) (Artifact, error) {
-	st.writes = map[string]stored{TypeEntry(typ): st.writes[name]}
+// importOffice 把单个 Office 文件 f 导入成 typ 类型的 artifact：入口是该类型的 Entry，标题取上传的文件名 name
+// 去掉扩展名；校验不过回 bad_office 并保留问题说明。
+func (s *Service) importOffice(ctx context.Context, p ImportParams, typ, name string, f stored) (Artifact, error) {
+	st := staged{writes: map[string]stored{TypeEntry(typ): f}}
 	base := path.Base(name)
 	title := clipTitle(strings.TrimSuffix(base, path.Ext(base)))
 	if title == "" {
@@ -171,6 +181,29 @@ func (s *Service) importOffice(ctx context.Context, p ImportParams, typ, name st
 		return Artifact{}, &OpError{Code: CodeBadOffice, Message: oe.Message}
 	}
 	return a, err
+}
+
+// convertLegacy 用 Office 引擎把旧版或 OpenDocument 文件 f（上传名 name）转成 target 类型，结果落进内容存储
+// （调用方持有内容读锁）。引擎拒绝或转换失败回 bad_office 带引擎的原因。
+func (s *Service) convertLegacy(ctx context.Context, e *office.Engine, name, target string, f stored) (stored, error) {
+	src, err := s.c.open(f.sha)
+	if err != nil {
+		return stored{}, err
+	}
+	defer src.Close()
+	rc, err := e.Convert(ctx, src, path.Base(name), target)
+	if err != nil {
+		return stored{}, opErr(CodeBadOffice, "Office 引擎没能把 %s 转成 %s：%v", name, target, err)
+	}
+	defer rc.Close()
+	out, err := s.c.put(rc, MaxOfficeFileBytes, false)
+	if errors.Is(err, errFileTooLarge) {
+		return stored{}, opErr(CodeTooLarge, "%s 转成 %s 后超过单文件上限 %d MiB。", name, target, MaxOfficeFileBytes>>20)
+	}
+	if err != nil {
+		return stored{}, opErr(CodeBadOffice, "Office 引擎没能把 %s 转成 %s：%v", name, target, err)
+	}
+	return out, nil
 }
 
 // importPart 校验一个 part 的路径并把内容落进内容存储；HTML 文件另做 UTF-8 校验。

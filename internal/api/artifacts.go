@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -135,6 +136,14 @@ func (s *Server) GetArtifact(w http.ResponseWriter, r *http.Request, id apigen.A
 	}
 	for _, c := range v.Capabilities {
 		out.Capabilities = append(out.Capabilities, apigen.ArtifactCapability(c))
+	}
+	if artifacts.IsBinaryType(a.Type) {
+		editing, err := svc.Editing(ctx, id)
+		if err != nil {
+			writeArtifactErr(w, r, err)
+			return
+		}
+		out.Editing = &editing
 	}
 	if a.Kind == artifacts.KindCanvas {
 		// canvas.json 解析失败（或读不到）时省略，查看器按空画布处理
@@ -568,8 +577,9 @@ func (s *Server) ExportArtifact(w http.ResponseWriter, r *http.Request, id apige
 }
 
 // GetArtifactCapabilities 对应 `GET artifacts/capabilities`。render 反映渲染自检的结果（不可用时带原因）；
-// sample 反映页面的 sample 能力是否可用（coordinator.omp_path 指向的 Core 在，步骤 7.5）。
-func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, _ *http.Request) {
+// sample 反映页面的 sample 能力是否可用（coordinator.omp_path 指向的 Core 在，步骤 7.5）；office 反映 Office 引擎
+// 能否编辑与转换（M32；discovery 与能力有缓存）。
+func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, r *http.Request) {
 	host, ok := s.artifactsHost(w)
 	if !ok {
 		return
@@ -581,7 +591,67 @@ func (s *Server) GetArtifactCapabilities(w http.ResponseWriter, _ *http.Request)
 			out.RenderReason = &reason
 		}
 	}
+	st := s.Artifacts.Service.OfficeStatus(r.Context())
+	out.Office.Edit, out.Office.Convert = st.Edit, st.Convert
+	if st.Reason != "" {
+		out.Office.Reason = &st.Reason
+	}
 	WriteJSON(w, http.StatusOK, out)
+}
+
+// OpenArtifactOfficeSession 对应 `POST artifacts/{id}/office-sessions`（M32）：建编辑会话（已有占用时加入同一文档），
+// 回引擎编辑页地址与只给这一次的访问令牌。
+func (s *Server) OpenArtifactOfficeSession(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	var body apigen.ArtifactOfficeSessionRequest
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, artifacts.CodeInvalid, "请求体必须是 JSON {locale?}")
+			return
+		}
+	}
+	var locale string
+	if body.Locale != nil {
+		locale = *body.Locale
+	}
+	sess, err := svc.OpenOffice(r.Context(), id, locale)
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, apigen.ArtifactOfficeSession{
+		SessionID: sess.ID, ActionURL: sess.ActionURL, AccessToken: sess.Token, AccessTokenTTL: sess.TokenExpires.UnixMilli(),
+	})
+}
+
+// BeatArtifactOfficeSession 对应 `POST artifact-office-sessions/{sessionId}/beat`：刷新会话活动时间；会话不存在或已过期回 404。
+func (s *Server) BeatArtifactOfficeSession(w http.ResponseWriter, r *http.Request, sessionID apigen.ArtifactOfficeSessionIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.BeatOffice(r.Context(), sessionID); err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CloseArtifactOfficeSession 对应 `DELETE artifact-office-sessions/{sessionId}`：只记下关闭时刻（引擎的退出保存在宽限期内
+// 仍可提交）；会话不存在也回 204。
+func (s *Server) CloseArtifactOfficeSession(w http.ResponseWriter, r *http.Request, sessionID apigen.ArtifactOfficeSessionIDPath) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.CloseOffice(r.Context(), sessionID); err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GetArtifactThumbnail 对应 `GET artifacts/{id}/thumbnail?version=`（步骤 4.2）：720×450 的 JPEG。请求的版本还没有时

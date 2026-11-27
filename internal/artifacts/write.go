@@ -47,6 +47,9 @@ type WriteParams struct {
 	Capabilities *[]string
 	// Unchecked 里的路径不参与冲突检查（服务端自己合并好的文件，如画布的 canvas.json）。
 	Unchecked []string
+	// officeCommit 非 nil 表示 WOPI 提交路径（编辑器保存、清扫落草稿）：入口文件就是这份已落进内容存储的内容
+	// （不读 Files、不再 stage），并且不受编辑占用的闸门限制。
+	officeCommit *stored
 }
 
 // CreateParams 是 Create 的参数。Origin 为空按 agent。
@@ -544,7 +547,7 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
-	if len(p.Files) == 0 && p.Capabilities == nil {
+	if len(p.Files) == 0 && p.Capabilities == nil && p.officeCommit == nil {
 		return Artifact{}, opErr(CodeInvalid, "这次写入没有任何改动。")
 	}
 	var caps []string
@@ -568,11 +571,19 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 	if err := s.rateCheck(p.Author); err != nil {
 		return Artifact{}, err
 	}
+	// 先在事务外查一次占用：被占用时不必把请求体读进内容存储（事务里还会再查一次）
+	if p.officeCommit == nil {
+		if err := officeGate(ctx, s.st.Q, p.ID); err != nil {
+			return Artifact{}, err
+		}
+	}
 	typ := deref(cur.Type)
 	release := s.holdContent()
 	defer release()
-	st, err := s.stage(p.Files, typ)
-	if err != nil {
+	var st staged
+	if p.officeCommit != nil {
+		st = staged{writes: map[string]stored{TypeEntry(typ): *p.officeCommit}}
+	} else if st, err = s.stage(p.Files, typ); err != nil {
 		return Artifact{}, err
 	}
 	if s.afterStage != nil {
@@ -586,6 +597,11 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 		}
 		if a.DeletedAt != nil {
 			return deletedErr(p.ID)
+		}
+		if p.officeCommit == nil {
+			if err := officeGate(ctx, q, p.ID); err != nil {
+				return err
+			}
 		}
 		check := slices.DeleteFunc(st.changedPaths(), func(path string) bool { return slices.Contains(p.Unchecked, path) })
 		if p.Capabilities != nil {
@@ -665,6 +681,9 @@ func (s *Service) restoreVersion(ctx context.Context, id string, version, base i
 		}
 		if a.DeletedAt != nil {
 			return deletedErr(id)
+		}
+		if err := officeGate(ctx, q, id); err != nil {
+			return err
 		}
 		if version < 1 || int64(version) > a.Head {
 			return opErr(CodeNotFound, "artifact %s 没有版本 %d（最新是版本 %d）。", id, version, a.Head)
