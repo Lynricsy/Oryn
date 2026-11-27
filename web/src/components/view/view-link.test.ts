@@ -81,4 +81,21 @@ describe("ViewLink", () => {
 		fromPage({ v: 1, channel: link.channel, kind: "ready" });
 		expect(handlers.ready).not.toHaveBeenCalled();
 	});
+
+	it("帧再次 load（页面导航走了）后通道作废：不重发 hello、不收消息", () => {
+		const { frame, post, link, fromPage } = setup();
+		const navigated = vi.fn();
+		const prompt = vi.fn();
+		const relink = new ViewLink(frame, { navigated, prompt });
+		link.dispose();
+		frame.dispatchEvent(new Event("load"));
+		expect(post).toHaveBeenCalledTimes(1);
+		frame.dispatchEvent(new Event("load"));
+		expect(navigated).toHaveBeenCalledOnce();
+		expect(post).toHaveBeenCalledTimes(1);
+		fromPage({ v: 1, channel: relink.channel, kind: "prompt", text: "冒充" });
+		expect(prompt).not.toHaveBeenCalled();
+		relink.post({ kind: "hello" });
+		expect(post).toHaveBeenCalledTimes(1);
+	});
 });

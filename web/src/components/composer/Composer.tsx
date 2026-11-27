@@ -426,6 +426,8 @@ export const Composer = memo(function Composer({
 			case "mode_prompt":
 				// 与 TUI 一致：先进入模式，再把 prompt（连同附件）作为该模式的第一条消息发出
 				if (action.frame) await runModeCommand(threadId, action.frame);
+				// 斜杠命令发出的也是主人的消息：挂起的视图调用先以「改用文字回复」结束（C5）
+				dismissViewAwaits(threadId);
 				await realtime.cmd(
 					threadId,
 					slashPromptFrame(
@@ -438,6 +440,7 @@ export const Composer = memo(function Composer({
 				);
 				return;
 			case "queue":
+				dismissViewAwaits(threadId);
 				await realtime.cmd(
 					threadId,
 					promptFrame(
@@ -547,6 +550,7 @@ export const Composer = memo(function Composer({
 					t(`slash.unavailable.${action.reason}`, { name: action.name }),
 				);
 			case "prompt":
+				dismissViewAwaits(threadId);
 				await realtime.cmd(
 					threadId,
 					action.attach

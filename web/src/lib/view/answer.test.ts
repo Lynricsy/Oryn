@@ -88,6 +88,22 @@ describe("回执往返", () => {
 		expect(parsed?.display.startsWith("出行\n- 城市: 北京")).toBe(true);
 	});
 
+	it("多行字段里有未闭合的 ```json 时仍取末尾生成的围栏，display 保留主人写的内容", () => {
+		const values = {
+			city: "bj",
+			days: null,
+			tags: [],
+			hotel: false,
+			note: "示例：\n```json\n{ 没写完",
+		};
+		const text = formatFormAnswer(form, values);
+		const answer: ViewAnswer = { block: form.path, kind: "form", values };
+		const parsed = parseViewReceipt(buildViewReceipt("c1", answer, text));
+		expect(parsed?.answer).toEqual(answer);
+		expect(parsed?.display).toContain("```json\n{ 没写完");
+		expect(parsed?.display).not.toContain('"city":"bj"');
+	});
+
 	it("按钮：带 choice，正文是按钮的 prompt", () => {
 		const answer: ViewAnswer = { block: "3", kind: "action", choice: 2 };
 		const parsed = parseViewReceipt(

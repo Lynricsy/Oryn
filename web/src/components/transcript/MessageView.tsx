@@ -8,6 +8,7 @@ import {
 	memo,
 	type ReactNode,
 	useContext,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -64,7 +65,11 @@ import {
 } from "../../state/stores";
 import { viewAwaitOf } from "../../state/thread-reducer";
 import { uiStore } from "../../state/ui";
-import { useViewInFlight } from "../../state/view-inflight";
+import {
+	clearViewInFlight,
+	partitionViewInFlight,
+	useViewInFlight,
+} from "../../state/view-inflight";
 import { ToolView, type ToolViewProps } from "../../tool-render/ToolView";
 import type { ToolResultLike, ViewHost } from "../../tool-render/types";
 import { isRecord, resultTextOf, toolSubject } from "../../tool-render/util";
@@ -1075,13 +1080,15 @@ function threadOrbFileUrl(threadId: string, path: string): string | null {
 const NO_VIEW_ANSWERS: ReadonlyMap<string, ViewAnswer> = new Map();
 
 /**
- * 视图调用（M33）的 `ViewHost`：转录推导出的作答叠加在途作答（同一块以转录里的为准）、挂起状态、提交与帧。
+ * 视图调用（M33）的 `ViewHost`：转录推导出的作答叠加仍有效的在途作答、挂起状态、提交与帧。转录接管了的、
+ * 以及阻塞作答没送到（调用已结束、结果里没有它）的在途记录在这里清掉（规则见 view-inflight.ts）。
  * 非视图调用为 undefined（钩子照常调用，选择器对它们恒为假）。
  */
 function useViewHost(
 	ctx: TranscriptContextValue,
 	toolCallId: string,
 	isView: boolean,
+	ended: boolean,
 ): ViewHost | undefined {
 	const inFlight = useViewInFlight(ctx.threadId, toolCallId);
 	const awaiting = useThread(
@@ -1091,18 +1098,27 @@ function useViewHost(
 	const known = ctx.view?.answers.get(toolCallId);
 	const submit = ctx.view?.submit;
 	const openFrame = ctx.view?.openFrame;
+	const { live, stale } = useMemo(
+		() => partitionViewInFlight(inFlight, known, ended),
+		[inFlight, known, ended],
+	);
+	useEffect(() => {
+		for (const block of stale)
+			clearViewInFlight(ctx.threadId, toolCallId, block);
+	}, [stale, ctx.threadId, toolCallId]);
 	return useMemo(() => {
 		if (!isView) return undefined;
-		const answers: ReadonlyMap<string, ViewAnswer> = inFlight
-			? new Map([...Object.entries(inFlight), ...(known ?? [])])
-			: (known ?? NO_VIEW_ANSWERS);
+		const answers: ReadonlyMap<string, ViewAnswer> =
+			live.length > 0
+				? new Map([...live, ...(known ?? [])])
+				: (known ?? NO_VIEW_ANSWERS);
 		return {
 			answers: () => answers,
 			awaiting: () => awaiting,
 			submit,
 			openFrame,
 		};
-	}, [isView, inFlight, known, awaiting, submit, openFrame]);
+	}, [isView, live, known, awaiting, submit, openFrame]);
 }
 
 /** 工具卡片：调用参数来自 toolCall 块（或实时帧），结果来自 toolResult 条目（或 tool_execution_end）。 */
@@ -1143,6 +1159,7 @@ export function ToolCard({
 		ctx,
 		toolCallId,
 		toolName === VIEW_TOOL_UI || toolName === VIEW_TOOL_HTML,
+		result !== undefined,
 	);
 	const cardRef = useRef<HTMLDivElement | null>(null);
 	const ctxRef = useContextTarget<HTMLDivElement>({

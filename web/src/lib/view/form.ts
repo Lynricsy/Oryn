@@ -74,7 +74,11 @@ export function draftFromValues(
 	values: Readonly<Record<string, FieldValue>>,
 ): FormDraft {
 	const out: FormDraft = {};
-	for (const f of form.fields) out[f.name] = draftValue(f, values[f.name]);
+	for (const f of form.fields)
+		out[f.name] = draftValue(
+			f,
+			Object.hasOwn(values, f.name) ? values[f.name] : undefined,
+		);
 	return out;
 }
 

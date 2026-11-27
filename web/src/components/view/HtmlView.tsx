@@ -230,6 +230,8 @@ export function HtmlView({
 		if (!frame || !src) return;
 		const link = new ViewLink(frame, {
 			load: () => link.post({ kind: "theme", ...currentViewTheme() }),
+			// 页面导航离开了视图文档：通道已作废，换成可重试的错误态（重试会换新帧）
+			navigated: () => setPhase("error"),
 			ready: () => setPhase("ready"),
 			resize: (h) => {
 				if (fixed !== undefined) return;

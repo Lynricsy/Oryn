@@ -10,7 +10,7 @@ import { dismissViewAwaits, submitViewAnswer } from "./actions";
 import { getThreadStore, resetThreadStores } from "./stores";
 import { dockPendingUi, type OmpFrame, viewAwaitOf } from "./thread-reducer";
 import { buildTranscript } from "./transcript";
-import { viewInFlightStore } from "./view-inflight";
+import { partitionViewInFlight, viewInFlightStore } from "./view-inflight";
 
 vi.mock("../realtime/socket", () => ({
 	realtime: {
@@ -187,7 +187,7 @@ describe("提交与撤销", () => {
 		expect(realtime.cmd).not.toHaveBeenCalled();
 		expect(getThreadStore(TID).getState().pendingUi).toEqual([]);
 		expect(viewInFlightStore.getState().pending[`${TID}:c1`]).toEqual({
-			"0": pick,
+			"0": { answer: pick, awaited: true },
 		});
 	});
 
@@ -227,5 +227,39 @@ describe("提交与撤销", () => {
 				.getState()
 				.pendingUi.map((r) => r.id),
 		).toEqual(["u1"]);
+	});
+});
+
+describe("在途作答的作废", () => {
+	const a: ViewAnswer = { block: "0", kind: "action", choice: 0 };
+	const b: ViewAnswer = { block: "1", kind: "action", choice: 1 };
+	const blocks = {
+		"0": { answer: a, awaited: false },
+		"1": { answer: b, awaited: true },
+	};
+
+	it("转录还没有作答、调用没结束：都锁定", () => {
+		expect(partitionViewInFlight(blocks, undefined, false)).toEqual({
+			live: [
+				["0", a],
+				["1", b],
+			],
+			stale: [],
+		});
+	});
+
+	it("转录接管的块作废（之后回退到回执之前，块随转录解锁）", () => {
+		const known = new Map([["0", a]]);
+		expect(partitionViewInFlight(blocks, known, false)).toEqual({
+			live: [["1", b]],
+			stale: ["0"],
+		});
+	});
+
+	it("阻塞作答的调用已结束而结果里没有它：没送到，作废；非阻塞的不受影响", () => {
+		expect(partitionViewInFlight(blocks, new Map(), true)).toEqual({
+			live: [["0", a]],
+			stale: ["1"],
+		});
 	});
 });

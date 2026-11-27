@@ -331,7 +331,8 @@ export function FormView({ block }: { block: FormBlock }): ReactNode {
 		if (!canSubmit || !view.onAnswer) return;
 		const found = validateForm(block, draft);
 		setErrors(found);
-		const first = block.fields.find((f) => found[f.name]);
+		// 字段名可以是 constructor / toString 之类（C2 允许）：只看自有属性
+		const first = block.fields.find((f) => Object.hasOwn(found, f.name));
 		if (first) {
 			document.getElementById(`${baseId}-${first.name}`)?.focus();
 			return;
@@ -370,7 +371,9 @@ export function FormView({ block }: { block: FormBlock }): ReactNode {
 			)}
 			<div className={`grid gap-x-4 gap-y-3.5 ${GRID[block.columns]}`}>
 				{block.fields.map((f) => {
-					const err = errors[f.name];
+					const err = Object.hasOwn(errors, f.name)
+						? errors[f.name]
+						: undefined;
 					return (
 						<div
 							key={f.name}

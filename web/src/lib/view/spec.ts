@@ -349,8 +349,14 @@ function normalizeField(raw: unknown): FormField | null {
 			seen.add(ov);
 			options.push({ label: ol, value: ov });
 		}
-		if (options.length === 0) return null;
-		field.options = options;
+		if (options.length > 0) {
+			field.options = options;
+		} else {
+			// 选择题没给选项（schema 只在描述里要求）：退成文本框，表单照样能作答——await 的调用不会挂着一个答不了的视图
+			field.kind = "text";
+			if (Array.isArray(field.defaultValue))
+				field.defaultValue = field.defaultValue.join(", ");
+		}
 	}
 	const min = num(raw.min);
 	if (min !== undefined) field.min = min;

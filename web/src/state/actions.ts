@@ -341,9 +341,10 @@ export async function submitViewAnswer(
 	answer: ViewAnswer,
 	text: string,
 ): Promise<void> {
-	markViewInFlight(threadId, toolCallId, answer);
+	const req = viewAwaitOf(getThreadStore(threadId).getState(), toolCallId);
+	// 阻塞作答的送达由工具结果确认：结果里没有它就作废在途记录（见 view-inflight.ts）
+	markViewInFlight(threadId, toolCallId, answer, req !== undefined);
 	try {
-		const req = viewAwaitOf(getThreadStore(threadId).getState(), toolCallId);
 		if (req) {
 			const ok = answerUi(threadId, {
 				type: "extension_ui_response",

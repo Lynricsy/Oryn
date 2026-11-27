@@ -101,6 +101,34 @@ describe("normalizeUiSpec", () => {
 		});
 		expect(paths(interactiveBlocks(spec?.blocks ?? []))).toEqual(["0", "1.0"]);
 	});
+
+	it("选择题没给选项时退成文本框，表单仍可作答", () => {
+		const spec = normalizeUiSpec({
+			blocks: [
+				{
+					type: "form",
+					fields: [
+						{
+							name: "pick",
+							label: "选",
+							kind: "multiselect",
+							defaultValue: ["a", "b"],
+						},
+					],
+				},
+			],
+		});
+		const form = spec?.blocks[0];
+		expect(form?.type === "form" ? form.fields : []).toEqual([
+			{
+				name: "pick",
+				label: "选",
+				kind: "text",
+				required: false,
+				defaultValue: "a, b",
+			},
+		]);
+	});
 });
 
 describe("stripPrototypeKeys", () => {

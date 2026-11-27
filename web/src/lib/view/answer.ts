@@ -23,7 +23,11 @@ export const VIEW_AWAIT_MARK = "oryn-view:";
 
 const RECEIPT =
 	/^<oryn-view-answer call="([^"\s<>]{1,256})" block="([0-9a-z.]{1,40})"(?: choice="(\d)")?>\n([\s\S]*)\n<\/oryn-view-answer>\s*$/;
-const JSON_FENCE = /```json\n([\s\S]*?)\n```/g;
+/**
+ * formatFormAnswer 在正文末尾写的 JSON 围栏：JSON.stringify 的结果没有换行，所以围栏内只有一行。从末尾锚定，
+ * 主人在多行字段里写的 ```json 不会和它配成一对。
+ */
+const TRAILING_JSON_FENCE = /\n*```json\n([^\n]*)\n```\s*$/;
 const CALL_ID = /^[^"\s<>]{1,256}$/;
 
 /** 这次调用的 id 能否放进回执；不能时视图不可交互（C4）。 */
@@ -91,10 +95,9 @@ export interface ParsedViewReceipt {
 	display: string;
 }
 
-/** 正文里最后一个 ```json 围栏的对象；没有或解析失败时为 null。 */
+/** 正文末尾生成的 JSON 围栏里的对象；没有或解析失败时为 null。 */
 function lastJsonFence(text: string): Record<string, unknown> | null {
-	let last: string | undefined;
-	for (const m of text.matchAll(JSON_FENCE)) last = m[1];
+	const last = TRAILING_JSON_FENCE.exec(text)?.[1];
 	if (last === undefined) return null;
 	try {
 		const v: unknown = JSON.parse(last);
@@ -122,9 +125,9 @@ function toFieldValues(raw: object): Record<string, FieldValue> {
 	return values;
 }
 
-/** 去掉作答正文末尾的 JSON 围栏（显示用）。 */
+/** 去掉作答正文末尾生成的 JSON 围栏（显示用）。 */
 export function stripAnswerJson(text: string): string {
-	return text.replace(/\n*```json\n[\s\S]*?\n```\s*$/, "").trimEnd();
+	return text.replace(TRAILING_JSON_FENCE, "").trimEnd();
 }
 
 /** 解析主人消息里的视图回执；不是回执时返回 null。 */
