@@ -52,16 +52,19 @@ final class HeaderMenuButton: UIButton {
   }
 }
 
-/// SwiftUI 里摆放视图钮；菜单只在内容（或明暗、调色板）变了时重建，开着时让系统原地换。
+/// SwiftUI 里摆放视图钮；菜单只在内容（或线程、明暗、调色板）变了时重建，开着时让系统原地换。
 @available(iOS 26.0, *)
 struct TrailMenuButton: UIViewRepresentable {
   let model: HeaderModel
+  /// 菜单所属线程（spec.key）：构建时捕获进每个 action，换线程后迟到的选中不会算到新线程头上。
+  let threadKey: String
   let trail: HeaderTrailSpec
   let palette: HeaderPalette
   let paletteSpec: HeaderPaletteSpec
   let dark: Bool
 
   struct MenuKey: Equatable {
+    let thread: String
     let menu: HeaderMenuSpec
     let palette: HeaderPaletteSpec
     let dark: Bool
@@ -98,12 +101,13 @@ struct TrailMenuButton: UIViewRepresentable {
     button.accessibilityLabel = trail.label
     button.dot = palette.dot(trail.dot).map { UIColor($0) }
 
-    let key = MenuKey(menu: trail.menu, palette: paletteSpec, dark: dark)
+    let key = MenuKey(thread: threadKey, menu: trail.menu, palette: paletteSpec, dark: dark)
     guard coordinator.key != key else { return }
     coordinator.key = key
     let model = self.model
+    let thread = threadKey
     let menu = HeaderSystemMenu.build(trail.menu, palette: palette, dark: dark) { [weak model] item in
-      model?.chooseTrail(item)
+      model?.chooseTrail(item, key: thread)
     }
     button.menu = menu
     if model.open == "trail" {

@@ -110,7 +110,9 @@ final class HeaderModel: ObservableObject {
   }
 
   /// 选中系统视图菜单的一项：菜单由系统收起（另有 trailShown(false) 上报）。
-  func chooseTrail(_ item: HeaderItemSpec) {
+  /// `key` 是菜单构建时的线程：已换线程（dismiss 后系统迟到的选中）时丢弃，不让旧菜单的选择落到新线程上。
+  func chooseTrail(_ item: HeaderItemSpec, key: String) {
+    guard key == spec?.key else { return }
     // 经事件回到网页时已没有用户手势，剪贴板只能在这里写
     if let text = item.copy { UIPasteboard.general.string = text }
     emit("select", menu: "trail", id: item.id)
@@ -197,7 +199,8 @@ struct HeaderRootView: View {
         .place(spec.lead.frame)
         if let trail = spec.trail {
           TrailMenuButton(
-            model: model, trail: trail, palette: palette, paletteSpec: spec.palette, dark: spec.dark
+            model: model, threadKey: spec.key, trail: trail, palette: palette, paletteSpec: spec.palette,
+            dark: spec.dark
           )
           .place(trail.frame)
         }
