@@ -58,6 +58,10 @@ const GROUPS = [
 	"project-palette",
 	"research",
 	"boxes",
+	"views",
+	"design-variants",
+	"model-cache",
+	"sandbox-providers",
 ] as const;
 type Group = (typeof GROUPS)[number];
 const ONLY = option("--only")
@@ -767,6 +771,366 @@ function upstreamTranscript(now: number): Entry[] {
 		).out;
 }
 
+/** 视图工具的结果（同 Core：`details.view.spec` 是这次调用的参数）。 */
+const viewResult = (spec: Json, awaitsInput = false) => ({
+	text: awaitsInput
+		? "Rendered. The user's input will arrive as their next message; end this turn now."
+		: "Rendered.",
+	details: { view: { outcome: "rendered", spec } },
+});
+
+/** push 线程的回归汇总视图：KPI、折线图、按端表格与提示条。 */
+const PUSH_DASHBOARD: Json = {
+	title: "离线补拉回归：四端结果",
+	description: "每端断网 6 小时后重连，各跑 50 轮；11 月 26 日夜间批次。",
+	width: "wide",
+	blocks: [
+		{
+			type: "stats",
+			items: [
+				{
+					label: "补拉完整率",
+					value: "99.5%",
+					delta: "+0.6%",
+					trend: "up",
+					hint: "上一版 98.9%",
+				},
+				{
+					label: "平均补拉耗时",
+					value: "0.9 s",
+					delta: "-0.4 s",
+					trend: "down",
+				},
+				{ label: "每轮补拉条目", value: 14, delta: "持平", trend: "flat" },
+				{ label: "锁屏泄露", value: 0, delta: "-3", trend: "down" },
+			],
+		},
+		{
+			type: "columns",
+			weights: [3, 2],
+			columns: [
+				{
+					blocks: [
+						{
+							type: "chart",
+							chartType: "line",
+							title: "每日补拉耗时（秒）",
+							height: 220,
+							data: {
+								labels: [
+									"周四",
+									"周五",
+									"周六",
+									"周日",
+									"周一",
+									"周二",
+									"周三",
+								],
+								datasets: [
+									{
+										label: "p50",
+										data: [1.6, 1.5, 1.3, 1.2, 1.0, 0.9, 0.9],
+										tension: 0.3,
+									},
+									{
+										label: "p95",
+										data: [4.8, 4.4, 3.9, 3.1, 2.6, 2.3, 2.2],
+										tension: 0.3,
+									},
+								],
+							},
+							options: { scales: { y: { beginAtZero: true } } },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "table",
+							caption: "按端",
+							columns: [
+								{ key: "client", label: "客户端" },
+								{ key: "rate", label: "完整率", align: "right" },
+								{ key: "ok", label: "达标", align: "center" },
+							],
+							rows: [
+								{ client: "Android foss", rate: "100%", ok: true },
+								{ client: "Android gms", rate: "100%", ok: true },
+								{ client: "iOS", rate: "98.0%", ok: false },
+								{ client: "Web Push", rate: "100%", ok: true },
+							],
+						},
+					],
+				},
+			],
+		},
+		{
+			type: "alert",
+			tone: "warning",
+			title: "iOS 合并了静默推送",
+			text: "App 被系统挂起超过 30 分钟后，APNs 会合并同一线程的静默推送；回到前台要再补拉一次，拉低了 iOS 的一次补拉完整率。",
+		},
+	],
+};
+
+/** push 线程开 PR 前的表单（待作答）。 */
+const PUSH_PR_FORM: Json = {
+	title: "开 PR 之前",
+	blocks: [
+		{
+			type: "form",
+			title: "合并选项",
+			description: "确认下面几项，我就去开 PR。",
+			columns: 2,
+			submitLabel: "开 PR",
+			fields: [
+				{
+					name: "branch",
+					label: "目标分支",
+					kind: "select",
+					required: true,
+					defaultValue: "main",
+					options: [
+						{ label: "main", value: "main" },
+						{ label: "release/1.0", value: "release-1.0" },
+					],
+				},
+				{
+					name: "retries",
+					label: "补拉重试次数",
+					kind: "number",
+					min: 1,
+					max: 10,
+					defaultValue: 3,
+				},
+				{
+					name: "reviewers",
+					label: "评审人",
+					kind: "multiselect",
+					required: true,
+					span: "full",
+					defaultValue: ["linxia"],
+					options: [
+						{ label: "林夏", value: "linxia" },
+						{ label: "Marco Rossi", value: "marco" },
+						{ label: "周屿", value: "zhouyu" },
+					],
+				},
+				{
+					name: "rollout",
+					label: "灰度比例（%）",
+					kind: "slider",
+					min: 0,
+					max: 100,
+					step: 5,
+					defaultValue: 20,
+					description: "合并后先推给这部分设备",
+				},
+				{
+					name: "squash",
+					label: "压缩成一个提交",
+					kind: "switch",
+					defaultValue: true,
+				},
+				{
+					name: "notes",
+					label: "PR 说明补充",
+					kind: "textarea",
+					span: "full",
+					placeholder: "可选",
+				},
+			],
+		},
+	],
+};
+
+/** push 线程：跑完回归用视图汇总，再用表单确认开 PR 的选项。 */
+function pushViewsTranscript(now: number): Entry[] {
+	return new Transcript("pu", now - 60 * MIN, ASTRA)
+		.user(
+			"离线 6 小时后重连，确认补拉不丢推送，锁屏通知按设置脱敏。四端都跑完后用视图汇总给我。",
+		)
+		.assistant([text("四端回归跑完了，汇总如下：")], {
+			calls: [
+				{
+					id: "toolu_pu_view_dash",
+					name: "render_ui",
+					args: PUSH_DASHBOARD,
+					result: viewResult(PUSH_DASHBOARD),
+				},
+			],
+			usage: [31_000, 2_600, 88_000, 0.09],
+		})
+		.user("iOS 的合并推送另开 issue 跟进，这次先合并，开 PR 吧。", 14 * MIN)
+		.assistant([text("好，开 PR 前确认几项：")], {
+			calls: [
+				{
+					id: "toolu_pu_view_form",
+					name: "render_ui",
+					args: PUSH_PR_FORM,
+					result: viewResult(PUSH_PR_FORM, true),
+				},
+			],
+			usage: [34_000, 1_100, 96_000, 0.06],
+		}).out;
+}
+
+/** x28 线程的 Agent 沙箱：断网的 Firecracker 沙箱跑外部来的越权 PoC。 */
+const X28_SANDBOX = "sbx_01JDRF4K8Q2W6E3R5T7Y9M1N4B";
+const X28_SANDBOX_OLD = "sbx_01JDRC9H3V5X7Z2B4D6F8G0J2K";
+
+function x28Transcript(now: number): Entry[] {
+	return new Transcript("x2", now - 9 * MIN, FABLE)
+		.user(
+			"X31 的 vsock 越权 PoC 来自外部报告，不要在自己的 orb 里跑：开一台断网沙箱，确认 guest 连不到宿主的 vsock 端口。",
+		)
+		.assistant(
+			[
+				thinking(
+					"PoC 二进制来源不可信，沙箱要用独立内核的 Firecracker、创建时就断网，用完即焚；只拷 PoC 目录，不带仓库与凭据。",
+				),
+				text("开一台断网的 Firecracker 沙箱，只拷 PoC 目录进去："),
+			],
+			{
+				calls: [
+					{
+						id: "toolu_x2_sbx_up",
+						name: "sandbox_create",
+						args: { network: "none", backend: "kvm", idleMinutes: 30 },
+						result: {
+							text: `Sandbox ${X28_SANDBOX} is ready: backend kvm, type small, network none. Idle timeout 30 min.`,
+							details: {
+								tool: "sandbox_create",
+								sandbox: { id: X28_SANDBOX, backend: "kvm", network: "none" },
+							},
+						},
+					},
+					{
+						id: "toolu_x2_sbx_cp",
+						name: "sandbox_cp",
+						args: {
+							sandbox: X28_SANDBOX,
+							direction: "to_sandbox",
+							source: `${REPO}/test/x31-vsock-poc`,
+							dest: "poc",
+						},
+						result: {
+							text: "Copied 6 files (48210 bytes).",
+							details: {
+								tool: "sandbox_cp",
+								files: 6,
+								bytes: 48_210,
+								skipped: 0,
+							},
+						},
+					},
+				],
+				usage: [28_400, 1_020, 64_000, 0.07],
+			},
+		)
+		.assistant([text("先确认沙箱真的断网，再跑 PoC：")], {
+			calls: [
+				{
+					id: "toolu_x2_sbx_net",
+					name: "sandbox_exec",
+					args: {
+						sandbox: X28_SANDBOX,
+						command: "curl -sS -m 5 https://example.com || echo offline",
+					},
+					result: {
+						text: "curl: (6) Could not resolve host: example.com\noffline\nexit 0",
+						details: {
+							tool: "sandbox_exec",
+							sandbox: X28_SANDBOX,
+							exit: 0,
+							durationMs: 5_120,
+							truncated: false,
+						},
+					},
+				},
+				{
+					id: "toolu_x2_sbx_poc",
+					name: "sandbox_exec",
+					args: {
+						sandbox: X28_SANDBOX,
+						command: "cd ~/poc && ./x31-vsock-escape --cid 2 --ports 1024-1100",
+					},
+					result: {
+						text: "probing host cid 2, ports 1024-1100 ...\nconnect(AF_VSOCK): Connection reset by peer (77/77)\n[x31] host vsock unreachable from guest\nexit 0",
+						details: {
+							tool: "sandbox_exec",
+							sandbox: X28_SANDBOX,
+							exit: 0,
+							durationMs: 2_840,
+							truncated: false,
+						},
+					},
+				},
+				{
+					id: "toolu_x2_sbx_fuzz",
+					name: "sandbox_exec",
+					args: {
+						sandbox: X28_SANDBOX,
+						command: "cd ~/poc && ./x31-vsock-escape --fuzz --minutes 20",
+						detach: true,
+					},
+					result: {
+						text: `Started job j1 in sandbox ${X28_SANDBOX}.`,
+						details: {
+							tool: "sandbox_exec",
+							sandbox: X28_SANDBOX,
+							jobId: "j1",
+						},
+					},
+				},
+			],
+			usage: [33_900, 1_460, 71_000, 0.08],
+		}).out;
+}
+
+/** mock 的沙箱列表：x28 线程名下一台运行中、一台空闲回收的。 */
+function demoSandboxes(now: number): Json[] {
+	const created = now - 8 * MIN;
+	const old = now - 47 * MIN;
+	return [
+		{
+			id: X28_SANDBOX_OLD,
+			backend: "docker",
+			type: "standard",
+			provider: "local",
+			network: "egress",
+			createdNetwork: "egress",
+			state: "destroyed",
+			ownerThreadId: T.x28,
+			idleSec: 15 * 60,
+			lastActiveAt: old + 4 * MIN,
+			idleDeadline: old + 19 * MIN,
+			hardDeadline: old + 12 * HOUR,
+			createdAt: old,
+			readyAt: old + 3_000,
+			destroyedAt: old + 19 * MIN,
+			destroyReason: "idle",
+		},
+		{
+			id: X28_SANDBOX,
+			backend: "kvm",
+			type: "small",
+			provider: "fc-kvm",
+			network: "none",
+			createdNetwork: "none",
+			state: "ready",
+			ownerThreadId: T.x28,
+			idleSec: 30 * 60,
+			lastActiveAt: now - MIN,
+			idleDeadline: now + 29 * MIN,
+			ttlDeadline: now + 52 * MIN,
+			hardDeadline: created + 12 * HOUR,
+			createdAt: created,
+			readyAt: created + 1_800,
+		},
+	];
+}
+
 /** 单轮已完成的普通线程：一问一答。 */
 function simpleTranscript(
 	tag: string,
@@ -1073,6 +1437,8 @@ interface Demo {
 	research: { settings: Json; topics: Json[] };
 	/** 选区「解释」的旁路回答（mock 原本回显问题）。 */
 	explain: string;
+	/** Agent 沙箱（整体替换 mock 的缺省列表）。 */
+	sandboxes: Json[];
 }
 
 function buildDemo(now: number): Demo {
@@ -1142,13 +1508,8 @@ function buildDemo(now: number): Demo {
 				"量一下 reflink 复制 20 GiB 稀疏根盘的耗时，和稀疏 cp 对比，结论写进 deploy.md。",
 				"20 GiB 稀疏根盘 reflink 复制平均 `0.41s`（btrfs）/ `0.38s`（xfs），回退稀疏 `cp` 为 `6.8s`；数据已写进 `docs/deploy.md`。",
 			),
-			[T.push]: simpleTranscript(
-				"pu",
-				now - 60 * MIN,
-				ASTRA,
-				"离线 6 小时后重连，确认补拉不丢推送，锁屏通知按设置脱敏。",
-				"补拉 14 条无丢失；锁屏正文已按「隐藏详情」脱敏，回归用例已合入。",
-			),
+			[T.push]: pushViewsTranscript(now),
+			[T.x28]: x28Transcript(now),
 		},
 		states: {
 			[T.fc]: sessionState(OPUS, {
@@ -1187,6 +1548,7 @@ function buildDemo(now: number): Demo {
 			[T.helper]: sessionState(FABLE),
 			[T.reflink]: sessionState(OPUS),
 			[T.push]: sessionState(ASTRA),
+			[T.x28]: sessionState(FABLE),
 			[T.upstream]: sessionState(OPUS),
 		},
 		live: { [T.fc]: bashLiveFrames() },
@@ -1242,6 +1604,7 @@ function buildDemo(now: number): Demo {
 		artifacts: demoArtifacts(now),
 		research: demoResearch(now),
 		explain: EXPLAIN_ANSWER,
+		sandboxes: demoSandboxes(now),
 	};
 }
 
@@ -1546,6 +1909,117 @@ const CANVAS_JSON = `${JSON.stringify(
 	2,
 )}\n`;
 
+/** 方案组画框：每版自带配色与字体，不跟随系统明暗。 */
+function variantPage(title: string, css: string, body: string): string {
+	return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title>
+<style>* { box-sizing: border-box; } html, body { margin: 0; height: 100%; } body { font-family: system-ui, "Noto Sans SC", sans-serif; }
+${css}</style></head><body>${body}</body></html>
+`;
+}
+
+const VARIANT_PAGES: Record<string, string> = {
+	"page-calm.html": variantPage(
+		"首屏 · 冷静",
+		`body { background: #f4f6f8; color: #1f2933; padding: 84px 96px; }
+nav { display: flex; gap: 28px; font-size: 15px; color: #52606d; margin-bottom: 96px; } nav b { color: #1f2933; margin-right: auto; }
+h1 { font-size: 52px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 18px; }
+p { font-size: 19px; color: #52606d; max-width: 28em; line-height: 1.7; margin: 0; }
+a.cta { display: inline-block; margin-top: 36px; padding: 13px 26px; border-radius: 8px; background: #334e68; color: #fff; text-decoration: none; font-size: 16px; }`,
+		`<nav><b>Oryn</b><span>文档</span><span>部署</span><span>GitHub</span></nav>
+<h1>一个线程，一台专属机器。</h1><p>自托管的 Coding Agent 工作台：每个线程独占一台隔离环境，凭据只在控制面。</p><a class="cta" href="#">开始部署</a>`,
+	),
+	"page-mag.html": variantPage(
+		"首屏 · 杂志",
+		`body { background: #fbf4ea; color: #3b2314; display: grid; grid-template-columns: 1.25fr 1fr; gap: 56px; padding: 80px 72px; align-items: center; }
+h1 { font: 600 64px/1.08 Georgia, "Noto Serif SC", serif; color: #9a3412; margin: 0 0 22px; }
+p { font-size: 18px; color: #6b4a33; line-height: 1.7; margin: 0; }
+.side { border-left: 2px solid #f0c9a0; padding-left: 28px; font: italic 22px/1.6 Georgia, "Noto Serif SC", serif; color: #7c4a26; }
+.side small { display: block; margin-top: 14px; font: 14px system-ui, sans-serif; color: #a16207; font-style: normal; }`,
+		`<div><h1>把机器<br>交给线程。</h1><p>Docker、Sysbox、Firecracker 或你自己的电脑。空闲自动冻结，用时唤醒。</p></div>
+<div class="side">「每开一个线程，就多一台干净的电脑；关掉它，什么都不留下。」<small>— 一位自托管用户</small></div>`,
+	),
+	"page-mag-deploy.html": variantPage(
+		"部署 · 杂志",
+		`body { background: #fbf4ea; color: #3b2314; padding: 72px; }
+h1 { font: 600 44px Georgia, "Noto Serif SC", serif; color: #9a3412; margin: 0 0 40px; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+.card { background: #fffaf3; border: 1px solid #f0c9a0; border-radius: 14px; padding: 26px; }
+.card b { display: block; font: 600 34px Georgia, serif; color: #c2410c; margin-bottom: 10px; }
+.card span { font-size: 17px; line-height: 1.6; color: #6b4a33; }`,
+		`<h1>三步上线</h1><div class="grid"><div class="card"><b>01</b><span>下载 orynd，一个静态二进制</span></div><div class="card"><b>02</b><span>接上 Docker 或 Firecracker Provider</span></div><div class="card"><b>03</b><span>注册 Passkey，开第一个线程</span></div></div>`,
+	),
+	"page-bold.html": variantPage(
+		"首屏 · 高对比",
+		`body { background: #0b0b0f; color: #f5f5f5; padding: 84px 80px; }
+h1 { font-size: 76px; font-weight: 800; line-height: 1.02; letter-spacing: -0.02em; margin: 0 0 26px; }
+h1 em { font-style: normal; color: #c6ff3d; }
+p { font-size: 19px; color: #a1a1aa; margin: 0; }
+a.cta { display: inline-block; margin-top: 40px; padding: 15px 30px; border-radius: 999px; background: #c6ff3d; color: #0b0b0f; font-weight: 700; font-size: 17px; text-decoration: none; }`,
+		`<h1>一个线程，<br>一台<em>专属机器</em>。</h1><p>模型与 Git 凭据经出站代理注入，环境里只有占位符。</p><a class="cta" href="#">现在部署 →</a>`,
+	),
+};
+
+const VARIANTS_ID = "art_01JDREADMEVARIANTS00000000";
+
+/** 方案组（M34）：官网首屏三版，B 版多一个部署页。 */
+const VARIANTS_JSON = `${JSON.stringify(
+	{
+		format: 3,
+		canvases: [{ id: "c1", name: "官网" }],
+		pages: [
+			["calm", "首屏 · 冷静", "page-calm.html", 0, 0],
+			["mag", "首屏 · 杂志", "page-mag.html", 1040, 0],
+			["mag-deploy", "部署 · 杂志", "page-mag-deploy.html", 1040, 680],
+			["bold", "首屏 · 高对比", "page-bold.html", 2080, 0],
+		].map(([id, name, file, x, y]) => ({
+			id,
+			canvas: "c1",
+			name,
+			file,
+			x,
+			y,
+			width: 960,
+			height: 600,
+		})),
+		notes: [],
+		groups: [
+			{
+				id: "hero",
+				canvas: "c1",
+				name: "官网首屏",
+				variants: [
+					{
+						id: "a",
+						name: "冷静克制",
+						note: "大留白、单列、冷灰配色",
+						theme: "",
+						pages: ["calm"],
+					},
+					{
+						id: "b",
+						name: "暖调杂志",
+						note: "双栏版式、衬线标题，带部署页",
+						theme: "",
+						pages: ["mag", "mag-deploy"],
+					},
+					{
+						id: "c",
+						name: "高对比",
+						note: "深色底、大字号、荧光强调色",
+						theme: "",
+						pages: ["bold"],
+					},
+				],
+				picked: null,
+				pickedBy: null,
+			},
+		],
+	},
+	null,
+	2,
+)}\n`;
+
 function demoArtifacts(now: number): DemoArtifact[] {
 	return [
 		{
@@ -1601,6 +2075,16 @@ function demoArtifacts(now: number): DemoArtifact[] {
 			versions: 2,
 			at: now - DAY,
 		},
+		{
+			id: VARIANTS_ID,
+			kind: "canvas",
+			title: "官网首屏三版方案",
+			threadId: T.fc,
+			projectId: PROJECT_ORYN,
+			files: { "canvas.json": VARIANTS_JSON, ...VARIANT_PAGES },
+			versions: 3,
+			at: now - 40 * MIN,
+		},
 	];
 }
 
@@ -1639,6 +2123,7 @@ interface MockInternals {
 		comments: Map<string, unknown[]>;
 	};
 	assistant: { research: Json; topics: Json[] };
+	sandboxes: { items: Map<string, Json> };
 	btwTimers: Map<string, { recordId: string; timer: number }>;
 	btwAsk(socket: unknown, threadId: string, id: string, frame: Json): void;
 	patchBtw(threadId: string, recordId: string, patch: Json): void;
@@ -1710,6 +2195,10 @@ function seedDemo(mock: MockServer, demo: Demo) {
 	// 后台研究：打开总开关与 MCP 检查，换上演示话题
 	m.assistant.research = demo.research.settings;
 	m.assistant.topics = demo.research.topics;
+
+	// Agent 沙箱：换成 x28 线程名下的两台
+	m.sandboxes.items.clear();
+	for (const s of demo.sandboxes) m.sandboxes.items.set(String(s.id), s);
 
 	// 选区「解释」：mock 原本分段回显问题，这里一次给出演示回答
 	const btwAsk = m.btwAsk.bind(m);
@@ -1786,6 +2275,24 @@ function seedDemo(mock: MockServer, demo: Demo) {
 	};
 	m.handleFetch = async (req: Request) => {
 		const u = new URL(req.url, location.origin);
+		// 模型目录：mock 不报上下文窗口与图像输入，按演示模型补上（选择台检视栏的能力标签）
+		if (req.method === "GET" && u.pathname === "/api/v1/models/catalog") {
+			const res = await orig(req);
+			const cat = (await res?.json()) as { models: Json[] };
+			const windows: Record<string, number> = {
+				anthropic: 1_000_000,
+				openai: 400_000,
+				"openai-codex": 400_000,
+				google: 2_000_000,
+			};
+			for (const model of cat.models) {
+				const win = windows[String(model.provider)];
+				if (!win || model.kind !== "chat") continue;
+				model.contextWindow = win;
+				model.input = ["text", "image"];
+			}
+			return Response.json(cat, { status: res?.status });
+		}
 		// 默认对象：`default` 是 cycle 里 Cyrene 的别名（同 config.yml 的 modelRoles.default）
 		if (
 			req.method === "GET" &&
@@ -2318,9 +2825,9 @@ async function artifactThumbs(scheme: Scheme): Promise<Record<string, Buffer>> {
 	});
 	try {
 		for (const a of buildDemo(Date.now()).artifacts) {
-			await page.setContent(
-				a.files[a.kind === "web" ? "index.html" : "page-hero.html"] ?? "",
-			);
+			// 首个 HTML 文件即首屏：网页是 index.html，画布是第一个画框
+			const first = Object.keys(a.files).find((p) => p.endsWith(".html"));
+			await page.setContent(first ? (a.files[first] ?? "") : "");
 			out[a.id] = await page.screenshot();
 		}
 	} finally {
@@ -2686,12 +3193,18 @@ const assistant: Shooter = async (scheme) => {
 const settings: Shooter = async (scheme) =>
 	duo(
 		scheme,
-		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
-			await go(page, "/settings/agent-models", "li[data-role]", 1_000);
-		}),
-		await capture(mac(scheme, DUO_W, DUO_H), async (page) => {
-			await go(page, "/settings/ssh", "main", 1_400);
-		}),
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await go(page, "/settings/agent-models", "li[data-role]", 1_000);
+			},
+		),
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await go(page, "/settings/ssh", "main", 1_400);
+			},
+		),
 		[
 			["模型角色", "轮换顺序、别名与每个角色的模型和思考档位"],
 			["SSH 主机", "凭据只在控制面，orb 经网关连接并留审计"],
@@ -2934,6 +3447,201 @@ const boxes: Shooter = async (scheme) =>
 		],
 	);
 
+/**
+ * 小浮层特写：以几个元素的并集为中心截一块 `w×h`（CSS 像素，贴住视口边缘）。
+ * 宽高比取双拼窗口的比例，合成时按窗口宽度等比显示。
+ */
+async function shootAround(
+	page: Page,
+	selectors: string[],
+	w: number,
+	h: number,
+): Promise<Buffer> {
+	const vp = page.viewportSize();
+	if (!vp) throw new Error("页面没有视口尺寸");
+	let [x0, y0, x1, y1] = [
+		Number.POSITIVE_INFINITY,
+		Number.POSITIVE_INFINITY,
+		0,
+		0,
+	];
+	for (const sel of selectors) {
+		const box = await page.locator(sel).first().boundingBox();
+		if (!box) throw new Error(`${sel} 不可见`);
+		x0 = Math.min(x0, box.x);
+		y0 = Math.min(y0, box.y);
+		x1 = Math.max(x1, box.x + box.width);
+		y1 = Math.max(y1, box.y + box.height);
+	}
+	const x = Math.min(Math.max(0, (x0 + x1) / 2 - w / 2), vp.width - w);
+	const y = Math.min(Math.max(0, (y0 + y1) / 2 - h / 2), vp.height - h);
+	return page.screenshot({ clip: { x, y, width: w, height: h } });
+}
+
+/** 视图：push 线程里的汇总看板（左，滚到看板顶部）与待作答的开 PR 表单（右，贴底）。 */
+const viewShot = (scheme: Scheme, call: string, top: boolean) =>
+	capture(mac(scheme, DUO_W, DUO_H, { collapsed: true }), async (page) => {
+		await openThread(page, T.push);
+		await closePanel(page);
+		const view = page.locator(
+			`[data-testid=view-ui][data-view-call="${call}"]`,
+		);
+		await view.waitFor();
+		await view.locator("canvas, form").first().waitFor();
+		// 用滚轮往上翻（转录贴底跟随，程序改 scrollTop 会被拉回底部）
+		const scroller = await page
+			.locator("[data-testid=transcript]")
+			.first()
+			.boundingBox();
+		if (top && scroller) {
+			await page.mouse.move(
+				scroller.x + scroller.width / 2,
+				scroller.y + scroller.height / 2,
+			);
+			for (let i = 0; i < 12; i++) {
+				const box = await view.boundingBox();
+				const dy = box ? box.y - (scroller.y + 64) : 0;
+				if (Math.abs(dy) < 8) break;
+				await page.mouse.wheel(0, dy);
+				await page.waitForTimeout(400);
+			}
+		}
+		await settle(page, 1_400);
+	});
+
+const views: Shooter = async (scheme) =>
+	duo(
+		scheme,
+		await viewShot(scheme, "toolu_pu_view_dash", true),
+		await viewShot(scheme, "toolu_pu_view_form", false),
+		[
+			["视图", "KPI、图表、表格与提示条直接出现在对话里"],
+			["一次性表单", "作答回到 Agent，提交后锁定并留下回执"],
+		],
+	);
+
+/** 方案组：官网首屏三版方案并排在画布上，每版带说明与「选定此方案」。 */
+const designVariants: Shooter = async (scheme) => {
+	const win = { width: 1248, height: 700 };
+	const shot = await capture(
+		mac(scheme, win.width, win.height, { collapsed: true }),
+		async (page) => {
+			await go(
+				page,
+				`/artifacts/${VARIANTS_ID}`,
+				"[data-testid=canvas-groups] [data-variant]",
+				1_000,
+			);
+			await page.waitForFunction(
+				() =>
+					document.querySelectorAll("[data-testid=canvas-frame]").length >= 4,
+			);
+			await settle(page, 2_400);
+		},
+	);
+	return single(
+		scheme,
+		shot,
+		[
+			"多版方案",
+			"同一屏并排出 2–4 版，选定后其余收进备选，Agent 把主题统一过去",
+		],
+		win,
+	);
+};
+
+/** 双拼窗口的宽高比（616×494）：特写按它取景。 */
+const DUO_RATIO = 494 / 616;
+
+/** 模型选择台与提示缓存读数：fc 线程输入坞上的两个浮层特写。 */
+const modelCache: Shooter = async (scheme) => {
+	const opts = mac(scheme, DUO_W, DUO_H, {
+		collapsed: true,
+		storage: {
+			"oryn.models.favorites": JSON.stringify([
+				"anthropic/claude-opus-5-5",
+				"anthropic/claude-fable-5-2",
+				"openai-codex/gpt-6-astra",
+			]),
+		},
+	});
+	const picker = await (async () => {
+		const { ctx, page } = await newPage(opts);
+		try {
+			await openThread(page, T.push);
+			await closePanel(page);
+			await page.locator(`button[title="${ASTRA.name}"]`).first().click();
+			const pop = page.locator("[data-testid=thread-model-picker]");
+			await pop.waitFor();
+			// 悬停常用区的 Opus：检视栏换成它，列表停在顶部
+			await pop
+				.locator('button[data-model-shortcut="anthropic/claude-opus-5-5"]')
+				.first()
+				.hover();
+			await settle(page, 800);
+			const w = 900;
+			return await shootAround(
+				page,
+				["[data-testid=thread-model-picker]"],
+				w,
+				Math.round(w * DUO_RATIO),
+			);
+		} finally {
+			await ctx.close();
+		}
+	})();
+	const cache = await (async () => {
+		const { ctx, page } = await newPage(opts);
+		try {
+			await openThread(page, T.push);
+			await closePanel(page);
+			await page.locator("[data-testid=prompt-cache]").click();
+			await page.getByText("提示缓存").first().waitFor();
+			await settle(page, 600);
+			const w = 720;
+			return await shootAround(
+				page,
+				["[data-testid=prompt-cache]", "[role=meter]"],
+				w,
+				Math.round(w * DUO_RATIO),
+			);
+		} finally {
+			await ctx.close();
+		}
+	})();
+	return duo(scheme, picker, cache, [
+		["模型选择台", "角色、常用与各家模型三栏挑选，思考档位就地切换"],
+		["提示缓存读数", "存活倒计时、命中率与下一条要重写多少"],
+	]);
+};
+
+/** Agent 沙箱与 Provider 总览。 */
+const sandboxProviders: Shooter = async (scheme) =>
+	duo(
+		scheme,
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await openThread(page, T.x28);
+				await panelTab(page, "info").click();
+				const row = page.locator(`li[data-sandbox="${X28_SANDBOX}"]`);
+				await row.waitFor();
+				await row.evaluate((e) => e.scrollIntoView({ block: "center" }));
+				await settle(page, 1_000);
+			},
+		),
+		await capture(
+			mac(scheme, DUO_W, DUO_H, { collapsed: true }),
+			async (page) => {
+				await go(page, "/providers", "[data-testid=provider-node-card]", 1_400);
+			},
+		),
+		[
+			["Agent 沙箱", "零凭据、用完即焚，断网跑不可信代码"],
+			["Provider 总览", "宿主机负载、磁盘与每台 orb 的实占"],
+		],
+	);
+
 const SHOOTERS: Record<Group, Shooter> = {
 	hero,
 	workbench,
@@ -2949,6 +3657,10 @@ const SHOOTERS: Record<Group, Shooter> = {
 	"project-palette": projectPalette,
 	research,
 	boxes,
+	views,
+	"design-variants": designVariants,
+	"model-cache": modelCache,
+	"sandbox-providers": sandboxProviders,
 };
 
 // ---------------------------------------------------------------- 主流程
@@ -3024,6 +3736,9 @@ async function warmUp() {
 		"/boxes",
 		`/projects/${PROJECT_ORYN}`,
 		"/settings/assistant",
+		"/providers",
+		`/artifacts/${VARIANTS_ID}`,
+		`/t/${T.push}`,
 	]) {
 		await page.goto(BASE + p).catch(() => {});
 		await page.waitForTimeout(1_500);
