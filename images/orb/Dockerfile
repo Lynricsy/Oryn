@@ -95,7 +95,7 @@ RUN pacman --disable-sandbox -Syu --noconfirm --needed --overwrite /etc/pacman.d
  && install -d /usr/local/share/oryn \
  && pacman -Q > /usr/local/share/oryn/packages.txt \
  && pacman -Scc --noconfirm \
- && chromium --version && openbox --version | head -1
+ && chromium --version && openbox --version | sed -n 1p
 # python-pptx（M31 Office 文件）：Arch 官方仓库与 Arch Linux ARM 都没有这个包，按 PyPI 钉死版本装进系统环境；
 # 它的依赖 lxml、Pillow、XlsxWriter、typing_extensions 都已由上面的 pacman 装好，所以 --no-deps。
 RUN pip install --no-cache-dir --no-deps --break-system-packages --root-user-action=ignore python-pptx==1.0.2 \
@@ -159,7 +159,7 @@ RUN case "$TARGETARCH" in amd64) a=x86_64 ga=x64 pa=amd64 ;; arm64) a=aarch64 ga
       'Categories=TextEditor;Development;IDE;' \
       'MimeType=text/plain;inode/directory;' > /usr/share/applications/codium.desktop \
  && rm /tmp/shellcheck.tar.xz /tmp/pandoc.tar.gz /tmp/rust-analyzer.gz /tmp/vscodium.tar.gz \
- && { shellcheck --version | sed -n 2p; pandoc --version | head -1; rust-analyzer --version; \
+ && { shellcheck --version | sed -n 2p; pandoc --version | sed -n 1p; rust-analyzer --version; \
       printf 'marksman %s\n' "$(marksman --version)"; phpactor --version; \
       printf 'vscodium %s\n' "$(jq -er .version /opt/vscodium/resources/app/package.json)"; } > /usr/local/share/oryn/upstream-versions.txt
 
