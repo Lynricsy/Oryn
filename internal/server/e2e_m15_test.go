@@ -371,13 +371,21 @@ func (e *m15Env) stepTriage(t *testing.T) orbCtx {
 	require.NoError(t, err)
 	assert.Equal(t, "new", ti.State)
 	assert.NotNil(t, ti.RuleID)
+	// 线程拿到 orb 后、首条提示词进对话之前也可能短暂是 idle：先等提示词出现，再等它跑完
 	th := e.waitM15Thread(t, ti.ThreadID, 90*time.Second, settled)
+	var entries string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		entries = e.raw("GET", "/api/v1/threads/"+th.ID+"/entries?limit=500")
+		if strings.Contains(entries, "github_classify_issue") {
+			break
+		}
+		require.True(t, time.Now().Before(deadline), "首条提示词是分诊预设：%s", entries)
+	}
+	th = e.waitM15Thread(t, ti.ThreadID, 90*time.Second, settled)
 	require.NotNil(t, th.GithubTask)
 	assert.Equal(t, m15Repo, th.GithubTask.Repo)
 	assert.EqualValues(t, m15Issue, th.GithubTask.Number)
-	entries := e.raw("GET", "/api/v1/threads/"+th.ID+"/entries?limit=500")
 	assert.Contains(t, entries, `[Oryn GitHub trigger \"robomp 分诊\" on acme/widgets#7`)
-	assert.Contains(t, entries, "github_classify_issue", "首条提示词是分诊预设")
 	orb, err := e.srv.Store.Q.GetOrb(e.ctx, th.OrbID)
 	require.NoError(t, err)
 	assert.Equal(t, "agent", orb.GithubIdentity, "全自动线程用 Agent 账号（R6）")
