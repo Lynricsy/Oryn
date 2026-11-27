@@ -998,6 +998,32 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AgentConfigImportResult' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/projects/{id}/agent-config/batch:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectIdPath' }
+    post:
+      tags: [projects]
+      operationId: applyProjectAgentConfigBatch
+      summary: 批量增删项目级 omp 配置文件（M12.2；语义同 `applyAgentConfigBatch`）
+      description: |
+        先删后写，整批先校验再执行，规则同 `applyAgentConfigBatch`；项目级另拒绝 `models.yml` 与 `plans/`（400 `invalid_request`），
+        配额同 `putProjectAgentConfigFile`（单文件 1 MiB、合计 16 MiB、2000 个文件，按变更后的整层计）。项目不存在 → 404 `not_found`。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentConfigBatch' }
+      responses:
+        '200':
+          description: 变更结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigBatchResult' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/projects/{id}/secrets:
     parameters:
       - { $ref: '#/components/parameters/ProjectIdPath' }
@@ -3165,6 +3191,33 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AgentConfigImportResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/agent-config/batch:
+    post:
+      tags: [agent-config]
+      operationId: applyAgentConfigBatch
+      summary: 批量增删 omp-home 文件（多文件技能、扩展与工具目录的导入、替换与删除）
+      description: |
+        先删后写：`delete` 的每一项删除该路径的文件，或该路径作为目录时其下的全部文件（不匹配任何文件不算错误）；随后写入 `files`。
+        「先删目录再写同一目录」即整体替换一个条目。整批先校验再执行：任一路径非法或属于运行时数据、`files` 内路径重复、
+        写入后同一路径既是文件又是目录、内容校验失败（同 `putAgentConfigFile`）、`encoding: base64` 解码失败 → 400 `invalid_request`，
+        不改动任何文件；单文件、合计、文件数或下发上限同 `putAgentConfigFile` 与 `importAgentConfig`（413 `invalid_request`）。
+        `delete` 与 `files` 不能都为空。成功后与单文件写入一样防抖下发。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentConfigBatch' }
+      responses:
+        '200':
+          description: 变更结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentConfigBatchResult' }
         default: { $ref: '#/components/responses/Error' }
   /api/v1/agent-config/apply-status:
     get:
@@ -14198,6 +14251,60 @@ components:
           items: { $ref: '#/components/schemas/AgentConfigFile' }
         extractedSecrets:
           type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/AgentConfigWarning' }
+    AgentConfigBatch:
+      type: object
+      description: 一批文件变更：先删 `delete`，再写 `files`
+      properties:
+        delete:
+          type: array
+          maxItems: 10000
+          description: 要删除的路径（相对配置根）；是目录时删除其下全部文件，不匹配任何文件时忽略
+          items: { type: string, minLength: 1, maxLength: 1024 }
+        files:
+          type: array
+          maxItems: 10000
+          description: 要写入的文件；已存在的覆盖
+          items: { $ref: '#/components/schemas/AgentConfigBatchFile' }
+    AgentConfigBatchFile:
+      type: object
+      required: [path, content]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: 相对配置根的路径，如 `skills/foo/scripts/run.sh`
+        content:
+          type: string
+          description: 文件内容：`encoding` 为 `utf8`（缺省）时是原文，为 `base64` 时是标准 base64（二进制文件用）
+        encoding:
+          type: string
+          enum: [utf8, base64]
+          default: utf8
+        mode:
+          type: integer
+          minimum: 0
+          maximum: 511
+          description: 文件权限（十进制表示的 Unix 权限位，如 493 = 0755）；缺省 0644
+    AgentConfigBatchResult:
+      type: object
+      required: [files, deleted, extractedSecrets, warnings]
+      properties:
+        files:
+          type: array
+          description: 本次写入的文件（按路径排序）
+          items: { $ref: '#/components/schemas/AgentConfigFile' }
+        deleted:
+          type: array
+          description: 本次删除且未被重新写入的文件路径（按路径排序）
+          items: { type: string }
+        extractedSecrets:
+          type: array
+          description: 本次从 models.yml 抽取进密钥库的密钥名
           items: { type: string }
         warnings:
           type: array
