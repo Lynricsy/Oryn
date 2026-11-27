@@ -46,6 +46,7 @@
     "accept:m31-office": "bun scripts/m31-office-accept.ts",
     "accept:m32-office-engine": "bun scripts/m32-office-engine-accept.ts",
     "accept:m33": "bun scripts/m33-accept.ts",
+    "accept:m34": "bun scripts/m34-variants-accept.ts",
     "probe:artifact-browser": "bun scripts/artifact-browser-probe.ts",
     "walk:m121": "bun scripts/m121-walk.ts",
     "tauri": "tauri"
