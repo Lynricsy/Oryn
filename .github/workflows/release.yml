@@ -1,10 +1,11 @@
 name: release
 
-# Oryn 的统一发版：一个 tag、一个 Release，服务端、桌面与移动 App 同一个版本号一起发布——
-# 服务端二进制（orynd / orbd / oryn / gemini-rerank）、Windows / macOS / Linux 安装包、Android APK / AAB，以及 iOS TestFlight。
+# Oryn 的统一发版：一个 tag、一个 Release，服务端、orb 镜像、桌面与移动 App 同一个版本号一起发布——
+# 服务端二进制（orynd / orbd / oryn / gemini-rerank，Linux 包另附钉定版本的 Oryn Core `omp`）、GHCR 上的 orb 镜像
+# ghcr.io/<owner>/oryn-orb:<标签>、Windows / macOS / Linux 安装包、Android APK / AAB，以及 iOS TestFlight。
 # - 推送 tag `v<版本>` 或预发布 `v<版本>-rc.N`（<版本> 须与 web/src-tauri/Cargo.toml 的 version 一致，后者只写 x.y.z，是全产品唯一的版本来源）：
-#   `prepare` 校验 tag → `release` 建草稿 Release → 并行：`server` 交叉编译服务端并上传，调用 desktop.yml 与 mobile.yml
-#   （workflow_call，各自构建并上传资产）→ 全部成功后 `publish` 生成 updater 清单 latest.json 并发布 Release；
+#   `prepare` 校验 tag → `release` 建草稿 Release → 并行：`server` 交叉编译服务端并上传，调用 orb-image.yml、desktop.yml 与 mobile.yml
+#   （workflow_call，各自构建并上传资产或推送镜像）→ 全部成功后 `publish` 生成 updater 清单 latest.json 并发布 Release；
 #   非预发布版本同时刷新滚动发布 `desktop-updater`。
 #   任一端失败，Release 停在草稿，不会出现只有一部分产物的已发布版本；修好后在 Actions 里「Re-run failed jobs」即可续跑。
 # - PR / 手动触发的构建仍由 ci.yml、desktop.yml、mobile.yml 各自负责，本工作流只处理发版。
@@ -95,8 +96,8 @@ jobs:
 
   # 服务端：在一台 Linux runner 上交叉编译（CGO_ENABLED=0 静态链接），前端只构建一次、嵌进 orynd。
   # 版本号注入为 tag 本身（与本地 `git describe --tags --match 'v[0-9]*'` 的前缀一致）。
-  # orb 镜像不随版本发布：它基于滚动更新的 Arch，要定期重建以跟进安全更新（docs/deploy.md「容器能力」），
-  # 部署方 checkout 同一 tag 后用 `make image` 构建。
+  # Linux 包附带按 core/source.json 校验过的 omp（协调宿主用，docs/deploy.md 第 8 节），部署方不必再单独下载。
+  # orb 镜像由 orb-image.yml 构建并推到 GHCR（下面的 orb-image 任务），之后每周重建以跟进 Arch 的安全更新。
   server:
     needs: [prepare, release]
     runs-on: ubuntu-24.04
@@ -127,6 +128,10 @@ jobs:
           # 没有 index.html 时 orynd 照样编译成功，却只会返回「Web 客户端未构建」占位页（internal/webui/webui.go）
           [[ -f internal/webui/dist/index.html ]] || { echo "::error::internal/webui/dist 里没有 index.html"; exit 1; }
 
+      - name: 取 Oryn Core（随 Linux 包附带）
+        shell: bash
+        run: scripts/fetch-core.sh x64 && scripts/fetch-core.sh arm64
+
       - name: 交叉编译并打包
         shell: bash
         run: |
@@ -145,6 +150,8 @@ jobs:
               # 推送网关随包附 systemd unit（docs/push-gateway.md「安装与 systemd」）
               if [[ $b == oryn-push-gateway ]]; then cp deploy/systemd/oryn-push-gateway.service "$dir/"; fi
             done
+            # Linux 包附带 omp（协调宿主装到 /usr/local/lib/oryn/omp）；fetch-core.sh 已按 core/source.json 校验 sha256
+            if [[ $goos == linux ]]; then install -m 0755 "build/core/${plat#linux-}/omp" "$dir/omp"; fi
             tar -C "$RUNNER_TEMP/pkg" -czf "dist/$base.tar.gz" "$base"
           }
           pkg linux amd64 linux-x64 oryn-server orynd orbd oryn gemini-rerank oryn-push-gateway
@@ -168,6 +175,9 @@ jobs:
           d="$RUNNER_TEMP/pkg/oryn-server_${LABEL}_linux-x64"
           got=$("$d/orbd" --version)
           [[ "$got" == "orbd $TAG" ]] || { echo "::error::orbd --version 输出「${got}」，应为 orbd ${TAG}"; exit 1; }
+          # 附带的 omp 必须与编进 orynd 的 core/source.json 一致，否则协调宿主拒绝启动
+          want=$(jq -r '.sha256["linux-x64"]' core/source.json)
+          [[ "$(sha256sum "$d/omp" | cut -d' ' -f1)" == "$want" ]] || { echo "::error::包里的 omp 与 core/source.json 不符"; exit 1; }
           smoke="$RUNNER_TEMP/orynd-smoke"
           mkdir -p "$smoke"
           # public_url 须是域名（WebAuthn 的 RPID 不接受 IP）
@@ -200,6 +210,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$TAG" dist/* --clobber
 
+  # orb 镜像：推送到 GHCR，失败时 Release 同样停在草稿
+  orb-image:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/orb-image.yml
+    with:
+      tag: ${{ github.ref_name }}
+
   # 被调用工作流的令牌权限以这里为上限：两端都要往 Release 上传资产
   desktop:
     needs: release
@@ -222,7 +242,7 @@ jobs:
     secrets: inherit
 
   publish:
-    needs: [prepare, server, desktop, mobile]
+    needs: [prepare, server, orb-image, desktop, mobile]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

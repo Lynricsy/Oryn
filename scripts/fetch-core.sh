@@ -2,7 +2,7 @@
 # 按 core/source.json 下载 orb 内使用的 Oryn Core（omp）二进制到 build/core/<arch>/omp，并校验 sha256。
 #
 # 用法：scripts/fetch-core.sh [x64|arm64]   （默认宿主架构）
-# 依赖：gh（已登录且能读取 oryn-core 仓库）、jq、sha256sum。
+# 依赖：curl、jq、sha256sum。oryn-core 是公开仓库，直接下载 Release 资产，不需要 gh 登录。
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,7 +42,7 @@ fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-gh release download "$tag" --repo "$repo" --pattern "$asset" --dir "$tmp"
+curl -fsSL --retry 3 -o "${tmp}/${asset}" "https://github.com/${repo}/releases/download/${tag}/${asset}"
 
 got="$(sha256sum "${tmp}/${asset}" | cut -d' ' -f1)"
 if [[ "$got" != "$want" ]]; then

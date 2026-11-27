@@ -1,0 +1,151 @@
+name: orb-image
+
+# orb 镜像（images/orb/Dockerfile）的构建与发布：推到 GHCR 的 ghcr.io/<owner>/oryn-orb。amd64 与 arm64 各在原生 runner 上构建
+# 并跑离线冒烟，再合成一个多架构标签。镜像里只有可再分发的软件：代码编辑器是 VSCodium，微软官方 VS Code 不进公开镜像
+# （许可不允许再分发；需要时部署方在本机构建派生镜像，见 images/orb/Dockerfile.vscode）。
+# - 被 release.yml 调用（workflow_call）：用发版 tag 的源码构建。
+# - 每周一定时（schedule）：镜像基于滚动更新的 Arch，要定期重建以跟进安全更新；重建最近一个已发布 Release 的 tag。
+# - 手动（workflow_dispatch）：重建指定 tag，留空同定时。
+# 标签：`<标签>`（tag 去掉 v，与服务端包同名，如 0.1.0-rc.12）每次重建都会覆盖，部署方 `docker pull` 即取到最新安全更新；
+# `<标签>-<UTC 日期>` 不再覆盖，用于钉定与回滚。`<标签>-amd64` / `<标签>-arm64` 是合成多架构标签用的单架构中间产物。
+# 首次推送后 GHCR 的包默认私有，要在包设置里改为 Public 一次（docs/desktop.md「发版」）。
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 发版 tag（v*），用它的源码构建
+        required: true
+        type: string
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要重建的 tag（v*）；留空 = 最近一个已发布的 Release
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: orb-image-${{ inputs.tag || 'latest' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      label: ${{ steps.meta.outputs.label }}
+      date: ${{ steps.meta.outputs.date }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: 确定 tag 与镜像名
+        id: meta
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$INPUT_TAG"
+          if [[ -z "$tag" ]]; then
+            # 按创建时间倒序，跳过草稿；预发布也算（目前只有预发布版本）
+            tag=$(gh release list --exclude-drafts --limit 1 --json tagName -q '.[0].tagName')
+          fi
+          if [[ ! "$tag" =~ ^v[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::无效的 tag「${tag}」"
+            exit 1
+          fi
+          {
+            echo "tag=$tag"
+            echo "label=${tag#v}"
+            echo "date=$(date -u +%Y%m%d)"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/oryn-orb"
+          } >> "$GITHUB_OUTPUT"
+          echo "orb 镜像：${tag}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, goarch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, goarch: arm64, runner: ubuntu-24.04-arm }
+    name: build (${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      ARCH: ${{ matrix.arch }}
+      IMAGE: ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.label }}-${{ matrix.goarch }}
+    steps:
+      # 镜像解压后约 10 GB，构建期还要放各层与推送时的压缩数据；先删掉 runner 上用不到的大件工具链
+      - name: 腾出磁盘空间
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: 构建依赖
+        shell: bash
+        run: command -v rsync >/dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends rsync; }
+      - name: 取 Oryn Core
+        shell: bash
+        run: scripts/fetch-core.sh "$ARCH"
+      # 构建脚本最后在断网容器里跑冒烟，并确认镜像没有内置微软官方 VS Code
+      - name: 构建并冒烟
+        shell: bash
+        run: IMAGE="$IMAGE" VERSION="$TAG" scripts/build-orb-image.sh "$ARCH"
+      - name: 推送单架构镜像
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+
+  manifest:
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    env:
+      IMAGE: ${{ needs.resolve.outputs.image }}
+      LABEL: ${{ needs.resolve.outputs.label }}
+      DATE: ${{ needs.resolve.outputs.date }}
+    steps:
+      - name: 合成多架构标签
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create \
+            -t "$IMAGE:$LABEL" -t "$IMAGE:$LABEL-$DATE" \
+            "$IMAGE:$LABEL-amd64" "$IMAGE:$LABEL-arm64"
+          {
+            echo "### orb 镜像"
+            echo '```'
+            docker buildx imagetools inspect "$IMAGE:$LABEL"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
