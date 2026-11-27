@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
@@ -30,6 +31,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 const (
@@ -485,6 +487,183 @@ func TestPasskeySetupLoginRecovery(t *testing.T) {
 	r.json(t, &cer)
 	r = e.do("POST", "/api/v1/auth/login/finish", h2Cred{}, map[string]any{"ceremonyId": cer.CeremonyID, "credential": phone.get(cer.Options)})
 	require.Equal(t, 200, r.status, string(r.body))
+}
+
+// 设置页的 Passkey 管理与恢复码重新生成：9 个接口全部走真实路由。
+func TestPasskeyManage(t *testing.T) {
+	e := newH2Env(t)
+	ctx := context.Background()
+
+	type passkey struct {
+		ID      string
+		Name    string
+		Current bool
+	}
+	type passkeyList struct {
+		Items            []passkey
+		ReauthValidUntil *int64
+	}
+	list := func(sess string) passkeyList {
+		t.Helper()
+		r := e.do("GET", "/api/v1/auth/passkeys", h2Cred{cookie: sess}, nil)
+		require.Equal(t, 200, r.status, string(r.body))
+		var l passkeyList
+		r.json(t, &l)
+		return l
+	}
+	login := func(a *h2Authenticator) string {
+		t.Helper()
+		r := e.do("POST", "/api/v1/auth/login/begin", h2Cred{}, nil)
+		require.Equal(t, 200, r.status, string(r.body))
+		var cer h2Ceremony
+		r.json(t, &cer)
+		r = e.do("POST", "/api/v1/auth/login/finish", h2Cred{}, map[string]any{"ceremonyId": cer.CeremonyID, "credential": a.get(cer.Options)})
+		require.Equal(t, 200, r.status, string(r.body))
+		require.NotEmpty(t, r.session())
+		return r.session()
+	}
+
+	// 1. 初始化并登录得到 S1
+	setupURL, _, err := auth.EnsureSetupToken(ctx, e.st, e.dataDir, h2PublicURL)
+	require.NoError(t, err)
+	u, err := url.Parse(setupURL)
+	require.NoError(t, err)
+	frag, err := url.ParseQuery(u.Fragment)
+	require.NoError(t, err)
+	r := e.do("POST", "/api/v1/auth/setup/begin", h2Cred{}, map[string]string{"token": frag.Get("token"), "name": "MacBook"})
+	require.Equal(t, 200, r.status, string(r.body))
+	var cer h2Ceremony
+	r.json(t, &cer)
+	laptop := newH2Authenticator(t)
+	r = e.do("POST", "/api/v1/auth/setup/finish", h2Cred{}, map[string]any{"ceremonyId": cer.CeremonyID, "credential": laptop.create(cer.Options)})
+	require.Equal(t, 200, r.status, string(r.body))
+	var fin struct{ RecoveryCodes []string }
+	r.json(t, &fin)
+	require.Len(t, fin.RecoveryCodes, 10)
+
+	s1 := login(laptop)
+	s1c := h2Cred{cookie: s1, csrf: true}
+	l := list(s1)
+	require.Len(t, l.Items, 1)
+	assert.Equal(t, "MacBook", l.Items[0].Name)
+	assert.True(t, l.Items[0].Current)
+	assert.NotNil(t, l.ReauthValidUntil, "登录即算一次验证")
+	laptopID := l.Items[0].ID
+
+	// 2. 验证过期：新增、删除、重新生成恢复码都要求重新验证；改名不要求
+	stale := time.Now().Add(-6 * time.Minute).UnixMilli()
+	require.NoError(t, e.st.Q.TouchWebSessionVerified(ctx, db.TouchWebSessionVerifiedParams{VerifiedAt: &stale, IDHash: ids.Hash(s1)}))
+	assert.Nil(t, list(s1).ReauthValidUntil)
+	r = e.do("POST", "/api/v1/auth/passkeys/begin", s1c, map[string]string{"name": "手机"})
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "reauth_required", r.code(t))
+	r = e.do("DELETE", "/api/v1/auth/passkeys/"+laptopID, s1c, nil)
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "reauth_required", r.code(t))
+	r = e.do("POST", "/api/v1/auth/recovery-codes", s1c, nil)
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "reauth_required", r.code(t))
+	r = e.do("PATCH", "/api/v1/auth/passkeys/"+laptopID, s1c, map[string]string{"name": "  工作电脑 "})
+	require.Equal(t, 200, r.status, string(r.body))
+	var renamed passkey
+	r.json(t, &renamed)
+	assert.Equal(t, "工作电脑", renamed.Name)
+	assert.Equal(t, "工作电脑", list(s1).Items[0].Name)
+	assert.Equal(t, 400, e.do("PATCH", "/api/v1/auth/passkeys/"+laptopID, s1c, map[string]string{"name": " "}).status)
+	assert.Equal(t, 404, e.do("PATCH", "/api/v1/auth/passkeys/"+b64([]byte("nope")), s1c, map[string]string{"name": "x"}).status)
+
+	// 3. 重新验证
+	r = e.do("POST", "/api/v1/auth/reauth/begin", s1c, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	r.json(t, &cer)
+	allow := cer.Options["allowCredentials"].([]any)
+	require.Len(t, allow, 1)
+	assert.Equal(t, laptopID, allow[0].(map[string]any)["id"])
+	r = e.do("POST", "/api/v1/auth/reauth/finish", s1c, map[string]any{"ceremonyId": cer.CeremonyID, "credential": laptop.get(cer.Options)})
+	require.Equal(t, 200, r.status, string(r.body))
+	var re struct{ VerifiedAt, ValidUntil int64 }
+	r.json(t, &re)
+	assert.Equal(t, int64(300000), re.ValidUntil-re.VerifiedAt)
+	l = list(s1)
+	require.NotNil(t, l.ReauthValidUntil)
+	assert.Equal(t, re.ValidUntil, *l.ReauthValidUntil)
+	// 签名计数已写回：再登录不会被当成克隆
+	_ = login(laptop)
+
+	// 4. 追加第二把
+	r = e.do("POST", "/api/v1/auth/passkeys/begin", s1c, map[string]string{"name": "手机"})
+	require.Equal(t, 200, r.status, string(r.body))
+	r.json(t, &cer)
+	assert.Len(t, cer.Options["excludeCredentials"].([]any), 1)
+	phone := newH2Authenticator(t)
+	r = e.do("POST", "/api/v1/auth/passkeys/finish", s1c, map[string]any{"ceremonyId": cer.CeremonyID, "credential": phone.create(cer.Options)})
+	require.Equal(t, 200, r.status, string(r.body))
+	var added passkey
+	r.json(t, &added)
+	assert.Equal(t, "手机", added.Name)
+	assert.False(t, added.Current)
+	assert.Len(t, list(s1).Items, 2)
+	r = e.do("GET", "/api/v1/me", h2Cred{cookie: s1}, nil)
+	require.Equal(t, 200, r.status)
+	var me struct {
+		PasskeyCount           int
+		RecoveryCodesRemaining *int
+	}
+	r.json(t, &me)
+	assert.Equal(t, 2, me.PasskeyCount)
+
+	// 5. 用第二把登录得到 S2；S1 删掉第二把 → S2 立即失效并发布吊销
+	s2 := login(phone)
+	assert.True(t, func() bool {
+		for _, it := range list(s2).Items {
+			if it.ID == added.ID {
+				return it.Current
+			}
+		}
+		return false
+	}())
+	var revoked []string
+	e.svc.Subscribe(func(kind, id string) { revoked = append(revoked, kind+":"+id) })
+	require.Equal(t, 204, e.do("DELETE", "/api/v1/auth/passkeys/"+added.ID, s1c, nil).status)
+	assert.Equal(t, 401, e.do("GET", "/api/v1/me", h2Cred{cookie: s2}, nil).status)
+	assert.Equal(t, []string{"web:" + ids.Hash(s2)}, revoked)
+	assert.Len(t, list(s1).Items, 1)
+
+	// 6. 最后一把不能删；不存在的 id → 404
+	r = e.do("DELETE", "/api/v1/auth/passkeys/"+laptopID, s1c, nil)
+	assert.Equal(t, 409, r.status)
+	assert.Equal(t, "last_passkey", r.code(t))
+	assert.Equal(t, 404, e.do("DELETE", "/api/v1/auth/passkeys/"+added.ID, s1c, nil).status)
+
+	// 7. 重新生成恢复码：旧码全部失效，新码可用
+	r = e.do("POST", "/api/v1/auth/recovery-codes", s1c, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var regen struct{ RecoveryCodes []string }
+	r.json(t, &regen)
+	require.Len(t, regen.RecoveryCodes, 10)
+	assert.Equal(t, 401, e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": fin.RecoveryCodes[0]}).status)
+	require.Equal(t, 200, e.do("POST", "/api/v1/auth/recovery", h2Cred{}, map[string]string{"code": regen.RecoveryCodes[0]}).status)
+	r = e.do("GET", "/api/v1/auth/recovery-codes", h2Cred{cookie: s1}, nil)
+	require.Equal(t, 200, r.status, string(r.body))
+	var rs struct {
+		Total, Remaining int
+		GeneratedAt      *int64
+	}
+	r.json(t, &rs)
+	assert.Equal(t, 10, rs.Total)
+	assert.Equal(t, 9, rs.Remaining)
+	assert.NotNil(t, rs.GeneratedAt)
+	r = e.do("GET", "/api/v1/me", h2Cred{cookie: s1}, nil)
+	r.json(t, &me)
+	require.NotNil(t, me.RecoveryCodesRemaining)
+	assert.Equal(t, 9, *me.RecoveryCodesRemaining)
+
+	// 8. 设备令牌不能管理 Passkey
+	_, tok, err := auth.CreateDevice(ctx, e.st, "verify", "cli", "")
+	require.NoError(t, err)
+	r = e.do("GET", "/api/v1/auth/passkeys", h2Cred{bearer: tok}, nil)
+	assert.Equal(t, 403, r.status)
+	assert.Equal(t, "forbidden", r.code(t))
 }
 
 func TestPublicEndpointRateLimit(t *testing.T) {

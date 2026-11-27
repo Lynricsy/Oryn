@@ -83,6 +83,7 @@ import { MockMemory } from "./memory";
 import { handleNotifyFetch } from "./notify";
 import { handleOrbFetch } from "./orbfs";
 import { MockOwnerMemory } from "./owner-memory";
+import { MockPasskeys } from "./passkeys";
 import { buildMockProvidersOverview } from "./providers-overview";
 import { MockRepo } from "./repo";
 import { MockSandboxes } from "./sandboxes";
@@ -600,6 +601,8 @@ export class MockServer {
 			v.map((s) => ({ ...s })),
 		]),
 	);
+	/** Passkey 管理与恢复码。 */
+	readonly passkeys = new MockPasskeys();
 	/** 浏览器 Profile 与 orb 桌面（M8）。 */
 	readonly desktop = new MockDesktop({
 		orbs: this.orbs,
@@ -1595,6 +1598,8 @@ export class MockServer {
 		if (artRes) return artRes;
 		const deskRes = await this.desktop.handle(req, p, m);
 		if (deskRes) return deskRes;
+		const passkeyRes = await this.passkeys.handle(req, p, m);
+		if (passkeyRes) return passkeyRes;
 		const statsRes = await handleStatsFetch(req, p, m, url, {
 			threads: () => [...this.threads.values()],
 			projects: () => this.projects,
@@ -1614,7 +1619,7 @@ export class MockServer {
 				displayName: "owner",
 				createdAt: NOW - 90 * 86_400_000,
 				auth: { kind: "web" },
-				passkeyCount: 1,
+				...this.passkeys.counts(),
 			});
 		if (p === "ws-ticket")
 			return json({ ticket: "mock-ticket", expiresIn: 30 });

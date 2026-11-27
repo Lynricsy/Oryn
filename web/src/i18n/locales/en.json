@@ -1352,7 +1352,9 @@
 		"deploy_in_progress": "A deploy is in progress. Wait for it to finish, or cancel it first.",
 		"box_changes": "The box has uncommitted changes in this app. Commit and push them from a thread on the box, or redeploy with --discard-box-changes.",
 		"release_too_large": "The release is larger than 512 MiB. Ship build output with source: false and artifacts instead.",
-		"app_unavailable": "This app isn't available right now. Try again in a few seconds."
+		"app_unavailable": "This app isn't available right now. Try again in a few seconds.",
+		"reauth_required": "Verify with a passkey first. The check lasts 5 minutes.",
+		"last_passkey": "This is your last passkey, so it can't be deleted."
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",
@@ -1401,7 +1403,7 @@
 			"other": "Other"
 		},
 		"keywords": {
-			"account": "avatar devices pairing qr code revoke log out change server account 头像 设备",
+			"account": "avatar devices pairing qr code revoke log out change server account 头像 设备 passkey recovery codes",
 			"appearance": "theme dark light accent color wallpaper icon language layout sidebar 主题 语言",
 			"input": "composer send key enter shortcuts keyboard predictions new thread default selection actions 快捷键",
 			"notifications": "push channels telegram webhook ntfy bark budget spend alert limit 通知 预算",
@@ -2735,7 +2737,42 @@
 		"changeServer": "Change server…",
 		"session": "Sign-in on this browser",
 		"sessionHint": "You'll need to sign in again afterwards.",
-		"logout": "Sign out"
+		"logout": "Sign out",
+		"passkeys": {
+			"title": "Passkeys",
+			"add": "Add",
+			"addTitle": "Add a passkey",
+			"name": "Name",
+			"current": "Current",
+			"created": "Created {{date}}",
+			"lastUsed": "Last used {{date}}",
+			"never": "never",
+			"synced": "Synced",
+			"rename": "Rename “{{name}}”",
+			"renameTitle": "Rename passkey",
+			"delete": "Delete “{{name}}”",
+			"deleteConfirm": "Delete “{{name}}”?",
+			"deleteBody": "Other browsers signed in with it are signed out immediately.",
+			"verifyTitle": "Verify it's you",
+			"verifyBody": "This needs a quick passkey check first. It stays valid for 5 minutes.",
+			"verifyAction": "Verify with passkey",
+			"browserOnlyTitle": "Manage in a browser",
+			"browserOnly": "Adding or deleting passkeys and regenerating recovery codes only works in a browser",
+			"openInBrowser": "Open in browser"
+		},
+		"recovery": {
+			"title": "Recovery codes",
+			"rowTitle": "One-time recovery codes",
+			"remaining": "{{remaining}} of {{total}} left",
+			"generated": "generated {{date}}",
+			"low": "Consider regenerating",
+			"regenerate": "Regenerate",
+			"regenerateConfirm": "Regenerate recovery codes?",
+			"regenerateBody": "All of your current recovery codes stop working immediately.",
+			"codesTitle": "New recovery codes",
+			"codesHint": "Keep these {{n}} recovery codes somewhere safe. Each works once, and they won't be shown again after you close this.",
+			"saved": "I've saved them"
+		}
 	},
 	"about": {
 		"server": "Server",

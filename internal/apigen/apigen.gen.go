@@ -4892,6 +4892,12 @@ func (e ListThreadsParamsKind) Valid() bool {
 	}
 }
 
+// AddPasskeyBeginRequest defines model for AddPasskeyBeginRequest.
+type AddPasskeyBeginRequest struct {
+	// Name Passkey 显示名
+	Name *string `json:"name,omitempty"`
+}
+
 // AgentAvatar defines model for AgentAvatar.
 type AgentAvatar struct {
 	AvatarIcon  *string `json:"avatarIcon,omitempty"`
@@ -8587,6 +8593,9 @@ type Me struct {
 	CreatedAt    TimestampMs `json:"createdAt"`
 	DisplayName  string      `json:"displayName"`
 	PasskeyCount *int        `json:"passkeyCount,omitempty"`
+
+	// RecoveryCodesRemaining 剩余未使用的恢复码数量（仅网页会话）
+	RecoveryCodesRemaining *int `json:"recoveryCodesRemaining,omitempty"`
 }
 
 // MeAuthKind defines model for Me.Auth.Kind.
@@ -10348,6 +10357,37 @@ type OwnerMemoryTopicList struct {
 	LastCuration *OwnerMemoryCuration `json:"lastCuration,omitempty"`
 }
 
+// Passkey defines model for Passkey.
+type Passkey struct {
+	// BackedUp 已同步到云端（凭据 Flags）
+	BackedUp bool `json:"backedUp"`
+
+	// BackupEligible 可同步的 Passkey（凭据 Flags）
+	BackupEligible bool `json:"backupEligible"`
+
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// Current 当前会话由这把登录
+	Current bool `json:"current"`
+
+	// ID credential id（无填充 base64url）
+	ID string `json:"id"`
+
+	// LastUsedAt UTC 毫秒时间戳
+	LastUsedAt *TimestampMs `json:"lastUsedAt,omitempty"`
+	Name       string       `json:"name"`
+	Transports []string     `json:"transports"`
+}
+
+// PasskeyList defines model for PasskeyList.
+type PasskeyList struct {
+	Items []Passkey `json:"items"`
+
+	// ReauthValidUntil 当前会话重新验证的有效期截止（UTC 毫秒）；null = 需要先 reauth
+	ReauthValidUntil *int64 `json:"reauthValidUntil"`
+}
+
 // PauseMode defines model for PauseMode.
 type PauseMode string
 
@@ -11548,6 +11588,33 @@ type PutBoxSecretRequest struct {
 	// Secret 缺省 true；false = 明文环境变量（API 可读回）
 	Secret *bool  `json:"secret,omitempty"`
 	Value  string `json:"value"`
+}
+
+// ReauthResult defines model for ReauthResult.
+type ReauthResult struct {
+	// ValidUntil UTC 毫秒时间戳
+	ValidUntil TimestampMs `json:"validUntil"`
+
+	// VerifiedAt UTC 毫秒时间戳
+	VerifiedAt TimestampMs `json:"verifiedAt"`
+}
+
+// RecoveryCodeStatus defines model for RecoveryCodeStatus.
+type RecoveryCodeStatus struct {
+	// GeneratedAt 本批恢复码的生成时间；缺省 = 未知（升级前生成）
+	GeneratedAt *TimestampMs `json:"generatedAt,omitempty"`
+	Remaining   int          `json:"remaining"`
+	Total       int          `json:"total"`
+}
+
+// RecoveryCodes defines model for RecoveryCodes.
+type RecoveryCodes struct {
+	RecoveryCodes []string `json:"recoveryCodes"`
+}
+
+// RenamePasskeyRequest defines model for RenamePasskeyRequest.
+type RenamePasskeyRequest struct {
+	Name string `json:"name"`
 }
 
 // ResearchRun defines model for ResearchRun.
@@ -15216,6 +15283,18 @@ type UpdateResearchTopicJSONRequestBody = ResearchTopicPatch
 // AuthLoginFinishJSONRequestBody defines body for AuthLoginFinish for application/json ContentType.
 type AuthLoginFinishJSONRequestBody = AuthLoginFinishRequest
 
+// AddPasskeyBeginJSONRequestBody defines body for AddPasskeyBegin for application/json ContentType.
+type AddPasskeyBeginJSONRequestBody = AddPasskeyBeginRequest
+
+// AddPasskeyFinishJSONRequestBody defines body for AddPasskeyFinish for application/json ContentType.
+type AddPasskeyFinishJSONRequestBody = AuthSetupFinishRequest
+
+// RenamePasskeyJSONRequestBody defines body for RenamePasskey for application/json ContentType.
+type RenamePasskeyJSONRequestBody = RenamePasskeyRequest
+
+// ReauthFinishJSONRequestBody defines body for ReauthFinish for application/json ContentType.
+type ReauthFinishJSONRequestBody = AuthLoginFinishRequest
+
 // AuthRecoveryJSONRequestBody defines body for AuthRecovery for application/json ContentType.
 type AuthRecoveryJSONRequestBody = AuthRecoveryRequest
 
@@ -18323,9 +18402,36 @@ type ServerInterface interface {
 	// AuthLogout 注销当前网页会话
 	// (POST /api/v1/auth/logout)
 	AuthLogout(w http.ResponseWriter, r *http.Request)
+	// ListPasskeys 列出所有者的 Passkey（按创建时间）
+	// (GET /api/v1/auth/passkeys)
+	ListPasskeys(w http.ResponseWriter, r *http.Request)
+	// AddPasskeyBegin 开始追加 Passkey
+	// (POST /api/v1/auth/passkeys/begin)
+	AddPasskeyBegin(w http.ResponseWriter, r *http.Request)
+	// AddPasskeyFinish 完成追加 Passkey；不签发新会话
+	// (POST /api/v1/auth/passkeys/finish)
+	AddPasskeyFinish(w http.ResponseWriter, r *http.Request)
+	// DeletePasskey 删除 Passkey
+	// (DELETE /api/v1/auth/passkeys/{passkeyId})
+	DeletePasskey(w http.ResponseWriter, r *http.Request, passkeyID string)
+	// RenamePasskey 给 Passkey 改名
+	// (PATCH /api/v1/auth/passkeys/{passkeyId})
+	RenamePasskey(w http.ResponseWriter, r *http.Request, passkeyID string)
+	// ReauthBegin 对当前会话做一次 Passkey 断言（allowCredentials = 所有者全部凭据）
+	// (POST /api/v1/auth/reauth/begin)
+	ReauthBegin(w http.ResponseWriter, r *http.Request)
+	// ReauthFinish 完成重新验证；此后 5 分钟内可做敏感操作
+	// (POST /api/v1/auth/reauth/finish)
+	ReauthFinish(w http.ResponseWriter, r *http.Request)
 	// AuthRecovery 用恢复码换取「重新注册 Passkey」的一次性会话
 	// (POST /api/v1/auth/recovery)
 	AuthRecovery(w http.ResponseWriter, r *http.Request)
+	// GetRecoveryCodeStatus 恢复码剩余情况
+	// (GET /api/v1/auth/recovery-codes)
+	GetRecoveryCodeStatus(w http.ResponseWriter, r *http.Request)
+	// RegenerateRecoveryCodes 作废全部旧码并生成 10 个新码；明文只返回这一次
+	// (POST /api/v1/auth/recovery-codes)
+	RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
 	// AuthSetupBegin 开始注册 Passkey
 	// (POST /api/v1/auth/setup/begin)
 	AuthSetupBegin(w http.ResponseWriter, r *http.Request)
@@ -19727,9 +19833,63 @@ func (_ Unimplemented) AuthLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ListPasskeys 列出所有者的 Passkey（按创建时间）
+// (GET /api/v1/auth/passkeys)
+func (_ Unimplemented) ListPasskeys(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AddPasskeyBegin 开始追加 Passkey
+// (POST /api/v1/auth/passkeys/begin)
+func (_ Unimplemented) AddPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AddPasskeyFinish 完成追加 Passkey；不签发新会话
+// (POST /api/v1/auth/passkeys/finish)
+func (_ Unimplemented) AddPasskeyFinish(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeletePasskey 删除 Passkey
+// (DELETE /api/v1/auth/passkeys/{passkeyId})
+func (_ Unimplemented) DeletePasskey(w http.ResponseWriter, r *http.Request, passkeyID string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RenamePasskey 给 Passkey 改名
+// (PATCH /api/v1/auth/passkeys/{passkeyId})
+func (_ Unimplemented) RenamePasskey(w http.ResponseWriter, r *http.Request, passkeyID string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReauthBegin 对当前会话做一次 Passkey 断言（allowCredentials = 所有者全部凭据）
+// (POST /api/v1/auth/reauth/begin)
+func (_ Unimplemented) ReauthBegin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReauthFinish 完成重新验证；此后 5 分钟内可做敏感操作
+// (POST /api/v1/auth/reauth/finish)
+func (_ Unimplemented) ReauthFinish(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // AuthRecovery 用恢复码换取「重新注册 Passkey」的一次性会话
 // (POST /api/v1/auth/recovery)
 func (_ Unimplemented) AuthRecovery(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetRecoveryCodeStatus 恢复码剩余情况
+// (GET /api/v1/auth/recovery-codes)
+func (_ Unimplemented) GetRecoveryCodeStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RegenerateRecoveryCodes 作废全部旧码并生成 10 个新码；明文只返回这一次
+// (POST /api/v1/auth/recovery-codes)
+func (_ Unimplemented) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -23843,11 +24003,161 @@ func (siw *ServerInterfaceWrapper) AuthLogout(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListPasskeys operation middleware
+func (siw *ServerInterfaceWrapper) ListPasskeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPasskeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddPasskeyBegin operation middleware
+func (siw *ServerInterfaceWrapper) AddPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddPasskeyBegin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddPasskeyFinish operation middleware
+func (siw *ServerInterfaceWrapper) AddPasskeyFinish(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddPasskeyFinish(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePasskey operation middleware
+func (siw *ServerInterfaceWrapper) DeletePasskey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "passkeyId" -------------
+	var passkeyID string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "passkeyId", chi.URLParam(r, "passkeyId"), &passkeyID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "passkeyId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePasskey(w, r, passkeyID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenamePasskey operation middleware
+func (siw *ServerInterfaceWrapper) RenamePasskey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "passkeyId" -------------
+	var passkeyID string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "passkeyId", chi.URLParam(r, "passkeyId"), &passkeyID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "passkeyId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenamePasskey(w, r, passkeyID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReauthBegin operation middleware
+func (siw *ServerInterfaceWrapper) ReauthBegin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReauthBegin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReauthFinish operation middleware
+func (siw *ServerInterfaceWrapper) ReauthFinish(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReauthFinish(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AuthRecovery operation middleware
 func (siw *ServerInterfaceWrapper) AuthRecovery(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AuthRecovery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecoveryCodeStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetRecoveryCodeStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecoveryCodeStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegenerateRecoveryCodes operation middleware
+func (siw *ServerInterfaceWrapper) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegenerateRecoveryCodes(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -33551,6 +33861,33 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/auth/logout", wrapper.AuthLogout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/auth/passkeys", wrapper.ListPasskeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/passkeys/begin", wrapper.AddPasskeyBegin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/passkeys/finish", wrapper.AddPasskeyFinish)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/auth/passkeys/{passkeyId}", wrapper.DeletePasskey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/auth/passkeys/{passkeyId}", wrapper.RenamePasskey)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/reauth/begin", wrapper.ReauthBegin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/reauth/finish", wrapper.ReauthFinish)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/auth/recovery-codes", wrapper.GetRecoveryCodeStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/recovery-codes", wrapper.RegenerateRecoveryCodes)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/auth/app-session", wrapper.CreateAppSession)

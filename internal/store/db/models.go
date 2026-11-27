@@ -1089,8 +1089,9 @@ type PushSubscription struct {
 }
 
 type RecoveryCode struct {
-	CodeHash string `json:"codeHash"`
-	UsedAt   *int64 `json:"usedAt"`
+	CodeHash  string `json:"codeHash"`
+	UsedAt    *int64 `json:"usedAt"`
+	CreatedAt int64  `json:"createdAt"`
 }
 
 type RepoCommitThread struct {
@@ -1590,4 +1591,6 @@ type WebSession struct {
 	LastSeenAt int64   `json:"lastSeenAt"`
 	UserAgent  string  `json:"userAgent"`
 	DeviceID   *string `json:"deviceId"`
+	VerifiedAt *int64  `json:"verifiedAt"`
+	PasskeyID  []byte  `json:"passkeyId"`
 }

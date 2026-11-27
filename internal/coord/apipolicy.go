@@ -302,7 +302,9 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("settings", opDeny, deny(denyBinary("write files one by one with putAgentConfigFile")), "importAgentConfig")
 	set("settings", opDeny, deny(denyClient), "getMe")
 	set("settings", opDeny, deny(denyHuman), "authSetupBegin", "authSetupFinish", "authLoginBegin", "authLoginFinish", "authRecovery",
-		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll", "patchOpsSettings")
+		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll", "patchOpsSettings",
+		"listPasskeys", "addPasskeyBegin", "addPasskeyFinish", "renamePasskey", "deletePasskey", "reauthBegin", "reauthFinish",
+		"getRecoveryCodeStatus", "regenerateRecoveryCodes")
 
 	// insights
 	set("insights", opRead, none, "getHealthz", "searchMessages", "getStatsMeta", "getUsageStats", "exportUsageRecords", "getToolStats",

@@ -32,7 +32,7 @@ UPDATE passkeys SET name = @name WHERE id = @id;
 DELETE FROM passkeys WHERE id = @id;
 
 -- name: InsertRecoveryCode :exec
-INSERT INTO recovery_codes (code_hash) VALUES (@code_hash);
+INSERT INTO recovery_codes (code_hash, created_at) VALUES (@code_hash, @created_at);
 
 -- name: UseRecoveryCode :execrows
 UPDATE recovery_codes SET used_at = @used_at WHERE code_hash = @code_hash AND used_at IS NULL;
@@ -43,9 +43,16 @@ SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL;
 -- name: DeleteAllRecoveryCodes :exec
 DELETE FROM recovery_codes;
 
+-- name: CountRecoveryCodes :one
+SELECT COUNT(*) FROM recovery_codes;
+
+-- name: RecoveryCodesGeneratedAt :one
+SELECT CAST(COALESCE(MAX(created_at), 0) AS INTEGER) AS generated_at FROM recovery_codes;
+
 -- name: CreateWebSession :exec
-INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent)
-VALUES (@id_hash, @kind, @created_at, @expires_at, @last_seen_at, @user_agent);
+-- verified_at / passkey_id: set when the session was created by a passkey ceremony (login / setup), NULL otherwise.
+INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, verified_at, passkey_id)
+VALUES (@id_hash, @kind, @created_at, @expires_at, @last_seen_at, @user_agent, sqlc.narg(verified_at), sqlc.narg(passkey_id));
 
 -- name: GetWebSession :one
 -- App sessions (device_id set) are treated as gone once their device is revoked or missing,
@@ -62,6 +69,12 @@ UPDATE web_sessions SET last_seen_at = @last_seen_at, expires_at = @expires_at W
 
 -- name: DeleteWebSession :exec
 DELETE FROM web_sessions WHERE id_hash = @id_hash;
+
+-- name: TouchWebSessionVerified :exec
+UPDATE web_sessions SET verified_at = @verified_at WHERE id_hash = @id_hash;
+
+-- name: DeleteWebSessionsByPasskey :many
+DELETE FROM web_sessions WHERE passkey_id = @passkey_id AND id_hash <> @keep_id_hash RETURNING id_hash;
 
 -- name: DeleteExpiredWebSessions :execrows
 DELETE FROM web_sessions WHERE expires_at <= @now;

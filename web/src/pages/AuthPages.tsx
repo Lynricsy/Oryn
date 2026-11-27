@@ -24,16 +24,7 @@ import {
 	Spinner,
 	TextInput,
 } from "../components/ui/primitives";
-
-/**
- * begin 返回的是 `publicKey` 内层 JSON（WebAuthn L3 JSON 形态，由 @simplewebauthn/browser 解码，
- * 等价于 `PublicKeyCredential.parseCreationOptionsFromJSON / parseRequestOptionsFromJSON`）；
- * 若服务端仍包了一层 `{publicKey: …}` 也兼容。
- */
-function unwrapOptions<T>(options: Record<string, unknown>): T {
-	const inner = options.publicKey;
-	return (inner && typeof inner === "object" ? inner : options) as T;
-}
+import { unwrapOptions } from "../lib/webauthn";
 
 /** 初始化令牌放在 URL 片段（`/setup#token=ost_…`），不进反代访问日志。 */
 export function setupTokenFromHash(hash: string): string | undefined {

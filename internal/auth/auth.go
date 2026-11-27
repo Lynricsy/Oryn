@@ -13,6 +13,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -39,6 +40,8 @@ const (
 	sessionTouchEvery = time.Hour
 	// deviceTouchEvery 控制设备 last_seen_at 的更新频率。
 	deviceTouchEvery = time.Minute
+	// reauthTTL 是一次 Passkey 验证（登录、注册或 reauth）对敏感操作的有效期，从验证时刻起固定，不随操作延长。
+	reauthTTL = 5 * time.Minute
 
 	sessionKindFull     = "full"
 	sessionKindRecovery = "recovery"
@@ -62,6 +65,11 @@ type Principal struct {
 	Recovery bool
 	// DeviceID 在 Kind == KindWeb 且会话由设备换取（App 会话，M6）时为 dev_…，其余为空。
 	DeviceID string
+	// VerifiedAt 是网页会话最近一次 Passkey 验证的毫秒时间；0 = 从未（恢复会话、admin 签发、App 会话）。
+	VerifiedAt int64
+	// PasskeyID 是登录所用 Passkey 的 credential id（无填充 base64url）；空 = 不是 Passkey 登录。
+	// 用 string 而不是 []byte，保持 Principal 可比较。
+	PasskeyID string
 }
 
 type ctxKey struct{}
@@ -150,6 +158,12 @@ func Authenticate(w http.ResponseWriter, r *http.Request, st *store.Store) (Prin
 	p := Principal{Kind: KindWeb, ID: ws.IDHash, Recovery: ws.Kind == sessionKindRecovery}
 	if ws.DeviceID != nil {
 		p.DeviceID = *ws.DeviceID
+	}
+	if ws.VerifiedAt != nil {
+		p.VerifiedAt = *ws.VerifiedAt
+	}
+	if len(ws.PasskeyID) > 0 {
+		p.PasskeyID = base64.RawURLEncoding.EncodeToString(ws.PasskeyID)
 	}
 	if ws.Kind == sessionKindFull {
 		now := time.Now()
@@ -249,24 +263,58 @@ func isMutation(method string) bool {
 }
 
 // createSession 写入一条网页会话并返回明文 Cookie 值与过期时间。
-func createSession(ctx context.Context, q *db.Queries, kind, userAgent string, ttl time.Duration) (string, time.Time, error) {
+// passkeyID 非 nil 表示会话由 Passkey 仪式（登录 / 注册）签发：记下所用凭据，并把此刻记为一次验证。
+func createSession(ctx context.Context, q *db.Queries, kind, userAgent string, ttl time.Duration, passkeyID []byte) (string, time.Time, error) {
 	tok := ids.Token("ows")
 	now := time.Now()
 	exp := now.Add(ttl)
 	if len(userAgent) > 512 {
 		userAgent = userAgent[:512]
 	}
-	err := q.CreateWebSession(ctx, db.CreateWebSessionParams{
+	arg := db.CreateWebSessionParams{
 		IDHash: ids.Hash(tok), Kind: kind, CreatedAt: now.UnixMilli(),
 		ExpiresAt: exp.UnixMilli(), LastSeenAt: now.UnixMilli(), UserAgent: userAgent,
-	})
+	}
+	if passkeyID != nil {
+		verified := now.UnixMilli()
+		arg.VerifiedAt, arg.PasskeyID = &verified, passkeyID
+	}
+	err := q.CreateWebSession(ctx, arg)
 	return tok, exp, err
 }
 
 // CreateWebSession 直接签发一条完整网页会话（测试与本机工具使用），返回 Cookie 值。
 func CreateWebSession(ctx context.Context, st *store.Store, userAgent string) (string, error) {
-	tok, _, err := createSession(ctx, st.Q, sessionKindFull, userAgent, SessionTTL)
+	tok, _, err := createSession(ctx, st.Q, sessionKindFull, userAgent, SessionTTL, nil)
 	return tok, err
+}
+
+// requireOwnerSession 只放行所有者的网页会话与 App 会话（恢复会话、设备令牌、助手 → 403）。
+func requireOwnerSession(p Principal) error {
+	if p.Kind != KindWeb || p.Recovery {
+		return newErr(http.StatusForbidden, "forbidden", "需要网页登录会话")
+	}
+	return nil
+}
+
+// ReauthValidUntil 返回验证有效期的截止时间；从未验证或已过期时 ok 为 false。
+func ReauthValidUntil(p Principal, now time.Time) (time.Time, bool) {
+	if p.VerifiedAt <= 0 {
+		return time.Time{}, false
+	}
+	until := time.UnixMilli(p.VerifiedAt).Add(reauthTTL)
+	if !now.Before(until) {
+		return time.Time{}, false
+	}
+	return until, true
+}
+
+// RequireRecentAuth 要求会话在 reauthTTL 内做过 Passkey 验证，否则返回 403 reauth_required。
+func RequireRecentAuth(p Principal, now time.Time) error {
+	if _, ok := ReauthValidUntil(p, now); !ok {
+		return newErr(http.StatusForbidden, "reauth_required", "这项操作需要先用 Passkey 验证身份（5 分钟内有效）")
+	}
+	return nil
 }
 
 // SetSessionCookie 写出会话 Cookie。

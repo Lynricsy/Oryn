@@ -1352,7 +1352,9 @@
 		"deploy_in_progress": "有部署正在进行，等它结束或先取消它",
 		"box_changes": "box 上这个应用有未提交的改动：在 box 上的线程里提交并推送，或用 --discard-box-changes 重新部署",
 		"release_too_large": "release 超过 512 MiB，改用 source: false 加 artifacts 只发构建产物",
-		"app_unavailable": "这个应用暂时不可用，过几秒再试"
+		"app_unavailable": "这个应用暂时不可用，过几秒再试",
+		"reauth_required": "需要先用 Passkey 验证身份，5 分钟内有效",
+		"last_passkey": "这是最后一把 Passkey，不能删除"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",
@@ -1401,7 +1403,7 @@
 			"other": "其它"
 		},
 		"keywords": {
-			"account": "头像 设备 配对 二维码 吊销 退出登录 更换服务器 账号 device pair avatar logout",
+			"account": "头像 设备 配对 二维码 吊销 退出登录 更换服务器 账号 device pair avatar logout Passkey 通行密钥 恢复码",
 			"appearance": "主题 明暗 深色 浅色 主题色 壁纸 图标 语言 布局 侧栏 theme dark light accent wallpaper language",
 			"input": "输入框 发送键 回车 快捷键 预测 补全 新对话 默认对象 选区 右键 动作 composer shortcut enter",
 			"notifications": "推送 渠道 Telegram Webhook ntfy Bark 预算 花费 告警 上限 push budget",
@@ -2735,7 +2737,42 @@
 		"changeServer": "更换服务器…",
 		"session": "此浏览器的登录",
 		"sessionHint": "退出后需要重新登录。",
-		"logout": "退出登录"
+		"logout": "退出登录",
+		"passkeys": {
+			"title": "Passkey",
+			"add": "添加",
+			"addTitle": "添加 Passkey",
+			"name": "名称",
+			"current": "当前",
+			"created": "创建于 {{date}}",
+			"lastUsed": "最近使用 {{date}}",
+			"never": "从未",
+			"synced": "已同步",
+			"rename": "给「{{name}}」改名",
+			"renameTitle": "给 Passkey 改名",
+			"delete": "删除「{{name}}」",
+			"deleteConfirm": "删除「{{name}}」？",
+			"deleteBody": "用它登录的其它浏览器会立即退出。",
+			"verifyTitle": "验证身份",
+			"verifyBody": "这项操作需要先用 Passkey 验证一次，5 分钟内有效。",
+			"verifyAction": "用 Passkey 验证",
+			"browserOnlyTitle": "在浏览器里管理",
+			"browserOnly": "新增、删除 Passkey 和重新生成恢复码需要在浏览器里操作",
+			"openInBrowser": "在浏览器中打开"
+		},
+		"recovery": {
+			"title": "恢复码",
+			"rowTitle": "一次性恢复码",
+			"remaining": "还剩 {{remaining}} / {{total}} 个",
+			"generated": "生成于 {{date}}",
+			"low": "建议重新生成",
+			"regenerate": "重新生成",
+			"regenerateConfirm": "重新生成恢复码？",
+			"regenerateBody": "现有的恢复码会立即全部失效。",
+			"codesTitle": "新的恢复码",
+			"codesHint": "请妥善保存这 {{n}} 个恢复码。每个只能用一次，关闭后不会再显示。",
+			"saved": "我已保存"
+		}
 	},
 	"about": {
 		"server": "服务器",

@@ -20,6 +20,17 @@ func (q *Queries) CountPasskeys(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countRecoveryCodes = `-- name: CountRecoveryCodes :one
+SELECT COUNT(*) FROM recovery_codes
+`
+
+func (q *Queries) CountRecoveryCodes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRecoveryCodes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
 SELECT COUNT(*) FROM recovery_codes WHERE used_at IS NULL
 `
@@ -101,8 +112,8 @@ func (q *Queries) CreatePasskey(ctx context.Context, arg CreatePasskeyParams) er
 }
 
 const createWebSession = `-- name: CreateWebSession :exec
-INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, verified_at, passkey_id)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 `
 
 type CreateWebSessionParams struct {
@@ -112,8 +123,11 @@ type CreateWebSessionParams struct {
 	ExpiresAt  int64  `json:"expiresAt"`
 	LastSeenAt int64  `json:"lastSeenAt"`
 	UserAgent  string `json:"userAgent"`
+	VerifiedAt *int64 `json:"verifiedAt"`
+	PasskeyID  []byte `json:"passkeyId"`
 }
 
+// verified_at / passkey_id: set when the session was created by a passkey ceremony (login / setup), NULL otherwise.
 func (q *Queries) CreateWebSession(ctx context.Context, arg CreateWebSessionParams) error {
 	_, err := q.db.ExecContext(ctx, createWebSession,
 		arg.IDHash,
@@ -122,6 +136,8 @@ func (q *Queries) CreateWebSession(ctx context.Context, arg CreateWebSessionPara
 		arg.ExpiresAt,
 		arg.LastSeenAt,
 		arg.UserAgent,
+		arg.VerifiedAt,
+		arg.PasskeyID,
 	)
 	return err
 }
@@ -174,6 +190,38 @@ DELETE FROM web_sessions WHERE device_id = ?1 RETURNING id_hash
 
 func (q *Queries) DeleteWebSessionsByDevice(ctx context.Context, deviceID *string) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, deleteWebSessionsByDevice, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id_hash string
+		if err := rows.Scan(&id_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, id_hash)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteWebSessionsByPasskey = `-- name: DeleteWebSessionsByPasskey :many
+DELETE FROM web_sessions WHERE passkey_id = ?1 AND id_hash <> ?2 RETURNING id_hash
+`
+
+type DeleteWebSessionsByPasskeyParams struct {
+	PasskeyID  []byte `json:"passkeyId"`
+	KeepIDHash string `json:"keepIdHash"`
+}
+
+func (q *Queries) DeleteWebSessionsByPasskey(ctx context.Context, arg DeleteWebSessionsByPasskeyParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, deleteWebSessionsByPasskey, arg.PasskeyID, arg.KeepIDHash)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +297,7 @@ func (q *Queries) GetPasskey(ctx context.Context, id []byte) (Passkey, error) {
 }
 
 const getWebSession = `-- name: GetWebSession :one
-SELECT web_sessions.id_hash, web_sessions.kind, web_sessions.created_at, web_sessions.expires_at, web_sessions.last_seen_at, web_sessions.user_agent, web_sessions.device_id FROM web_sessions
+SELECT web_sessions.id_hash, web_sessions.kind, web_sessions.created_at, web_sessions.expires_at, web_sessions.last_seen_at, web_sessions.user_agent, web_sessions.device_id, web_sessions.verified_at, web_sessions.passkey_id FROM web_sessions
 WHERE web_sessions.id_hash = ?1
   AND (web_sessions.device_id IS NULL OR EXISTS (
     SELECT 1 FROM devices WHERE devices.id = web_sessions.device_id AND devices.revoked_at IS NULL
@@ -270,16 +318,23 @@ func (q *Queries) GetWebSession(ctx context.Context, idHash string) (WebSession,
 		&i.LastSeenAt,
 		&i.UserAgent,
 		&i.DeviceID,
+		&i.VerifiedAt,
+		&i.PasskeyID,
 	)
 	return i, err
 }
 
 const insertRecoveryCode = `-- name: InsertRecoveryCode :exec
-INSERT INTO recovery_codes (code_hash) VALUES (?1)
+INSERT INTO recovery_codes (code_hash, created_at) VALUES (?1, ?2)
 `
 
-func (q *Queries) InsertRecoveryCode(ctx context.Context, codeHash string) error {
-	_, err := q.db.ExecContext(ctx, insertRecoveryCode, codeHash)
+type InsertRecoveryCodeParams struct {
+	CodeHash  string `json:"codeHash"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error {
+	_, err := q.db.ExecContext(ctx, insertRecoveryCode, arg.CodeHash, arg.CreatedAt)
 	return err
 }
 
@@ -319,6 +374,17 @@ func (q *Queries) ListPasskeys(ctx context.Context) ([]Passkey, error) {
 	return items, nil
 }
 
+const recoveryCodesGeneratedAt = `-- name: RecoveryCodesGeneratedAt :one
+SELECT CAST(COALESCE(MAX(created_at), 0) AS INTEGER) AS generated_at FROM recovery_codes
+`
+
+func (q *Queries) RecoveryCodesGeneratedAt(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, recoveryCodesGeneratedAt)
+	var generated_at int64
+	err := row.Scan(&generated_at)
+	return generated_at, err
+}
+
 const renamePasskey = `-- name: RenamePasskey :execrows
 UPDATE passkeys SET name = ?1 WHERE id = ?2
 `
@@ -348,6 +414,20 @@ type TouchWebSessionParams struct {
 
 func (q *Queries) TouchWebSession(ctx context.Context, arg TouchWebSessionParams) error {
 	_, err := q.db.ExecContext(ctx, touchWebSession, arg.LastSeenAt, arg.ExpiresAt, arg.IDHash)
+	return err
+}
+
+const touchWebSessionVerified = `-- name: TouchWebSessionVerified :exec
+UPDATE web_sessions SET verified_at = ?1 WHERE id_hash = ?2
+`
+
+type TouchWebSessionVerifiedParams struct {
+	VerifiedAt *int64 `json:"verifiedAt"`
+	IDHash     string `json:"idHash"`
+}
+
+func (q *Queries) TouchWebSessionVerified(ctx context.Context, arg TouchWebSessionVerifiedParams) error {
+	_, err := q.db.ExecContext(ctx, touchWebSessionVerified, arg.VerifiedAt, arg.IDHash)
 	return err
 }
 

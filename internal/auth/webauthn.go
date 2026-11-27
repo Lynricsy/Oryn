@@ -29,8 +29,10 @@ const (
 	defaultOwner    = "Owner"
 	recoveryCodeNum = 10
 
-	ceremonySetup = "setup"
-	ceremonyLogin = "login"
+	ceremonySetup  = "setup"
+	ceremonyLogin  = "login"
+	ceremonyAdd    = "add"
+	ceremonyReauth = "reauth"
 )
 
 // Service 持有 WebAuthn 依赖方配置、限流表与吊销广播。
@@ -63,6 +65,8 @@ type ceremony struct {
 	TokenHash       string `json:"t,omitempty"`
 	RecoverySession string `json:"r,omitempty"`
 	PasskeyName     string `json:"n,omitempty"`
+	// WebSession 是发起仪式的网页会话 id 哈希（追加 Passkey、重新验证）；finish 时必须等于当前会话。
+	WebSession string `json:"w,omitempty"`
 }
 
 // ceremonyAD 是封装仪式状态时的附加数据。
@@ -225,7 +229,6 @@ type Ceremony struct {
 func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name string) (Ceremony, error) {
 	c := &ceremony{Kind: ceremonySetup, PasskeyName: strings.TrimSpace(name)}
 	var user *waUser
-	var opts []webauthn.RegistrationOption
 	if token != "" {
 		_, _, exists, err := loadOwner(ctx, s.st.Q)
 		if err != nil {
@@ -253,21 +256,8 @@ func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name s
 			return Ceremony{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
 		}
 		user, c.RecoverySession = u, ws.IDHash
-		excl := make([]protocol.CredentialDescriptor, 0, len(u.creds))
-		for i := range u.creds {
-			excl = append(excl, u.creds[i].Descriptor())
-		}
-		opts = append(opts, webauthn.WithExclusions(excl))
 	}
-	opts = append(opts,
-		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-			ResidentKey:        protocol.ResidentKeyRequirementRequired,
-			RequireResidentKey: protocol.ResidentKeyRequired(),
-			UserVerification:   protocol.VerificationPreferred,
-		}),
-		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
-	)
-	creation, session, err := s.wa.BeginRegistration(user, opts...)
+	creation, session, err := s.wa.BeginRegistration(user, registrationOptions(user)...)
 	if err != nil {
 		return Ceremony{}, fmt.Errorf("BeginRegistration: %w", err)
 	}
@@ -345,25 +335,16 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 	if err := s.markUsed(ceremonyID, c); err != nil {
 		return SetupResult{}, err
 	}
-	credJSON, err := json.Marshal(cred)
+	row, err := passkeyRow(cred, c.PasskeyName, time.Now().UnixMilli())
 	if err != nil {
 		return SetupResult{}, err
-	}
-	transports := make([]string, 0, len(cred.Transport))
-	for _, t := range cred.Transport {
-		transports = append(transports, string(t))
-	}
-	transportsJSON, _ := json.Marshal(transports)
-	name := c.PasskeyName
-	if name == "" {
-		name = "Passkey"
 	}
 	var res SetupResult
 	initial := c.RecoverySession == ""
 	if initial {
 		res.RecoveryCodes = newRecoveryCodes()
 	}
-	now := time.Now().UnixMilli()
+	now := row.CreatedAt
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if initial {
 			if _, err := q.GetOwner(ctx); err == nil {
@@ -374,24 +355,16 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 			if err := q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: defaultOwner, UserHandle: c.Handle, CreatedAt: now}); err != nil {
 				return err
 			}
-			if err := q.DeleteAllRecoveryCodes(ctx); err != nil {
+			if err := replaceRecoveryCodes(ctx, q, res.RecoveryCodes, now); err != nil {
 				return err
-			}
-			for _, code := range res.RecoveryCodes {
-				if err := q.InsertRecoveryCode(ctx, hashRecoveryCode(code)); err != nil {
-					return err
-				}
 			}
 		} else if err := q.DeleteWebSession(ctx, c.RecoverySession); err != nil {
 			return err
 		}
-		if err := q.CreatePasskey(ctx, db.CreatePasskeyParams{
-			ID: cred.ID, PublicKey: cred.PublicKey, SignCount: int64(cred.Authenticator.SignCount),
-			Transports: string(transportsJSON), Credential: string(credJSON), Name: name, CreatedAt: now,
-		}); err != nil {
+		if err := q.CreatePasskey(ctx, row); err != nil {
 			return err
 		}
-		res.Cookie, res.Expires, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL)
+		res.Cookie, res.Expires, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL, cred.ID)
 		return err
 	})
 	if err != nil {
@@ -472,10 +445,201 @@ func (s *Service) FinishLogin(ctx context.Context, r *http.Request, ceremonyID s
 		}); err != nil {
 			return err
 		}
-		tok, exp, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL)
+		tok, exp, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL, cred.ID)
 		return err
 	})
 	return tok, exp, err
+}
+
+// registrationOptions 是注册 Passkey 的选项：排除已登记的凭据，要求可发现凭据，UV preferred，不要 attestation。
+func registrationOptions(u *waUser) []webauthn.RegistrationOption {
+	var opts []webauthn.RegistrationOption
+	if len(u.creds) > 0 {
+		excl := make([]protocol.CredentialDescriptor, 0, len(u.creds))
+		for i := range u.creds {
+			excl = append(excl, u.creds[i].Descriptor())
+		}
+		opts = append(opts, webauthn.WithExclusions(excl))
+	}
+	return append(opts,
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			ResidentKey:        protocol.ResidentKeyRequirementRequired,
+			RequireResidentKey: protocol.ResidentKeyRequired(),
+			UserVerification:   protocol.VerificationPreferred,
+		}),
+		webauthn.WithConveyancePreference(protocol.PreferNoAttestation),
+	)
+}
+
+// passkeyRow 把校验通过的凭据转成待写入的 passkeys 行；name 为空时用 "Passkey"。
+func passkeyRow(cred *webauthn.Credential, name string, now int64) (db.CreatePasskeyParams, error) {
+	credJSON, err := json.Marshal(cred)
+	if err != nil {
+		return db.CreatePasskeyParams{}, err
+	}
+	transports := make([]string, 0, len(cred.Transport))
+	for _, t := range cred.Transport {
+		transports = append(transports, string(t))
+	}
+	transportsJSON, err := json.Marshal(transports)
+	if err != nil {
+		return db.CreatePasskeyParams{}, err
+	}
+	if name == "" {
+		name = "Passkey"
+	}
+	return db.CreatePasskeyParams{
+		ID: cred.ID, PublicKey: cred.PublicKey, SignCount: int64(cred.Authenticator.SignCount),
+		Transports: string(transportsJSON), Credential: string(credJSON), Name: name, CreatedAt: now,
+	}, nil
+}
+
+// BeginAddPasskey 开始给所有者追加一把 Passkey。要求所有者会话且 5 分钟内做过 Passkey 验证。
+func (s *Service) BeginAddPasskey(ctx context.Context, p Principal, name string) (Ceremony, error) {
+	if err := requireOwnerSession(p); err != nil {
+		return Ceremony{}, err
+	}
+	if err := RequireRecentAuth(p, time.Now()); err != nil {
+		return Ceremony{}, err
+	}
+	owner, _, exists, err := loadOwner(ctx, s.st.Q)
+	if err != nil {
+		return Ceremony{}, err
+	}
+	if !exists {
+		return Ceremony{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
+	}
+	creation, session, err := s.wa.BeginRegistration(owner, registrationOptions(owner)...)
+	if err != nil {
+		return Ceremony{}, fmt.Errorf("BeginRegistration: %w", err)
+	}
+	options, err := optionsJSON(creation.Response)
+	if err != nil {
+		return Ceremony{}, err
+	}
+	id, err := s.putCeremony(&ceremony{Kind: ceremonyAdd, Session: *session, PasskeyName: strings.TrimSpace(name), WebSession: p.ID})
+	return Ceremony{ID: id, Options: options}, err
+}
+
+// FinishAddPasskey 校验注册响应并写入新 Passkey；不签发新会话，也不改会话的验证时间。
+// 不再检查验证窗口：begin 已检查过，仪式自身 5 分钟过期；用户已在认证器上建好凭据后再拒绝会留下孤儿凭据。
+func (s *Service) FinishAddPasskey(ctx context.Context, p Principal, ceremonyID string, credential []byte) (PasskeyInfo, error) {
+	if err := requireOwnerSession(p); err != nil {
+		return PasskeyInfo{}, err
+	}
+	c, err := s.takeCeremony(ceremonyID, ceremonyAdd)
+	if err != nil {
+		return PasskeyInfo{}, err
+	}
+	if c.WebSession != p.ID {
+		return PasskeyInfo{}, errUnauthorized
+	}
+	owner, _, exists, err := loadOwner(ctx, s.st.Q)
+	if err != nil {
+		return PasskeyInfo{}, err
+	}
+	if !exists {
+		return PasskeyInfo{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
+	}
+	parsed, err := protocol.ParseCredentialCreationResponseBytes(credential)
+	if err != nil {
+		return PasskeyInfo{}, newErr(http.StatusBadRequest, "invalid_request", webauthnMsg("注册响应无法解析", err))
+	}
+	cred, err := s.wa.CreateCredential(owner, c.Session, parsed)
+	if err != nil {
+		return PasskeyInfo{}, newErr(http.StatusBadRequest, "invalid_request", webauthnMsg("注册校验失败", err))
+	}
+	if err := s.markUsed(ceremonyID, c); err != nil {
+		return PasskeyInfo{}, err
+	}
+	row, err := passkeyRow(cred, c.PasskeyName, time.Now().UnixMilli())
+	if err != nil {
+		return PasskeyInfo{}, err
+	}
+	if err := s.st.Q.CreatePasskey(ctx, row); err != nil {
+		return PasskeyInfo{}, err
+	}
+	return passkeyInfo(db.Passkey{
+		ID: row.ID, PublicKey: row.PublicKey, SignCount: row.SignCount, Transports: row.Transports,
+		Credential: row.Credential, Name: row.Name, CreatedAt: row.CreatedAt,
+	}, p)
+}
+
+// BeginReauth 开始对当前会话做一次 Passkey 断言（allowCredentials = 所有者的全部凭据）。
+func (s *Service) BeginReauth(ctx context.Context, p Principal) (Ceremony, error) {
+	if err := requireOwnerSession(p); err != nil {
+		return Ceremony{}, err
+	}
+	owner, _, exists, err := loadOwner(ctx, s.st.Q)
+	if err != nil {
+		return Ceremony{}, err
+	}
+	if !exists {
+		return Ceremony{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
+	}
+	assertion, session, err := s.wa.BeginLogin(owner, webauthn.WithUserVerification(protocol.VerificationPreferred))
+	if err != nil {
+		return Ceremony{}, fmt.Errorf("BeginLogin: %w", err)
+	}
+	options, err := optionsJSON(assertion.Response)
+	if err != nil {
+		return Ceremony{}, err
+	}
+	id, err := s.putCeremony(&ceremony{Kind: ceremonyReauth, Session: *session, WebSession: p.ID})
+	return Ceremony{ID: id, Options: options}, err
+}
+
+// FinishReauth 校验断言，把当前会话的验证时间记为此刻并返回它。不改会话的 passkey_id。
+func (s *Service) FinishReauth(ctx context.Context, p Principal, ceremonyID string, credential []byte) (time.Time, error) {
+	if err := requireOwnerSession(p); err != nil {
+		return time.Time{}, err
+	}
+	c, err := s.takeCeremony(ceremonyID, ceremonyReauth)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if c.WebSession != p.ID {
+		return time.Time{}, errUnauthorized
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes(credential)
+	if err != nil {
+		return time.Time{}, newErr(http.StatusBadRequest, "invalid_request", webauthnMsg("验证响应无法解析", err))
+	}
+	owner, _, exists, err := loadOwner(ctx, s.st.Q)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !exists {
+		return time.Time{}, errUnauthorized
+	}
+	cred, err := s.wa.ValidateLogin(owner, c.Session, parsed)
+	if err != nil {
+		return time.Time{}, newErr(http.StatusUnauthorized, "unauthorized", webauthnMsg("Passkey 校验失败", err))
+	}
+	if cred.Authenticator.CloneWarning {
+		return time.Time{}, newErr(http.StatusUnauthorized, "unauthorized", "Passkey 签名计数回退，疑似被克隆")
+	}
+	if err := s.markUsed(ceremonyID, c); err != nil {
+		return time.Time{}, err
+	}
+	credJSON, err := json.Marshal(cred)
+	if err != nil {
+		return time.Time{}, err
+	}
+	ms := time.Now().UnixMilli()
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		// 必须写回签名计数，否则下次登录会被误判成克隆
+		if err := q.UpdatePasskeyUse(ctx, db.UpdatePasskeyUseParams{
+			SignCount: int64(cred.Authenticator.SignCount), Credential: string(credJSON), LastUsedAt: &ms, ID: cred.ID,
+		}); err != nil {
+			return err
+		}
+		return q.TouchWebSessionVerified(ctx, db.TouchWebSessionVerifiedParams{VerifiedAt: &ms, IDHash: p.ID})
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.UnixMilli(ms), nil
 }
 
 // webauthnMsg 拼出包含 go-webauthn 细节的错误信息。

@@ -1,5 +1,5 @@
 /**
- * 设置 → 账户与设备：我的头像 → 设备（列表、配对新设备）→ 连接与会话。
+ * 设置 → 账户与设备：我的头像 → Passkey 与恢复码 → 设备（列表、配对新设备）→ 连接与会话。
  * 「连接与会话」按宿主分支：两种壳（桌面 / 移动）里是「更换服务器…」（交给壳，回到连接页）；
  * 纯浏览器里是「退出登录」（两种壳里的会话由壳的设备令牌换来，退出后壳会立刻再换一个，所以只给浏览器）。
  */
@@ -13,6 +13,7 @@ import { Group, GroupList, GroupRow } from "../../components/ui/workbench";
 import { host } from "../../lib/host";
 import DevicesSettings from "./DevicesSettings";
 import { UserAvatarCard } from "./IdentitySettings";
+import PasskeySettings from "./PasskeySettings";
 
 /** 当前宿主的「更换服务器」：桌面壳与移动壳各自实现，纯浏览器没有。 */
 function changeServerFn(): (() => void) | null {
@@ -90,6 +91,7 @@ export default function AccountSettings(): ReactNode {
 	return (
 		<>
 			<UserAvatarCard />
+			<PasskeySettings />
 			<DevicesSettings />
 			<ConnectionGroup />
 		</>

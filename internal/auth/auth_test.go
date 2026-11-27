@@ -120,11 +120,11 @@ func TestRevocations(t *testing.T) {
 	require.ErrorAs(t, svc.RevokeDevice(ctx, "dev_missing"), &e)
 	assert.Equal(t, 404, e.Status)
 
-	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL)
+	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, nil)
 	require.NoError(t, err)
 	require.NoError(t, svc.Logout(ctx, Principal{Kind: KindWeb, ID: ids.Hash(live)}))
 
-	old, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second)
+	old, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, nil)
 	require.NoError(t, err)
 	require.NoError(t, svc.sweep(ctx, time.Now()))
 
@@ -279,7 +279,7 @@ func TestTicketsRevokedWithPrincipal(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok, "已吊销的设备")
 
-	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL)
+	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, nil)
 	require.NoError(t, err)
 	web := Principal{Kind: KindWeb, ID: ids.Hash(live)}
 	ok, err = svc.PrincipalValid(ctx, web)
@@ -289,7 +289,7 @@ func TestTicketsRevokedWithPrincipal(t *testing.T) {
 	ok, err = svc.PrincipalValid(ctx, web)
 	require.NoError(t, err)
 	assert.False(t, ok, "已注销的网页会话")
-	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second)
+	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, nil)
 	require.NoError(t, err)
 	ok, err = svc.PrincipalValid(ctx, Principal{Kind: KindWeb, ID: ids.Hash(expired)})
 	require.NoError(t, err)
@@ -311,9 +311,9 @@ func TestSessionCookie(t *testing.T) {
 	}
 	assert.NotContains(t, strings.ToLower(sc), "domain")
 
-	valid, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL)
+	valid, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, nil)
 	require.NoError(t, err)
-	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second)
+	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, nil)
 	require.NoError(t, err)
 	old := time.Now().Add(-2 * sessionTouchEvery).UnixMilli()
 	require.NoError(t, svc.st.Q.TouchWebSession(ctx, db.TouchWebSessionParams{
@@ -333,4 +333,33 @@ func TestSessionCookie(t *testing.T) {
 	req.Header.Set("Cookie", "oryn_session="+valid)
 	_, err = Authenticate(httptest.NewRecorder(), req, svc.st)
 	assert.ErrorIs(t, err, errUnauthorized)
+}
+
+func TestRequireRecentAuth(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name     string
+		verified int64
+		ok       bool
+	}{
+		{"从未验证", 0, false},
+		{"4 分钟前", now.Add(-4 * time.Minute).UnixMilli(), true},
+		{"6 分钟前", now.Add(-6 * time.Minute).UnixMilli(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Principal{Kind: KindWeb, ID: "s", VerifiedAt: tc.verified}
+			err := RequireRecentAuth(p, now)
+			until, ok := ReauthValidUntil(p, now)
+			assert.Equal(t, tc.ok, ok)
+			if tc.ok {
+				require.NoError(t, err)
+				assert.Equal(t, time.UnixMilli(tc.verified).Add(5*time.Minute), until)
+				return
+			}
+			var e *Error
+			require.ErrorAs(t, err, &e)
+			assert.Equal(t, http.StatusForbidden, e.Status)
+			assert.Equal(t, "reauth_required", e.Code)
+		})
+	}
 }

@@ -177,6 +177,11 @@ func (s *Server) me(ctx context.Context, p auth.Principal) (apigen.Me, error) {
 		return me, err
 	}
 	me.PasskeyCount = new(int(n))
+	left, err := s.Store.Q.CountUnusedRecoveryCodes(ctx)
+	if err != nil {
+		return me, err
+	}
+	me.RecoveryCodesRemaining = new(int(left))
 	return me, nil
 }
 

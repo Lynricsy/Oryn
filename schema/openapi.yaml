@@ -231,6 +231,157 @@ paths:
       responses:
         '204': { description: 已注销 }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/passkeys:
+    get:
+      tags: [auth]
+      operationId: listPasskeys
+      summary: 列出所有者的 Passkey（按创建时间）
+      description: 只接受网页会话与 App 会话（恢复会话、设备令牌 → 403 forbidden）。
+      responses:
+        '200':
+          description: Passkey 列表与当前会话的重新验证有效期
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PasskeyList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/passkeys/begin:
+    post:
+      tags: [auth]
+      operationId: addPasskeyBegin
+      summary: 开始追加 Passkey
+      description: 需要当前会话在 5 分钟内做过 Passkey 验证，否则 403 reauth_required。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddPasskeyBeginRequest' }
+      responses:
+        '200':
+          description: WebAuthn 注册选项
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnCeremony' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/passkeys/finish:
+    post:
+      tags: [auth]
+      operationId: addPasskeyFinish
+      summary: 完成追加 Passkey；不签发新会话
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthSetupFinishRequest' }
+      responses:
+        '200':
+          description: 新增的 Passkey
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Passkey' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/passkeys/{passkeyId}:
+    parameters:
+      - name: passkeyId
+        in: path
+        required: true
+        schema: { type: string, description: credential id 的无填充 base64url }
+    patch:
+      tags: [auth]
+      operationId: renamePasskey
+      summary: 给 Passkey 改名
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenamePasskeyRequest' }
+      responses:
+        '200':
+          description: 改名后的 Passkey
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Passkey' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [auth]
+      operationId: deletePasskey
+      summary: 删除 Passkey
+      description: 需要 5 分钟内的 Passkey 验证（否则 403 reauth_required）；最后一把 → 409 last_passkey；用它登录的其它会话立即吊销。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/reauth/begin:
+    post:
+      tags: [auth]
+      operationId: reauthBegin
+      summary: 对当前会话做一次 Passkey 断言（allowCredentials = 所有者全部凭据）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      responses:
+        '200':
+          description: WebAuthn 断言选项
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnCeremony' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/reauth/finish:
+    post:
+      tags: [auth]
+      operationId: reauthFinish
+      summary: 完成重新验证；此后 5 分钟内可做敏感操作
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthLoginFinishRequest' }
+      responses:
+        '200':
+          description: 验证时刻与有效期截止
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReauthResult' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/recovery-codes:
+    get:
+      tags: [auth]
+      operationId: getRecoveryCodeStatus
+      summary: 恢复码剩余情况
+      responses:
+        '200':
+          description: 恢复码状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodeStatus' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [auth]
+      operationId: regenerateRecoveryCodes
+      summary: 作废全部旧码并生成 10 个新码；明文只返回这一次
+      description: 需要 5 分钟内的 Passkey 验证，否则 403 reauth_required。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      responses:
+        '200':
+          description: 新的恢复码
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecoveryCodes' }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/auth/app-session:
     post:
       tags: [auth]
@@ -8434,6 +8585,7 @@ components:
                 - $ref: '#/components/schemas/DeviceId'
               description: 设备令牌鉴权时为该设备；App 会话（`kind = web` 且由设备换取）时同样给出
         passkeyCount: { type: integer }
+        recoveryCodesRemaining: { type: integer, description: 剩余未使用的恢复码数量（仅网页会话） }
     AppSessionCode:
       type: object
       required: [code, expiresIn]
@@ -8446,6 +8598,62 @@ components:
           type: integer
           description: 有效秒数
           example: 30
+    Passkey:
+      type: object
+      required: [id, name, createdAt, transports, backupEligible, backedUp, current]
+      properties:
+        id: { type: string, description: credential id（无填充 base64url） }
+        name: { type: string }
+        createdAt: { $ref: '#/components/schemas/TimestampMs' }
+        lastUsedAt: { $ref: '#/components/schemas/TimestampMs' }
+        transports: { type: array, items: { type: string } }
+        backupEligible: { type: boolean, description: 可同步的 Passkey（凭据 Flags） }
+        backedUp: { type: boolean, description: 已同步到云端（凭据 Flags） }
+        current: { type: boolean, description: 当前会话由这把登录 }
+    PasskeyList:
+      type: object
+      required: [items, reauthValidUntil]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Passkey' } }
+        reauthValidUntil:
+          type: integer
+          format: int64
+          nullable: true
+          description: 当前会话重新验证的有效期截止（UTC 毫秒）；null = 需要先 reauth
+    AddPasskeyBeginRequest:
+      type: object
+      properties:
+        name: { type: string, maxLength: 80, description: Passkey 显示名 }
+    RenamePasskeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+    ReauthResult:
+      type: object
+      required: [verifiedAt, validUntil]
+      properties:
+        verifiedAt: { $ref: '#/components/schemas/TimestampMs' }
+        validUntil: { $ref: '#/components/schemas/TimestampMs' }
+    RecoveryCodeStatus:
+      type: object
+      required: [total, remaining]
+      properties:
+        total: { type: integer }
+        remaining: { type: integer }
+        generatedAt:
+          allOf:
+            - $ref: '#/components/schemas/TimestampMs'
+          description: 本批恢复码的生成时间；缺省 = 未知（升级前生成）
+    RecoveryCodes:
+      type: object
+      required: [recoveryCodes]
+      properties:
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items: { type: string }
 
     # ============================================================ 设备
     Device:

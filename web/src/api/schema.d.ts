@@ -130,6 +130,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/passkeys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 列出所有者的 Passkey（按创建时间）
+         * @description 只接受网页会话与 App 会话（恢复会话、设备令牌 → 403 forbidden）。
+         */
+        get: operations["listPasskeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 开始追加 Passkey
+         * @description 需要当前会话在 5 分钟内做过 Passkey 验证，否则 403 reauth_required。
+         */
+        post: operations["addPasskeyBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 完成追加 Passkey；不签发新会话 */
+        post: operations["addPasskeyFinish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/passkeys/{passkeyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkeyId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 删除 Passkey
+         * @description 需要 5 分钟内的 Passkey 验证（否则 403 reauth_required）；最后一把 → 409 last_passkey；用它登录的其它会话立即吊销。
+         */
+        delete: operations["deletePasskey"];
+        options?: never;
+        head?: never;
+        /** 给 Passkey 改名 */
+        patch: operations["renamePasskey"];
+        trace?: never;
+    };
+    "/api/v1/auth/reauth/begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 对当前会话做一次 Passkey 断言（allowCredentials = 所有者全部凭据） */
+        post: operations["reauthBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/reauth/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 完成重新验证；此后 5 分钟内可做敏感操作 */
+        post: operations["reauthFinish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 恢复码剩余情况 */
+        get: operations["getRecoveryCodeStatus"];
+        put?: never;
+        /**
+         * 作废全部旧码并生成 10 个新码；明文只返回这一次
+         * @description 需要 5 分钟内的 Passkey 验证，否则 403 reauth_required。
+         */
+        post: operations["regenerateRecoveryCodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/app-session": {
         parameters: {
             query?: never;
@@ -6607,6 +6742,8 @@ export interface components {
                 deviceId?: components["schemas"]["DeviceId"];
             };
             passkeyCount?: number;
+            /** @description 剩余未使用的恢复码数量（仅网页会话） */
+            recoveryCodesRemaining?: number;
         };
         /** @description App 会话一次性码（M6）；以 `GET /auth/app?code=…&next=…` 兑换 */
         AppSessionCode: {
@@ -6617,6 +6754,48 @@ export interface components {
              * @example 30
              */
             expiresIn: number;
+        };
+        Passkey: {
+            /** @description credential id（无填充 base64url） */
+            id: string;
+            name: string;
+            createdAt: components["schemas"]["TimestampMs"];
+            lastUsedAt?: components["schemas"]["TimestampMs"];
+            transports: string[];
+            /** @description 可同步的 Passkey（凭据 Flags） */
+            backupEligible: boolean;
+            /** @description 已同步到云端（凭据 Flags） */
+            backedUp: boolean;
+            /** @description 当前会话由这把登录 */
+            current: boolean;
+        };
+        PasskeyList: {
+            items: components["schemas"]["Passkey"][];
+            /**
+             * Format: int64
+             * @description 当前会话重新验证的有效期截止（UTC 毫秒）；null = 需要先 reauth
+             */
+            reauthValidUntil: number | null;
+        };
+        AddPasskeyBeginRequest: {
+            /** @description Passkey 显示名 */
+            name?: string;
+        };
+        RenamePasskeyRequest: {
+            name: string;
+        };
+        ReauthResult: {
+            verifiedAt: components["schemas"]["TimestampMs"];
+            validUntil: components["schemas"]["TimestampMs"];
+        };
+        RecoveryCodeStatus: {
+            total: number;
+            remaining: number;
+            /** @description 本批恢复码的生成时间；缺省 = 未知（升级前生成） */
+            generatedAt?: components["schemas"]["TimestampMs"];
+        };
+        RecoveryCodes: {
+            recoveryCodes: string[];
         };
         Device: {
             id: components["schemas"]["DeviceId"];
@@ -13477,6 +13656,213 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Passkey 列表与当前会话的重新验证有效期 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addPasskeyBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AddPasskeyBeginRequest"];
+            };
+        };
+        responses: {
+            /** @description WebAuthn 注册选项 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCeremony"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addPasskeyFinish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthSetupFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description 新增的 Passkey */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Passkey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deletePasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkeyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renamePasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkeyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenamePasskeyRequest"];
+            };
+        };
+        responses: {
+            /** @description 改名后的 Passkey */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Passkey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    reauthBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebAuthn 断言选项 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCeremony"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    reauthFinish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthLoginFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description 验证时刻与有效期截止 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReauthResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getRecoveryCodeStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 恢复码状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodeStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    regenerateRecoveryCodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 新的恢复码 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
             };
             default: components["responses"]["Error"];
         };
