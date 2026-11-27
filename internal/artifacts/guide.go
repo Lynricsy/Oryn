@@ -216,9 +216,9 @@ notes 里是画在画框之上的标注，大多是用户画的。公共字段 {
 
 - 改某个画框的内容：用 update_artifact 的 files 或 edits 改它的 HTML 文件，不用动 canvas.json。
 - 改布局（加删页面与画框、挪位置、改尺寸、改名、处理便签）：用 update_artifact 的 canvas 参数传一组操作，按顺序应用，任何一条不合法整批不生效：
-  - {"op": "add", "object": {"type": "canvas" | "page" | "note", …字段}}：新画框可以省略 file（取 page-<id>.html，由你随后写入内容），省略 x、y 时自动排位；加 "copyOf": "<画框 id>" 表示新画框的 HTML 复制自那个画框。
-  - {"op": "set", "id": "…", "key": "…", "value": …}：改一个字段。页面能改 name；画框能改 name、file、x、y、width、height、locked、device（设备外壳：none、phone、tablet、browser，缺省 none）；标注能改除 id、canvas、kind、by 之外的字段。
-  - {"op": "remove", "id": "…"}：删页面会连带删掉它上面的画框和标注；删画框会把吸附它的 from / to 置空。
+  - {"op": "add", "object": {"type": "canvas" | "page" | "note" | "group", …字段}}：新画框可以省略 file（取 page-<id>.html，由你随后写入内容），省略 x、y 时自动排位；加 "copyOf": "<画框 id>" 表示新画框的 HTML 复制自那个画框。方案组的字段见下文「方案组」。
+  - {"op": "set", "id": "…", "key": "…", "value": …}：改一个字段。页面能改 name；画框能改 name、file、x、y、width、height、locked、device（设备外壳：none、phone、tablet、browser，缺省 none）与 canvas（挪到另一个页面）；标注能改除 id、canvas、kind、by 之外的字段；方案组见下文。
+  - {"op": "remove", "id": "…"}：删页面会连带删掉它上面的画框、标注和方案组；删画框会把吸附它的 from / to 置空，并把它从所在方案里移除。
   - {"op": "order", "id": "…", "index": n}：调整在列表里的位置（绘制顺序）。
 - 也可以用 files 整个重写 canvas.json，但这会和用户同时进行的拖动、标注冲突；能用 canvas 操作时优先用它。
 
@@ -228,6 +228,22 @@ canvas.json 顶层带 design（{"engine": 1, "start": <画框 id 或 null>}）�
 
 - design、source 以及带 source 的画框的 file 都由 Oryn 在回合结束封存时维护，不要手写：canvas 操作里 add 画框不能带 source，set 不能改 source，也不能改带 source 的画框的 file；用 files 写 canvas.json 时同样不要加减这些字段。
 - 带 source 的画框仍可以照常改 name、x、y、width、height、locked、device，也可以 remove；删掉 design.start 指向的画框时 start 会置为 null。
+
+## 方案组
+
+同一屏要给用户几种方案对比时（不同方向、结构、文案或交互），把它们做成一个方案组：每个方案是一组画框，并排放在同一个页面上，用户在画布上点「选定此方案」。canvas.json 顶层的 groups 里每个组是：
+
+	{"id": "home", "canvas": "canvas-1", "name": "首页首屏", "variants": [
+	  {"id": "a", "name": "冷静克制", "note": "大留白，单列", "theme": "", "pages": ["home-a"]},
+	  {"id": "b", "name": "暖调杂志", "note": "", "theme": "", "pages": ["home-b"]}
+	], "picked": null, "pickedBy": null}
+
+- 组、方案与 theme 的 id 匹配 ^[a-z0-9][a-z0-9-]{0,31}$；组 id 与页面、画框、标注的 id 不能重复。name 1–%[25]d 字，note 不超过 %[26]d 字。最多 %[21]d 个组，每组 %[22]d–%[23]d 个方案，每个方案 1–%[24]d 个画框；一个画框只能属于一个方案。带 groups 时文档写出 "format": 3。
+- 加组：{"op": "add", "object": {"type": "group", "id", "name", "variants", "canvas"?}}（省略 canvas 时取第一个画框所在的页面）。改：set 的 key 是 name、variants 或 picked。删组不删画框。
+- 选定：{"op": "set", "id": "<组 id>", "key": "picked", "value": "<方案 id>"}。落选方案的画框会被自动挪到「备选方案」页面（id 为 alternates），不再参与检查，导出与原型也不含它们；改选时它们会挪回来。pickedBy 由 Oryn 记录，不要自己写。
+- 什么时候出多版：方向拿不准、需求含糊或有明显取舍时主动出 2–3 版，每版用 note 一句话说清差别；细枝末节的差别不出多版，最多 %[23]d 版。用户在画布上选或回复编号；用户说「你定」或无人值守时你自己选定，并写明理由。
+- 每个方案的画框各写自己的 :root 变量（方向牌主题见 design_direction 的 theme 参数）。选定后，把其余画框统一到选中方案的变量；落选的画框保留在「备选方案」页面，不要删。
+- 设计画布的方案组由工作副本里的 src/variants.json 维护（封存时同步），canvas 操作只能改 picked。
 
 ## 画框的调节参数
 
@@ -252,7 +268,8 @@ canvas.json 顶层带 design（{"engine": 1, "start": <画框 id 或 null>}）�
 	canvas.DefaultPageWidth, canvas.DefaultPageHeight, canvas.PageGap, canvas.MaxPages,
 	canvas.MaxNameRunes, canvas.MaxCoord, strings.Join(canvas.Colors, "、"), canvas.DefaultTextSize,
 	canvas.DefaultStickyWidth, canvas.MaxPenNumbers, canvas.MinStroke, canvas.MaxStroke, canvas.DefaultStroke,
-	canvas.MaxNotes, canvas.MaxJSONBytes>>20, MaxParams)
+	canvas.MaxNotes, canvas.MaxJSONBytes>>20, MaxParams,
+	canvas.MaxGroups, canvas.MinVariants, canvas.MaxVariants, canvas.MaxVariantPages, canvas.MaxGroupName, canvas.MaxVariantNote)
 
 // guideText 返回主题的教程文本。
 func guideText(topic string) (string, error) {

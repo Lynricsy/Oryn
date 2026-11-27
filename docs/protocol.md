@@ -3270,3 +3270,33 @@ form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors <ancestors>
 
 - 文档拼装：`<head>` 开头注入 `<meta charset>`、`<meta viewport>`、内联的视图运行时（`sandbox/view.js`，自带基础样式与 `ov-*` 辅助类）；`libs` 含 `tailwind` 时注入主题 `<style type="text/tailwindcss">` 与 `sandbox/lib/tailwind.js`，含 `chartjs` 时注入 `sandbox/lib/chart.js` 与默认配色。`html` 有 `<head>` 就插在其后，只有 `<html>` 就补 `<head>`，都没有就整体包成文档；内联脚本里的 `</script` 转义。
 - **帧内协议**：信封 `{ v: 1, channel }`，通道与握手同 artifact 帧（帧 `load` 后父页面发 `hello` 定通道；只认 `event.source === iframe.contentWindow` 且通道一致的消息，单条 ≤64 KiB）。父 → 页：`hello`、`theme{scheme: "light" | "dark", vars}`；页 → 父：`ready`、`resize{height}`、`prompt{text ≤4000}`。首帧主题走 URL 片段 `#theme=<encodeURIComponent(JSON{scheme, vars})>`，值里的 `< > ; { }` 去掉。主题变量：`--fg --muted --border --surface --accent --success --warning --error --c1…--c6 --bg --font --mono --radius`。页面 API：`window.oryn.sendPrompt(text)`（每次调用只交付第一条）、`window.oryn.palette`。高度：`height` 省略时跟随 `resize`，夹在 120–1600 px。
+
+## M34：画布方案组（多版方案对比）
+
+同一屏的几种方案以「方案组」并排对比、选定。两种画布共用 `canvas.json` 里的结构与操作；设计画布另以工作副本的 `src/variants.json` 为真源，封存时同步。计划与决策见 `docs/plan-m34.md`。
+
+### `canvas.json` format 3
+
+- `format`：解析接受 `1`–`3`；文档含非空顶层 `groups` 时写出 `3`。
+- 顶层新增可选 `groups: [{id, canvas, name, variants:[{id, name, note, theme, pages:[pageId]}], picked, pickedBy}]`：
+  - `id`、`variants[].id`、非空 `theme` 匹配 `^[a-z0-9][a-z0-9-]{0,31}$`；组 id 与画布页、画框、标注共用 id 命名空间。
+  - 最多 20 组；add 与 set `variants` 时每组 2–4 个方案（级联删除后可以更少）；每个方案 1–24 个画框；一个画框最多属于一个方案；`name` 1–60 字，`note` ≤ 200 字。
+  - `picked`：`null` 或本组方案 id；`pickedBy`：选定者线程 id，用户为 `null`，由服务端盖章（提交方给的值被剔除）。
+  - 落选画框 = 已选定组里其它方案的画框（`canvas.Doc.Archived()` / `archivedPages(doc)`）。
+- 级联：删画框把它从方案里移除，空方案删除，没有方案的组删除，`picked` 指向被删方案时与 `pickedBy` 一并置 `null`；删画布页连带删以它为 `canvas` 的组。
+- 操作新增类型 `group`：`add {type:"group", id, canvas?, name, variants}`、`set {id, key: name|variants|picked|pickedBy, value}`、`remove {id}`（不删画框）。设计画布上 `add`/`remove` 与 `set name|variants` 被拒（由封存维护）。画框的 `canvas` 可以 `set`（换页时其它页上吸附它的形状端点置 `null`）。
+- 选定展开（`ExpandPicks` / `expandPicks`，服务端在 live 与 agent 两条路径都执行，客户端提交前也执行）：每条 `set picked` 之后插入搬移：需要时 `add` 画布页 `{id:"alternates", name:"备选方案"}`；新落选画框整块平移到 `alternates`（左边缘 = 该页现有画框最右边缘 + 192，上边缘 = 该页现有画框最小 y，空页为 0,0）；改选时新选中方案在 `alternates` 上的画框按同样规则搬回组的 `canvas` 页。测试向量见 `schema/testdata/canvas-ops.json`。
+
+### 设计画布工作副本
+
+- `src/variants.json`：`{groups:[{id, name, variants:[{id, name, note?, theme?, frames:[帧 id]}]}]}`，规则同上（列帧 id；组 id 不能与帧 id 同名；`theme` 非空时 `src/themes/<theme>.css` 必须存在；未知字段报错）。Go `design.ParseVariants` 与引擎 `variants.mjs` 共用 `schema/testdata/design-variants.json`。不合法时 `vite build` 失败（不落版本），dev 下警告并按空清单。
+- `src/themes/<名>.css`：一条 `:root[data-oryn-theme="<名>"] {…}` 规则，引擎在 `theme.css` 之后按文件名导入；帧属于带主题的方案时，帧入口在 `<html>` 上写 `data-oryn-theme`。
+- 封存按清单同步 `groups`（帧 id 经画框 `source` 映射为画框 id；保留仍有效的 `picked`）；新加进方案的帧按方案分列排在 `Canvases[0]` 现有画框下方。
+
+### 操作与内部接口
+
+- `design_direction`：`{id, pick?, theme?}`。`pick` = 选定主方向（同 M29）；`pick` + `theme` = 把这张牌记为方案主题（`artifact_designs.themes`，最多 12 项，不动 `direction`），设计画布回 `:root[data-oryn-theme]` 规则、HTML 画布回 `:root`；只有 `theme` = 把记录的方案主题提升为主方向。
+- 审美规则开关：`direction` 非空或 `themes` 非空。
+- `design_head` 结果新增 `archived?: [帧 id]`（落选画框对应的帧，字典序）；orbd `design.check` 不点名帧时跳过它们，缓存匹配包含这个集合；`check_artifact` 不点名时同样跳过落选画框。
+- `design_notes` 结果新增 `picks: [{ref:"pick:<组>:<方案>", kind:"pick", new, group, variant, text, steps}]`；用户选定（`pickedBy` 为 `null`）随便签自动投递，ack 后键记入 `delivered`。
+- 交付：样机不传 `frames` 时排除落选画框，显式点名落选画框回 400 `invalid`；导出工程（含 eject、部署到 box）不打包落选帧文件与只被落选方案引用的主题文件，打包的 `src/variants.json` 只留选中方案，`oryn-frames.json` 帧项新增 `theme?`；原型不含落选画框。
