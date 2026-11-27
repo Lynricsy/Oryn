@@ -894,8 +894,8 @@ func probesInsideSandbox(t *testing.T, portMode bool) {
 		}
 	}
 	// M19（全局助手，web）：PI_PROXY 与 ORYN_MCP_BASE 指向沙箱内唯一可连的回环出站监听（正向代理由控制面策略放行或拒绝），
-	// ORYN_MCP_TOKEN 是 /mcp/ 路由的凭据。
-	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_INTENT_TRACING", "ORYN_NERD_GLYPHS", "ORYN_THREAD_ID", "PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN"}, got.EnvKeys)
+	// ORYN_MCP_TOKEN 是 /mcp/ 路由的凭据；ORYN_ALLOW_RESTRICTED_MCP 让 Core 在 --no-tools 下仍放行 MCP。
+	assert.ElementsMatch(t, []string{"HOME", "PATH", "LANG", "TMPDIR", "PI_RPC_EMIT_TITLE", "PI_NOTIFICATIONS", "OTEL_SDK_DISABLED", "PI_INTENT_TRACING", "ORYN_NERD_GLYPHS", "ORYN_THREAD_ID", "PI_PROXY", "ORYN_MCP_BASE", "ORYN_MCP_TOKEN", "ORYN_ALLOW_RESTRICTED_MCP"}, got.EnvKeys)
 	if os.Geteuid() == 0 {
 		assert.Equal(t, accountUID(t, e.cfg.Dir), got.UID)
 		assert.NotEqual(t, 65534, got.UID)

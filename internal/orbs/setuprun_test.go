@@ -151,16 +151,25 @@ func TestSetupResultRecordsRunsWithLogTail(t *testing.T) {
 	assert.Equal(t, apigen.SetupPhaseResume, v.LastResume.Phase)
 	assert.Nil(t, v.FailureReason)
 
+	// 运行记录先落库、再推送 orb 更新：runs 只等到了行，事件可能还在路上
+	require.Eventually(t, func() bool {
+		h.evMu.Lock()
+		defer h.evMu.Unlock()
+		setupEvents := 0
+		for _, ev := range h.events {
+			if ev.OrbID == orb.ID && ev.Kind == EventSetup {
+				setupEvents++
+			}
+		}
+		return setupEvents == 3
+	}, 5*time.Second, 20*time.Millisecond, "每条运行记录推送一次 orb 更新")
 	h.evMu.Lock()
-	setupEvents := 0
 	for _, ev := range h.events {
 		if ev.OrbID == orb.ID && ev.Kind == EventSetup {
-			setupEvents++
 			assert.Equal(t, StateReady, ev.To)
 		}
 	}
 	h.evMu.Unlock()
-	assert.Equal(t, 3, setupEvents, "每条运行记录推送一次 orb 更新")
 
 	// 他 orb 的运行记录查不到本 orb 的日志
 	_, err = h.st.Q.GetOrbSetupRunLog(ctx, db.GetOrbSetupRunLogParams{ID: rows[0].ID, OrbID: "orb-other"})
