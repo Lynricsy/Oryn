@@ -71,8 +71,8 @@ function makePi() {
 		for (const h of handlers.get(event) ?? []) out.push(await h(payload, ctx));
 		return out;
 	};
-	const prompt = async (ctx: Ctx) => {
-		const out = (await emit("before_agent_start", { type: "before_agent_start", systemPrompt: [] }, ctx)) as {
+	const prompt = async (ctx: Ctx, base: string[] = []) => {
+		const out = (await emit("before_agent_start", { type: "before_agent_start", systemPrompt: base }, ctx)) as {
 			systemPrompt: string[];
 		}[];
 		return out.map((r) => r.systemPrompt.join("\n")).join("\n");
@@ -283,6 +283,15 @@ if (!(await p.prompt(main)).includes(contract.guide)) fail("主 agent 且 render
 	const w = load();
 	await w.emit("session_switch", { type: "session_switch" }, sub);
 	if (hasViews(w.active())) fail("session_switch 后子 agent 的激活集里不应有视图工具");
+	// /tan 克隆（子 agent）以父会话当前的系统提示词为底：父会话追加的整段（含视图指引）被去掉，orb 指引只出现一次
+	const parentBlock = (await p.prompt(main, ["base"])).slice("base\n".length);
+	if (!parentBlock.includes(contract.guide)) fail("父会话追加的一段应含视图指引");
+	const t = load();
+	await t.emit("session_start", { type: "session_start" }, sub);
+	const clone = await t.prompt(sub, ["base", parentBlock]);
+	if (clone.includes(contract.guide)) fail("/tan 克隆不应继承父会话的视图指引");
+	if (clone.split("# Oryn orb 环境").length !== 2) fail("/tan 克隆的 orb 指引应只出现一次");
+	if (!clone.startsWith("base\n")) fail("/tan 克隆应保留父会话的基础提示词");
 }
 
 // 角色白名单：含 render_ui 时主 agent 有工具与指引、子 agent 两者都没有；不含时都没有

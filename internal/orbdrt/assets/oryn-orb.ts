@@ -2392,6 +2392,13 @@ function registerRoleTools(pi: ExtensionAPI) {
 	pi.on("session_switch", apply);
 }
 
+// withoutInheritedGuide 去掉基础提示词里已有的本扩展指引段：/tan 克隆以父会话当前的系统提示词为底（已含父会话追加的
+// 这一段，包括视图指引），克隆自己的 before_agent_start 再追加一次会重复，且让没有视图工具的克隆看到视图指引。
+// 主 agent 的基础提示词里没有这一段，不受影响。
+function withoutInheritedGuide(base: string[], head: string): string[] {
+	return base.filter((s) => !s.startsWith(head));
+}
+
 export default function orynOrbExtension(pi: ExtensionAPI) {
 	// bash 卡片的 pseudo 视图：orb 与 Runner 都注册（Runner 上的 omp 版本不定，原生模块缺失时自动跳过）
 	registerRoleTools(pi);
@@ -2419,7 +2426,7 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 			if (views) {
 				guide.push(views);
 			}
-			return { systemPrompt: [...event.systemPrompt, guide.join("\n")] };
+			return { systemPrompt: [...withoutInheritedGuide(event.systemPrompt, RUNNER_GUIDE), guide.join("\n")] };
 		});
 		return;
 	}
@@ -2454,6 +2461,8 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 			guide.push(views);
 		}
 		const designNow = designLines ? await designLines() : [];
-		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines(), ...designNow].join("\n")] };
+		return {
+			systemPrompt: [...withoutInheritedGuide(event.systemPrompt, GUIDE), [...guide, ...statusLines(), ...designNow].join("\n")],
+		};
 	});
 }
