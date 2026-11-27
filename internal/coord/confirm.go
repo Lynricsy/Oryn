@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/ids"
@@ -138,9 +139,14 @@ func (s *Service) showConfirm(ctx context.Context, row db.AssistantConfirmation)
 	return s.th.RequestUI(ctx, row.ThreadID, frame)
 }
 
-// UIAnswered 实现 threads.Coordinator：主人对确认卡作答。pending → approved / rejected 是 CAS，同一张卡至多执行一次；
-// 批准后执行登记的动作（失败改记 failed），真正执行过的写审计（origin = owner），最后把结果以自动消息投递回对话。
+// UIAnswered 实现 threads.Coordinator：主人对控制面发起的待答请求作答。视图的阻塞作答（vwa_）交给在等的调用；其余是
+// 确认卡：pending → approved / rejected 是 CAS，同一张卡至多执行一次；批准后执行登记的动作（失败改记 failed），真正执行
+// 过的写审计（origin = owner），最后把结果以自动消息投递回对话。
 func (s *Service) UIAnswered(ctx context.Context, threadID, requestID string, response json.RawMessage) {
+	if strings.HasPrefix(requestID, viewAwaitIDPrefix) {
+		s.viewAnswered(threadID, requestID, response)
+		return
+	}
 	row, err := s.st.Q.GetAssistantConfirmation(ctx, requestID)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {

@@ -80,13 +80,13 @@ func TestProfileWebAccess(t *testing.T) {
 
 	p, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, SystemPrompt(nil, "", conv.ID, true), p.SystemPrompt)
+	assert.Equal(t, SystemPrompt(nil, "", conv.ID, true)+"\n\n"+viewGuide(), p.SystemPrompt)
 
 	_, err = e.c.PutSettings(e.ctx, apigen.AssistantSettings{WebAccess: false, DisabledMcpServers: []string{}})
 	require.NoError(t, err)
 	p, err = e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, SystemPrompt(nil, "", conv.ID, false), p.SystemPrompt)
+	assert.Equal(t, SystemPrompt(nil, "", conv.ID, false)+"\n\n"+viewGuide(), p.SystemPrompt)
 	assert.Contains(t, p.SystemPrompt, "Web access is turned off")
 
 	spAfter, err := e.c.AgentProfile(e.ctx, sp.ThreadID)
@@ -121,10 +121,10 @@ func TestProfileCustomSystemPrompt(t *testing.T) {
 	require.NotNil(t, got.SystemPrompt)
 	assert.Equal(t, "始终使用简体中文回答。\n先给结论，再给理由。", *got.SystemPrompt)
 
-	// 普通助手对话：在内置规则之后追加自定义指令
+	// 普通助手对话：在内置规则（含视图指引）之后追加自定义指令
 	p, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	base := SystemPrompt(nil, "", conv.ID, true)
+	base := SystemPrompt(nil, "", conv.ID, true) + "\n\n" + viewGuide()
 	assert.Equal(t, base+"\n\n"+assistantCustomPromptHeader+"始终使用简体中文回答。\n先给结论，再给理由。", p.SystemPrompt)
 
 	// 主线对话：在内置规则之后、主线说明之前包含自定义指令

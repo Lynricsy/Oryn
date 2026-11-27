@@ -217,7 +217,8 @@ func TestMutateRateLimit(t *testing.T) {
 	assert.False(t, l.allow("k", now, mutateRules), "24 小时内第 201 次")
 }
 
-// 顶层工具表：Space 协调者为基础 9 个 + list_models；全局助手恰为 23 个（其余能力都是 oryn 技能的操作），oryn 以顶层工具出现。
+// 顶层工具表：Space 协调者为基础 9 个 + list_models；全局助手恰为 23 个（其余能力都是 oryn 技能的操作），oryn 以顶层工具出现；
+// 生成式 UI 开启时助手另有 render_ui / render_html（M33，Space 协调者不受 Views 影响）。
 func TestAssistantToolDefs(t *testing.T) {
 	names := func(defs []apigen.OmpFrame) map[string]apigen.OmpFrame {
 		out := map[string]apigen.OmpFrame{}
@@ -235,6 +236,12 @@ func TestAssistantToolDefs(t *testing.T) {
 		ToolOryn, ToolComputerStatus, ToolComputerUpload, ToolComputerDownload, ToolComputerRecord)
 	assert.ElementsMatch(t, want, slices.Collect(maps.Keys(asst)))
 	assert.Equal(t, "essential", asst[ToolOryn]["loadMode"])
+	views := names(ToolDefs(ToolSet{Views: true}))
+	assert.ElementsMatch(t, append(slices.Clone(want), ToolRenderUI, ToolRenderHTML), slices.Collect(maps.Keys(views)))
+	for _, n := range []string{ToolRenderUI, ToolRenderHTML} {
+		assert.Equal(t, "essential", views[n]["loadMode"], n)
+	}
+	assert.ElementsMatch(t, slices.Collect(maps.Keys(space)), slices.Collect(maps.Keys(names(ToolDefs(ToolSet{InSpace: true, Views: true})))))
 	props := func(d apigen.OmpFrame) obj { return d["parameters"].(obj)["properties"].(obj) }
 	assert.NotContains(t, props(space[ToolSendMessage]), "space")
 	assert.Equal(t, []string{"threadId", "message"}, space[ToolSendMessage]["parameters"].(obj)["required"])

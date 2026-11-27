@@ -159,11 +159,13 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	main := row.Main == 1
 	// M26：受限的一段（来自外部内容的研究发现）：同一套拼法，但按联网关闭写提示词，再收窄工具表
 	restricted := main && s.mainRestricted()
+	// M33：视图工具与指引只给全局助手（受限的一段除外），且生成式 UI 开关开启
+	views := space == nil && !restricted && s.generativeUI(ctx)
 	var computer []apigen.OmpFrame
 	if space == nil {
 		computer = s.computerDefs(ctx)
 	}
-	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn, Main: main, Computer: computer})
+	tools := ToolDefs(ToolSet{InSpace: space != nil, Memory: memOn, Main: main, Views: views, Computer: computer})
 	// Web：第一层（内置联网与生图、MCP）只给全局助手，Space 协调者不变（D10）；联网总开关由出站策略执行
 	webOn, customPrompt := true, ""
 	if space == nil {
@@ -179,6 +181,9 @@ func (s *Service) AgentProfile(ctx context.Context, threadID string) (threads.Ag
 	}
 	if space == nil {
 		prof.MCPToken = s.cfg.MCPToken
+		if views {
+			prof.SystemPrompt += "\n\n" + viewGuide()
+		}
 		if customPrompt != "" {
 			prof.SystemPrompt += "\n\n" + assistantCustomPromptHeader + customPrompt
 		}
@@ -254,6 +259,9 @@ const (
 	// artifact 的补充工具（M19，只给全局助手；由 coord 自己实现，不经 artifacts.Call）。
 	ToolExportArtifact = "export_artifact"
 	ToolImportArtifact = "import_artifact"
+	// 视图（M33，只给全局助手；与 orb 扩展的工具同名同参数，定义来自 schema/view-tools.json）。
+	ToolRenderUI   = "render_ui"
+	ToolRenderHTML = "render_html"
 )
 
 type obj = map[string]any
@@ -291,6 +299,8 @@ type ToolSet struct {
 	Memory bool
 	// Main 为真时（主线）追加主线专属工具。
 	Main bool
+	// Views 为真时（生成式 UI 开启的全局助手）追加视图工具 render_ui / render_html（M33）。
+	Views bool
 	// Computer 是助手的电脑里的工具（已改名为 computer_<name>），追加在末尾。
 	Computer []apigen.OmpFrame
 }
@@ -434,6 +444,9 @@ func ToolDefs(o ToolSet) []apigen.OmpFrame {
 	}
 	if o.Main {
 		defs = append(defs, mainToolDefs()...)
+	}
+	if o.Views {
+		defs = append(defs, viewToolDefs()...)
 	}
 	return append(defs, o.Computer...)
 }

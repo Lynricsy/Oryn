@@ -123,6 +123,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 	case ToolExportArtifact, ToolImportArtifact:
 		// M19：artifact 的补充工具（只给全局助手），coord 自己实现
 		return s.toolArtifactExtra(ctx, tc)
+	case ToolRenderUI, ToolRenderHTML:
+		// M33：视图（只给全局助手）
+		return s.toolView(ctx, tc)
 	case ToolOryn:
 		// oryn 技能的操作（只给全局助手）
 		if c.Kind != threads.KindAssistant {

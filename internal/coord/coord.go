@@ -139,6 +139,8 @@ type Service struct {
 	topics   Topics
 	// restrict 是主线受限一段的状态（M26，mu 保护）。
 	restrict mainRestrict
+	// views 是全局助手视图的在途阻塞作答（M33，views.go）。
+	views viewWaits
 
 	ensureMu sync.Mutex
 	// spareMu 串行化备用助手对话的认领与补充（spare.go）；spareKick 让常驻检查在认领后立即补一个新的。
