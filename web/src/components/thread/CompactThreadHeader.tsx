@@ -210,24 +210,25 @@ export function CompactThreadHeader({
 					...(env.failed && { tone: "err" as const }),
 				},
 			},
-			children: [
-				{
-					key: "info",
-					icon: "info",
-					label: t("titleMenu.envInfo"),
-					onSelect: () => uiStore.getState().setThreadTab("info"),
-				},
-				...(box && boxText
-					? [
+			// 只有一件事可做时点行直接打开信息页；box 线程另有「打开 box」，才用子菜单二选一
+			...(box && boxText
+				? {
+						children: [
+							{
+								key: "info",
+								icon: "info",
+								label: t("titleMenu.envInfo"),
+								onSelect: () => uiStore.getState().setThreadTab("info"),
+							},
 							{
 								key: "box",
 								icon: "hardDrives",
 								label: t("boxes.openBox"),
 								onSelect: () => navigate(`/boxes/${box.id}`),
-							} satisfies MenuItem,
-						]
-					: []),
-			],
+							},
+						] satisfies MenuItem[],
+					}
+				: { onSelect: () => uiStore.getState().setThreadTab("info") }),
 		});
 	}
 	if (schedule)

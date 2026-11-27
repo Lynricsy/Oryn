@@ -1365,22 +1365,15 @@ async function Z4() {
 				(await sec.getByText(Z1_SERVER).count()) > 0,
 				`「能力」卡列出 MCP server ${Z1_SERVER}`,
 			);
-			// 手机布局里信息面板默认不展开：从标题菜单「查看环境信息」打开
+			// 手机布局里信息面板默认不展开：从标题菜单的 orb 行打开（无 box 时点行直达信息页）
 			await shots(page, "Z4-capabilities", sec, async (w) => {
 				if (w >= 640 || (await sec.isVisible().catch(() => false))) return;
 				await page.getByTestId("thread-title").click();
-				// 「查看环境信息」在标题菜单 orb 那一行的子菜单里
-				const envInfo = page.getByRole("menuitem", {
-					name: "查看环境信息",
-					exact: true,
-				});
-				if (!(await envInfo.isVisible().catch(() => false)))
-					await page
-						.getByRole("menuitem")
-						.filter({ hasText: /^orb/ })
-						.first()
-						.click();
-				await envInfo.click();
+				await page
+					.getByRole("menuitem")
+					.filter({ hasText: /^orb/ })
+					.first()
+					.click();
 				await sec.waitFor({ timeout: 15_000 });
 			});
 		} finally {

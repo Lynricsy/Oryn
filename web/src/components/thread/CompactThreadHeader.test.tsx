@@ -157,14 +157,15 @@ describe("CompactThreadHeader 标题菜单", () => {
 		expect(patchThread.mock.calls).toEqual([[B, { color: "red" }]]);
 	});
 
-	it("运行环境子菜单只有「环境信息」：orb 由线程自动管理，没有手动冻结 / 删除", () => {
+	it("运行环境行（无 box）直接打开信息页，不进子菜单", () => {
+		uiStore.setState({ threadTab: "agent" });
 		mount();
 		fireEvent.click(capsule());
 		const env = item("env");
 		if (!env) throw new Error("没有运行环境行");
 		fireEvent.click(env);
-		expect(item("info")).not.toBeNull();
-		for (const k of ["freeze", "wake", "delete"]) expect(item(k), k).toBeNull();
+		expect(uiStore.getState().threadTab).toBe("info");
+		expect(item("info")).toBeNull();
 	});
 
 	it("菜单选「删除」后取消确认：焦点回到标题胶囊，不掉到 body", async () => {
@@ -244,7 +245,7 @@ describe("CompactThreadHeader iOS 原生页头", () => {
 		]);
 		const env = title.menu.status.find((i) => i.id === "env");
 		expect(env?.sub?.icon?.orb).toBe("ready");
-		expect(env?.children?.map((i) => i.id)).toEqual(["env/info"]);
+		expect(env?.children).toBeUndefined();
 		// 胶囊第二行的运行环境段与菜单的说明行同一档位
 		expect(title.meta.at(-1)?.icon?.orb).toBe("ready");
 		const groups = title.menu.groups.flat();

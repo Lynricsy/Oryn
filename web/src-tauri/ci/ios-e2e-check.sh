@@ -31,7 +31,7 @@
 #             原生页头接管，回传三件矩形与侧栏宽
 #   h-native  原生三件接管、网页三件隐藏（无障碍树断言在测试里），截图
 #   h-menu    点原生标题胶囊：等 header.event（menu = title），截图
-#   h-sub     点「Orb」行进子页：此时不应有任何 select，截图
+#   h-sub     点「颜色」行进子页：此时不应有任何 select，截图
 #   h-back    点返回行回主页，截图
 #   h-dialog  点「改名」：等 header.event（select / title / rename），网页打开对话框、遮挡探测让原生让位（header.show alpha 0），截图
 #   h-return  点遮罩关掉对话框：等 header.show（alpha 1），截图；从这里起数 header.show
@@ -504,7 +504,7 @@ echo "- 拖动：像素搜出卡片平移 ${moved}pt（松手时实测 ${drag_dx
 
 echo >>"$summary"
 echo "### iOS 原生页头端到端（真实网页 + 触摸）" >>"$summary"
-# mock 的 MAIN_THREAD（web/src/mock/fixtures.ts）：有 orb（标题菜单里有「Orb」子页）、有视图钮
+# mock 的 MAIN_THREAD（web/src/mock/fixtures.ts）：有 orb、有视图钮；标题菜单的子页用「颜色」（无 box 的运行环境行直达信息页）
 thread=T-0193a1b2-0000-7000-8000-00000000a001
 events=header-events.jsonl
 xlog="$out/xcodebuild-header.log"

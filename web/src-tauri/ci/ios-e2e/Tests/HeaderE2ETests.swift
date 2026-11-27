@@ -8,7 +8,7 @@
 //              回传三件矩形与侧栏宽
 //   h-native   无障碍树：三件矩形里都是原生按钮，网页三件已退出无障碍树（aria-hidden）；记下原生侧栏钮在关闭位的矩形
 //   h-menu     点原生标题胶囊：原生面板展开（出现「改名」行），脚本确认 header.event（menu = title）
-//   h-sub      点「Orb」行：面板原地换成子页（「返回, Orb」行），不产生 select；面板贴合内容高度
+//   h-sub      点「颜色」行：面板原地换成子页（「返回, 颜色」行），不产生 select；面板贴合内容高度
 //              （返回行紧贴胶囊下方：面板间距 6 + 内边距 6，不被撑高的面板居中到下面去）
 //   h-back     点返回行：回到主页
 //   h-dialog   点「改名」：脚本确认 header.event（select / title / rename）；网页打开改名对话框（无障碍树里有输入框），
@@ -27,7 +27,8 @@ import XCTest
 final class HeaderE2ETests: E2ECase {
   private let sidebar = ["Sidebar", "侧边栏"]
   private let rename = ["Rename", "改名"]
-  private let orb = ["Orb", "orb"]
+  /// 带子菜单的行（mock 线程没有 box，运行环境行点了直接打开信息页，不进子页）
+  private let color = ["Color", "颜色"]
   /// 子页返回行的读屏文字是「<common.back>, <父项名>」
   private let back = ["Back, ", "返回, "]
 
@@ -68,9 +69,9 @@ final class HeaderE2ETests: E2ECase {
     try until("点胶囊后原生面板没有展开（没有「改名」行）") { try self.native(app, self.rename) != nil }
     _ = try checkpoint("h-menu")
 
-    // 3. 点「Orb」行：原地换成子页
-    try tap(app, orb, "Orb 行")
-    try until("点「Orb」后没有换成子页") {
+    // 3. 点「颜色」行：原地换成子页
+    try tap(app, color, "颜色行")
+    try until("点「颜色」后没有换成子页") {
       let sub = try self.native(app, self.back, prefix: true)
       let main = try self.native(app, self.rename)
       return sub != nil && main == nil
