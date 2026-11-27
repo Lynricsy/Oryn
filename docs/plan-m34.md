@@ -159,7 +159,7 @@
 |---|---|
 | 样机导出（后端 `selectMockupPages`） | 不传 `frames` 时排除落选画框；显式 `frames` 里含落选画框时回 invalid：「<画框名> 是方案组『X』的落选方案，先改选它再导出」 |
 | `MockupDialog` | 不列出落选画框 |
-| 导出工程（zip）、`oryn design eject`、部署到 box | 落选帧的 `src/frames/<id>.tsx` 不进工程文件，`oryn-frames.json` 不列出它们；`src/variants.json` 去掉落选方案（组里只剩选中方案）；只被落选方案引用的 `src/themes/<名>.css` 不打包。部署走 eject，规则自动相同 |
+| 导出工程（zip）、`oryn design eject`、部署到 box | 落选帧的 `src/frames/<id>.tsx` 不进工程文件，`oryn-frames.json` 不列出它们；只被落选方案引用的 `src/themes/<名>.css` 不打包。打包的 `src/variants.json` 去掉已选定的整个组（**修订（S8 执行中）**：原写「组里只剩选中方案」，但只剩 1 个方案的组过不了 `ParseVariants` 的 2–4 个方案规则。选中方案的帧变成普通帧，它们的主题由 `oryn-frames.json` 的 `theme` 带过去）；一个组都不剩时不打包这个文件。部署走 eject，规则自动相同 |
 | 原型 | `resolveStartPage` 与原型可达的帧都排除落选画框；指向落选帧的 `<Link>` 不跳转（同指向不存在的帧） |
 
 因为落选帧的入口文件不在工程里，直接访问 `#/<落选帧 id>` 只会走到「没有这个帧」，不需要另加 `hidden` 列表。
