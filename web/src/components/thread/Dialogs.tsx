@@ -1,9 +1,8 @@
-/** 线程内的模态对话框：会话树、fork、报告、模型、子 agent、btw、goal、标签、改名、附件（含公开发布）、分享、计划提案、调试、setup 日志。 */
+/** 线程内的模态对话框：会话树、fork、报告、子 agent、btw、goal、标签、改名、附件（含公开发布）、分享、计划提案、调试、setup 日志。模型选择器锚在输入坞模型按钮上（`ThreadModelPicker`）。 */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
-import { useModelCatalog } from "../../api/model-catalog-queries";
 import { useShareOverview } from "../../api/share-queries";
 import {
 	attachmentContentUrl,
@@ -19,7 +18,6 @@ import {
 } from "../../lib/format";
 import { rasterMime } from "../../lib/image-src";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
-import { selectModel } from "../../lib/model-select";
 import type { ReportKind } from "../../lib/slash";
 import type {
 	OmpCommand,
@@ -47,8 +45,6 @@ import {
 	subagentVisualState,
 } from "../../state/subagent-tree";
 import { uiStore, useUi } from "../../state/ui";
-import { ModelPickerBody } from "../composer/ModelPickerBody";
-import { RoleList } from "../composer/RolePicker";
 import { Markdown } from "../markdown/Markdown";
 import { AttachmentPublishButton } from "../share/AttachmentPublish";
 import { ShareDialog } from "../share/ShareDialog";
@@ -63,7 +59,6 @@ import { Badge, Callout, Meter, type Tone, thresholdTone } from "../ui/data";
 import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import { Icon } from "../ui/icons";
-import { ModelCatalogFooter } from "../ui/ModelCatalogFooter";
 import { ModelLogo } from "../ui/ModelLogo";
 import {
 	Button,
@@ -577,54 +572,6 @@ function ReportDialog({
 			}
 		>
 			{body}
-		</Dialog>
-	);
-}
-
-// ---------------------------------------------------------------- 模型
-
-function ModelDialog({
-	threadId,
-	initialQuery,
-	onClose,
-}: {
-	threadId: string;
-	/** 打开时预填的筛选词（`/model <选择器>` 解析不出时带过来） */
-	initialQuery?: string;
-	onClose: () => void;
-}) {
-	const { t } = useTranslation();
-	const state = useThread(threadId, (s) => s.state);
-	const models = useModelCatalog();
-	const [error, setError] = useState<unknown>(null);
-	// 模型列表里直接选 = 手动选择（来源记录 `manual`，回合头回落）；旧 Core 自动回退到 set_model
-	const pick = async (m: { provider: string; id: string }) => {
-		setError(null);
-		try {
-			await selectModel(threadId, m);
-			await refreshState(threadId);
-		} catch (e) {
-			setError(e);
-		}
-	};
-	return (
-		<Dialog
-			open
-			wide
-			onClose={onClose}
-			title={t("model.title")}
-			footer={<ModelCatalogFooter catalog={models.data} />}
-		>
-			{/* 思考级别在输入坞的圆圈菜单里调，速度在页脚的速度读数里调；这里只选模型 */}
-			<ModelPickerBody
-				roles={<RoleList threadId={threadId} onPicked={onClose} />}
-				current={state?.model}
-				initialQuery={initialQuery}
-				error={error}
-				onPick={(m) =>
-					void pick({ provider: m.provider, id: m.id }).then(onClose)
-				}
-			/>
 		</Dialog>
 	);
 }
@@ -1900,13 +1847,8 @@ export function ThreadDialogs({ threadId }: { threadId: string }): ReactNode {
 				/>
 			);
 		case "model":
-			return (
-				<ModelDialog
-					threadId={threadId}
-					initialQuery={dialog.query}
-					onClose={close}
-				/>
-			);
+			// 模型选择器锚在输入坞的模型按钮上（ComposerMeta 的 ModelChip → ThreadModelPicker），不是居中对话框
+			return null;
 		case "subagent":
 			return (
 				<SubagentDialog

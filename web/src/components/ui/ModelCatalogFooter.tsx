@@ -1,5 +1,5 @@
 /**
- * 模型列表的页脚（线程的模型对话框、首屏 role 胶囊的「指定模型…」）：目录是旧结果时给一行淡色提示，
+ * 模型列表的页脚（统一模型选择器 `ModelPicker` 内部，用目录模型时）：目录是旧结果时给一行淡色提示，
  * 「刷新」让控制面强制重跑目录（`?refresh=true`），结果直接写回缓存。
  */
 import { useQueryClient } from "@tanstack/react-query";

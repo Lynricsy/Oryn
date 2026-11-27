@@ -19,7 +19,8 @@ surface({
 	ready: "textarea",
 	open: async (page) => {
 		await page.getByRole("button", { name: /^对象：/ }).click();
-		await page.getByRole("button", { name: /指定模型/ }).click();
+		// 与 home.role-picker 同一个选择器：这一面看输入筛选后的状态（分组收窄、检视栏跟随高亮）
+		await page.locator("[data-model-picker] input").fill("claude");
 		return lastOverlay(page);
 	},
 });

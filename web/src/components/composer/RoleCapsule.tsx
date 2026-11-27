@@ -1,7 +1,8 @@
 /**
- * 首屏的 role 胶囊（M13 R13 / R17）：胶囊显示当前对象的头像和名字；点开（或 Ctrl+S）后桌面是锚在胶囊上的弹层，
- * 窄屏（compact）是底部抽屉。内容依次为：全局助手（`allowAssistant` 时）、`cycleOrder` 里的各 role（头像、名字、
- * 解析出的模型）、「指定模型…」（中央模型目录与自由输入）、思考强度。
+ * 首屏的 role 胶囊（M13 R13 / R17）：胶囊显示当前对象的头像和名字；点开（或 Ctrl+S）后是统一模型选择器
+ * （`ModelPicker`，桌面锚在胶囊上的弹层、窄屏底部抽屉）：对象区依次为全局助手（`allowAssistant` 时）与
+ * `cycleOrder` 里的各 role（头像、名字、解析出的模型、思考级别图标），其下是中央模型目录（可自由输入 provider/id），
+ * 思考级别在检视栏里跟着高亮项走。
  * 新线程还没有会话，role 列表不向 agent 要：名字、头像、选择器读 `settings/role-identities`，模型按中央目录
  * 照 omp 的规则解析（`lib/model-roles.ts`）；列表读不到时按 omp 默认的 cycleOrder 列出内置 role。
  */
@@ -20,7 +21,11 @@ import {
 	useModelCatalog,
 } from "../../api/model-catalog-queries";
 import { roleDefaultGlyph } from "../../lib/avatar-defaults";
-import { modelBrand, shortModelName } from "../../lib/model-brand";
+import {
+	modelSelector,
+	modelShortName,
+	parseModelInput,
+} from "../../lib/model-picker";
 import {
 	BUILTIN_ROLE_NAMES,
 	type BuiltinRole,
@@ -34,16 +39,21 @@ import {
 	switchedThinking,
 } from "../../lib/model-roles";
 import { useBreakpoint } from "../../lib/viewport";
-import { modelCapsOf, useModelCaps } from "../../state/model-caps";
+import { modelCapsOf } from "../../state/model-caps";
 import { useTheme } from "../../state/theme";
+import {
+	entryKey,
+	ModelPicker,
+	modelKey,
+	type PickerEntry,
+	type PickTarget,
+	targetKey,
+} from "../model-picker/ModelPicker";
+import { ModelPickerPopover } from "../model-picker/ModelPickerPopover";
 import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { Icon } from "../ui/icons";
-import { ModelCatalogFooter } from "../ui/ModelCatalogFooter";
 import { ModelLogo } from "../ui/ModelLogo";
-import { Option, Popover, PopoverLabel } from "../ui/PickerPopover";
-import { Dialog } from "../ui/primitives";
-import { CornerLevel, LevelGlyph } from "../ui/ThinkingDial";
-import { ModelPickerBody } from "./ModelPickerBody";
+import { CornerLevel } from "../ui/ThinkingDial";
 import { PillButton } from "./PillButton";
 import { roleLabel } from "./RoleTrack";
 
@@ -78,14 +88,6 @@ export interface RoleOption {
 	 * （推不出来就不显示、不选中，不拿猜测冒充实际值）
 	 */
 	thinking?: string;
-}
-
-/** `provider/id` 选择器。 */
-export const modelSelector = (m: ModelRef): string => `${m.provider}/${m.id}`;
-
-/** 模型的短名（logo 已说明品牌）；全名放悬停提示。 */
-export function modelShortName(m: ModelRef): string {
-	return shortModelName(m.name || m.id, modelBrand(m.id, m.provider));
 }
 
 /** 单纯的 role 别名（`@Cyrene`、`pi/slow:high`）指向的 role；回退链、模型选择器返回 undefined。 */
@@ -289,11 +291,7 @@ export function RoleCapsule({
 		if (openProp === undefined) setOwnOpen(next);
 		onOpenChange?.(next);
 	};
-	const [view, setView] = useState<"main" | "model">("main");
-	const close = () => {
-		setOpen(false);
-		setView("main");
-	};
+	const close = () => setOpen(false);
 	const roles = useRoleOptions();
 	const assistant = useAssistantIdentity(allowAssistant);
 	const assistantSettings = useAssistantSettings(allowAssistant);
@@ -308,56 +306,50 @@ export function RoleCapsule({
 		return { provider: m.provider, id: m.id, name: named?.name };
 	}, [assistantSettings.data?.model, catalog.data]);
 	const assistantDefaultThinking = assistantSettings.data?.thinkingLevel;
-	const current =
-		value.kind === "assistant"
-			? (value.model ?? assistantDefaultModel)
-			: targetModel(value, roles);
-	const caps = useModelCaps(current ? modelSelector(current) : "");
 	const identities = useRoleIdentities();
-	// 不改思考级别时实际生效的级别（推不出来为 undefined：不选中、不画角标）：role 取它自己的（见 useRoleOptions）；
+	const capsOf = (m: ModelRef | undefined) =>
+		m ? modelCapsOf(catalog.data, modelSelector(m)) : undefined;
+	// 某个对象不改思考级别时实际生效的级别（推不出来为 undefined：不选中、不画角标）：role 取它自己的（见 useRoleOptions）；
 	// 指定模型：与 default role 同一个模型时 Core 不切模型，就是起始级别，否则按切模型的规则；
-	// 全局助手：若全局助手设置里配置了默认思考档位，则按当前模型能力收窄显示，否则不猜测。
+	// 全局助手：若全局助手设置里配置了默认思考档位，则按所用模型能力收窄显示，否则不猜测。
 	const defaultModel = roles.find((r) => r.role === "default")?.model;
 	const start = sessionStart(
 		roles,
 		identities.data?.defaultThinkingLevel,
 		catalog.data,
 	);
-	const defaultLevel =
-		value.kind === "role"
-			? roles.find((r) => r.role === value.role)?.thinking
-			: value.kind === "model"
+	const defaultLevelOf = (target: Target): string | undefined => {
+		if (target.kind === "role")
+			return roles.find((r) => r.role === target.role)?.thinking;
+		if (target.kind === "assistant")
+			return assistantDefaultThinking
 				? clampThinking(
-						defaultModel &&
-							modelSelector(defaultModel) === modelSelector(value.model)
-							? (start ?? undefined)
-							: switchedThinking(start, caps?.defaultLevel, caps?.thinking),
-						caps?.thinking,
+						assistantDefaultThinking,
+						capsOf(target.model ?? assistantDefaultModel)?.thinking,
 					)
-				: assistantDefaultThinking
-					? clampThinking(assistantDefaultThinking, caps?.thinking)
-					: undefined;
+				: undefined;
+		const caps = capsOf(target.model);
+		return clampThinking(
+			defaultModel &&
+				modelSelector(defaultModel) === modelSelector(target.model)
+				? (start ?? undefined)
+				: switchedThinking(start, caps?.defaultLevel, caps?.thinking),
+			caps?.thinking,
+		);
+	};
+	const defaultLevel = defaultLevelOf(value);
 	const shownLevel = value.thinking ?? defaultLevel;
-	const levels: readonly string[] | null = caps
-		? caps.thinking.length === 0
-			? null
-			: [
-					...(shownLevel && !["auto", ...caps.thinking].includes(shownLevel)
-						? [shownLevel]
-						: []),
-					"auto",
-					...caps.thinking,
-				]
-		: shownLevel
-			? [shownLevel]
-			: null;
-	const levelLabel = (l: string) => t(`model.levels.${l as "auto"}`);
+	const caps = capsOf(
+		value.kind === "assistant"
+			? (value.model ?? assistantDefaultModel)
+			: targetModel(value, roles),
+	);
 
 	const role =
 		value.kind === "role"
 			? roles.find((r) => r.role === value.role)
 			: undefined;
-	// default 不在 cycleOrder、只是 cycle 里某个 role 的别名（`default: '@Cyrene'`）：弹层不另列「默认」，
+	// default 不在 cycleOrder、只是 cycle 里某个 role 的别名（`default: '@Cyrene'`）：选择器不另列「默认」，
 	// 直接选中它指向的那个 role（请求仍按 default 发，模型相同）
 	const defaultOpt = roles.find((r) => r.role === "default");
 	const defaultTo = defaultOpt?.alias?.role;
@@ -409,183 +401,82 @@ export function RoleCapsule({
 		);
 		main = role?.name ?? value.role;
 	}
-	const pickedModel =
-		value.kind === "model" || value.kind === "assistant"
-			? value.model
-			: undefined;
 
-	const pickModel = (m: ModelRef | undefined) => {
-		if (value.kind === "assistant") onChange({ kind: "assistant", model: m });
-		else if (m) onChange({ kind: "model", model: m });
+	const selected =
+		value.kind === "assistant"
+			? entryKey("assistant")
+			: value.kind === "role"
+				? entryKey(pickedRole ?? value.role)
+				: modelKey(value.model);
+	const entries: PickerEntry[] = [
+		...(allowAssistant
+			? [
+					{
+						key: "assistant",
+						name: assistantName,
+						face: <AssistantFace size={18} />,
+						model: assistantDefaultModel,
+						hint: t("roleCapsule.assistantHint"),
+						level:
+							value.kind === "assistant"
+								? shownLevel
+								: defaultLevelOf({ kind: "assistant" }),
+					},
+				]
+			: []),
+		...roles
+			.filter((r) => !(defaultAs && r.role === "default"))
+			.map(
+				(r): PickerEntry => ({
+					key: r.role,
+					name: r.name,
+					face: <RoleFace option={r} size={18} />,
+					model: r.model,
+					level: pickedRole === r.role ? shownLevel : r.thinking,
+					// default 指向的 role 标「默认」；解析出模型的别名 role 标它指向的 role
+					badge:
+						r.role === defaultTo
+							? t("modelPicker.default")
+							: r.alias && r.model
+								? r.alias.name
+								: undefined,
+					// 解析不出模型时给原始选择器或「未配置」（default 未配置 = omp 的默认模型）
+					hint:
+						r.selector ??
+						(r.role === "default"
+							? t("newThread.defaultModel")
+							: t("roles.unconfigured")),
+					data: { role: r.role },
+				}),
+			),
+	];
+
+	/** 选择器里的一项 → 新对话的对象；全局助手下的模型项是「助手改用此模型」。 */
+	const toTarget = (p: PickTarget): Target | undefined => {
+		if (p.kind === "entry") {
+			const r = p.entry.data?.role;
+			return r === undefined
+				? { kind: "assistant" }
+				: { kind: "role", role: r };
+		}
+		const model: ModelRef | undefined =
+			p.kind === "model"
+				? { provider: p.model.provider, id: p.model.id, name: p.model.name }
+				: parseModelInput(p.value);
+		if (!model) return undefined;
+		return value.kind === "assistant"
+			? { kind: "assistant", model }
+			: { kind: "model", model };
+	};
+	const isSelected = (p: PickTarget) => targetKey(p) === selected;
+	const onPick = (p: PickTarget) => {
+		const next = toTarget(p);
+		// 再点选中项不改对象（default 别名选中的是它指向的 role，仍按 default 发）；
+		// 只有改用了别的模型的全局助手再点「全局助手」才重置为默认模型
+		const keep = isSelected(p) && !(value.kind === "assistant" && value.model);
+		if (next && !keep) onChange(next);
 		close();
 	};
-
-	const mainView = (
-		<>
-			{allowAssistant && (
-				<Option
-					selected={value.kind === "assistant"}
-					leading={<AssistantFace size={18} />}
-					hint={
-						assistantDefaultModel
-							? modelShortName(assistantDefaultModel)
-							: t("roleCapsule.assistantHint")
-					}
-					trailing={
-						assistantDefaultModel || assistantDefaultThinking ? (
-							<>
-								<span className="inline-flex w-3 justify-center">
-									{assistantDefaultThinking && (
-										<LevelGlyph level={assistantDefaultThinking} size={12} />
-									)}
-								</span>
-								<span className="inline-flex w-3 justify-center">
-									{assistantDefaultModel && (
-										<ModelLogo
-											model={assistantDefaultModel.id}
-											provider={assistantDefaultModel.provider}
-											size={12}
-											className="text-faint"
-										/>
-									)}
-								</span>
-							</>
-						) : undefined
-					}
-					onClick={() => {
-						if (value.kind !== "assistant") onChange({ kind: "assistant" });
-						close();
-					}}
-				>
-					{assistantName}
-				</Option>
-			)}
-			{roles
-				.filter((r) => !(defaultAs && r.role === "default"))
-				.map((r) => (
-					<Option
-						key={r.role}
-						selected={pickedRole === r.role}
-						leading={<RoleFace option={r} size={18} />}
-						hint={
-							// 解析出的模型短名（别名前面加上它指向的 role）；解析不出时给原始选择器或「未配置」
-							// （default 未配置 = omp 的默认模型）
-							r.model
-								? r.alias
-									? `${r.alias.name} · ${modelShortName(r.model)}`
-									: modelShortName(r.model)
-								: (r.selector ??
-									(r.role === "default"
-										? t("newThread.defaultModel")
-										: t("roles.unconfigured")))
-						}
-						trailing={
-							// 思考级别与模型 logo 各占固定的一格：某一行缺其中一样时，其它行的两列照样对齐
-							<>
-								<span className="inline-flex w-3 justify-center">
-									{r.thinking && <LevelGlyph level={r.thinking} size={12} />}
-								</span>
-								<span className="inline-flex w-3 justify-center">
-									{r.model && (
-										<ModelLogo
-											model={r.model.id}
-											provider={r.model.provider}
-											size={12}
-											className="text-faint"
-										/>
-									)}
-								</span>
-							</>
-						}
-						onClick={() => {
-							if (pickedRole !== r.role)
-								onChange({ kind: "role", role: r.role });
-							close();
-						}}
-					>
-						{r.name}
-					</Option>
-				))}
-			<Option
-				selected={value.kind === "model"}
-				leading={<Icon name="cpu" size={14} />}
-				hint={pickedModel ? modelShortName(pickedModel) : undefined}
-				onClick={() => setView("model")}
-			>
-				{t("roleCapsule.pickModel")}
-			</Option>
-			{levels && (
-				<>
-					<PopoverLabel>{t("model.thinking")}</PopoverLabel>
-					<div
-						role="radiogroup"
-						aria-label={t("model.thinking")}
-						className="flex flex-wrap gap-1 px-1 pb-1"
-					>
-						{levels.map((l) => (
-							// biome-ignore lint/a11y/useSemanticElements: 胶囊形的分段选择，原生 radio 画不出来；读屏语义由 role/aria-checked 提供
-							<button
-								key={l}
-								type="button"
-								role="radio"
-								aria-checked={shownLevel === l}
-								title={
-									caps === undefined
-										? t("newThread.thinkingUnknown")
-										: undefined
-								}
-								className={`h-7 rounded-full border px-2.5 text-xs transition-colors duration-150 ${shownLevel === l ? "border-border-strong bg-hover text-fg" : "border-border text-muted hover:bg-hover hover:text-fg"}`}
-								// 选回实际生效的那一档即不再单独指定（与没动过时一样跟着 role / 配置走）
-								onClick={() =>
-									onChange({
-										...value,
-										thinking: l === defaultLevel ? undefined : l,
-									})
-								}
-							>
-								{levelLabel(l)}
-							</button>
-						))}
-					</div>
-				</>
-			)}
-		</>
-	);
-
-	const modelView = (
-		<>
-			<button
-				type="button"
-				className="mb-1 flex items-center gap-1 rounded-sm px-2 py-1 text-faint text-xs hover:bg-hover hover:text-fg"
-				onClick={() => setView("main")}
-			>
-				<Icon name="back" size={12} aria-hidden />
-				{t("roleCapsule.back")}
-			</button>
-			<ModelPickerBody
-				free
-				current={pickedModel}
-				onPick={pickModel}
-				roles={
-					value.kind === "assistant" && (
-						<div className="mb-2">
-							<Option
-								selected={!value.model}
-								leading={<Icon name="sparkle" size={14} />}
-								onClick={() => pickModel(undefined)}
-							>
-								{t("newThread.defaultModel")}
-							</Option>
-						</div>
-					)
-				}
-			/>
-			<div className="px-1 pt-1">
-				<ModelCatalogFooter catalog={catalog.data} />
-			</div>
-		</>
-	);
-	const body = view === "main" ? mainView : modelView;
 
 	return (
 		<span className="relative inline-flex min-w-0 shrink">
@@ -600,18 +491,60 @@ export function RoleCapsule({
 				onClick={() => (open ? close() : setOpen(true))}
 				shape={compactPill ? "circle" : "pill"}
 			/>
-			{/* 思考级别不写文字：实际生效的级别画成右下角的角标 */}
-			{levels && shownLevel && <CornerLevel level={shownLevel} />}
-			{open &&
-				(compact ? (
-					<Dialog open title={t("roleCapsule.title")} onClose={close}>
-						<div data-testid="role-capsule-drawer">{body}</div>
-					</Dialog>
-				) : (
-					<Popover side={side} onClose={close}>
-						<div data-testid="role-capsule-popover">{body}</div>
-					</Popover>
-				))}
+			{/* 思考级别不写文字：实际生效的级别画成右下角的角标（已知不能调节思考的模型不画） */}
+			{shownLevel && caps?.thinking.length !== 0 && (
+				<CornerLevel level={shownLevel} />
+			)}
+			{open && (
+				<ModelPickerPopover
+					title={t("roleCapsule.title")}
+					onClose={close}
+					side={side ?? "top"}
+					testId={compact ? "role-capsule-drawer" : "role-capsule-popover"}
+				>
+					<ModelPicker
+						entries={entries}
+						selected={selected}
+						free="model"
+						onPick={onPick}
+						pickLabel={(p) =>
+							p.kind !== "entry" && value.kind === "assistant"
+								? t("roleCapsule.pickForAssistant")
+								: t("roleCapsule.pickForNew")
+						}
+						thinking={{
+							value: (p) => {
+								if (isSelected(p)) return shownLevel;
+								const next = toTarget(p);
+								return next ? defaultLevelOf(next) : undefined;
+							},
+							preset: (p) =>
+								p.kind === "entry"
+									? roles.find((r) => r.role === p.entry.data?.role)?.thinking
+									: undefined,
+							onChange: (p, level) => {
+								// 已选中项：就地改级别（选回实际生效的那一档即不再单独指定），选择器不关
+								if (isSelected(p)) {
+									onChange({
+										...value,
+										thinking: level === defaultLevel ? undefined : level,
+									});
+									return;
+								}
+								// 别的项：连同该级别选中它（等于它自己的级别时不单独指定）
+								const next = toTarget(p);
+								if (next)
+									onChange({
+										...next,
+										thinking:
+											level === defaultLevelOf(next) ? undefined : level,
+									});
+								close();
+							},
+						}}
+					/>
+				</ModelPickerPopover>
+			)}
 		</span>
 	);
 }

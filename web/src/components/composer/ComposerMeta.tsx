@@ -16,7 +16,7 @@ import {
 } from "../../lib/speed-tier";
 import { useThread } from "../../state/stores";
 import { threadCost } from "../../state/transcript";
-import { uiStore } from "../../state/ui";
+import { uiStore, useUi } from "../../state/ui";
 import { runTrayCommand } from "../thread/ModeBar";
 import { Ring, Stat, thresholdTone } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -24,6 +24,7 @@ import { ModelLogo } from "../ui/ModelLogo";
 import { Menu, type MenuItem } from "../ui/primitives";
 import { ThinkingMenu } from "../ui/ThinkingDial";
 import { PromptCacheReadout } from "./PromptCacheReadout";
+import { ThreadModelPicker } from "./ThreadModelPicker";
 
 /**
  * 当前模型的全名与短名（认得出品牌时去掉系列名，logo 已说明）；输入坞的模型胶囊与收起后的信息条共用。
@@ -60,8 +61,9 @@ export function useSessionCost(threadId: string): {
 }
 
 /**
- * 当前模型：厂商 logo + 名字（认得出品牌时去掉系列名，logo 已说明），点击打开模型对话框（顶部可切换角色）；
- * 右侧思考级别圆圈是单独的按钮，点开选级别（选项按模型能力，模型不推理时不显示圆圈）。悬停提示与读屏用全名。
+ * 当前模型：厂商 logo + 名字（认得出品牌时去掉系列名，logo 已说明），点击在按钮上方弹出模型选择器（统一的 `ModelPicker`，
+ * 顶部可切换角色；`/model` 也开这个）；右侧思考级别圆圈是单独的按钮，点开选级别（选项按模型能力，模型不推理时不显示圆圈）。
+ * 悬停提示与读屏用全名。
  */
 export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 	const state = useThread(threadId, (s) => s.state);
@@ -83,13 +85,25 @@ export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 		"";
 	const effective =
 		configured && configured !== "auto" ? configured : state?.thinkingLevel;
+	const picking = useUi((s) => s.dialog?.kind === "model");
+	const query = useUi((s) =>
+		s.dialog?.kind === "model" ? s.dialog.query : undefined,
+	);
+	const close = () => uiStore.getState().close();
 	return (
-		<span className="inline-flex min-w-0 shrink-0 items-center">
+		<span className="relative inline-flex min-w-0 shrink-0 items-center">
 			<button
 				type="button"
 				title={name}
-				className={`inline-flex h-[30px] max-w-36 shrink-0 items-center gap-1.5 rounded-md text-fg text-xs transition-colors duration-150 hover:bg-hover sm:max-w-56 ${reasons ? "pr-1 pl-2" : "px-2"}`}
-				onClick={() => uiStore.getState().open({ kind: "model" })}
+				aria-expanded={picking}
+				className={`inline-flex h-[30px] max-w-36 shrink-0 items-center gap-1.5 rounded-md text-fg text-xs transition-colors duration-150 hover:bg-hover sm:max-w-56 ${picking ? "bg-hover" : ""} ${reasons ? "pr-1 pl-2" : "px-2"}`}
+				// 弹层开着时按下按钮：不让弹层的外点关闭先关掉、再被这次点击重新打开
+				onMouseDown={(e) => {
+					if (picking) e.stopPropagation();
+				}}
+				onClick={() =>
+					picking ? close() : uiStore.getState().open({ kind: "model" })
+				}
 			>
 				<ModelLogo
 					provider={model?.provider}
@@ -120,6 +134,13 @@ export function ModelChip({ threadId }: { threadId: string }): ReactNode {
 						})
 					}
 					className="text-muted"
+				/>
+			)}
+			{picking && (
+				<ThreadModelPicker
+					threadId={threadId}
+					initialQuery={query}
+					onClose={close}
 				/>
 			)}
 		</span>

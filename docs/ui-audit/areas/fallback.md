@@ -7,7 +7,7 @@ spec：`web/e2e/ui-audit/fallback.e2e.ts`。`tauri.conf.json` 支持 iOS 15 / ma
 | id | 界面 | 打开路径（用户怎么点到） | 形态 |
 |---|---|---|---|
 | fallback.schedule-role-picker | 定时对话框里的「对象」选择 | 设置 → 自动化 → 创建 → 对话框里的「对象」胶囊 | 对话框内下拉（手机为底部抽屉） |
-| fallback.home-model-picker | 首页指定模型（隔离的托盘层叠上下文里） | 首页「对象」胶囊 → 指定模型…（仅桌面：手机走 Dialog，不经 Floating） | 下拉 |
+| fallback.home-model-picker | 首页对象选择器输入筛选后的状态（隔离的托盘层叠上下文里） | 首页「对象」胶囊 → 搜索框输入（仅桌面：手机走 Dialog，不经 Floating） | 下拉 |
 | fallback.thread-actions | 线程「更多操作」菜单（桌面）/ 标题胶囊菜单（手机） | 线程页页头「更多操作」；手机点标题胶囊 | 菜单 |
 | fallback.sink-runner-picker | 下沉卡片平移时的执行位置下拉 | 手机首页「local」胶囊；用例把 `.sink-card` 固定推开 30% 抽屉宽（仅手机） | 下拉 |
 

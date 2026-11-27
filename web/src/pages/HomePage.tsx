@@ -46,7 +46,6 @@ import { FileDropOverlay, useFileDrop } from "../components/composer/FileDrop";
 import { PillButton, type PillText } from "../components/composer/PillButton";
 import { RefMenu, useRefMenu } from "../components/composer/RefMenu";
 import {
-	modelSelector,
 	RoleCapsule,
 	type Target,
 	useRoleOptions,
@@ -101,6 +100,7 @@ import {
 import { releaseSplash } from "../lib/boot-splash";
 import { formatMemoryMB } from "../lib/format";
 import { useImeComposition } from "../lib/ime";
+import { modelSelector } from "../lib/model-picker";
 import {
 	useHeaderCover,
 	useHeaderTheme,

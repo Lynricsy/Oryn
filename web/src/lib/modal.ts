@@ -51,9 +51,11 @@ const FOCUSABLE = [
 	"[contenteditable='true']",
 ].join(",");
 
+/** 可用 Tab 走到的元素：`tabindex="-1"` 的控件（如选择器的分组竖轨）只给鼠标，不参与初始焦点与 Tab 循环。 */
 export function focusablesIn(root: HTMLElement): HTMLElement[] {
 	return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-		(el) => !el.closest("[hidden],[inert]"),
+		(el) =>
+			!el.closest("[hidden],[inert]") && el.getAttribute("tabindex") !== "-1",
 	);
 }
 

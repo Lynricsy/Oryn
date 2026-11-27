@@ -1162,13 +1162,14 @@ async function openModelDialog(page: Page) {
 	return dlg;
 }
 
-/** 在模型对话框的角色列表里点 role（收在「更多角色」里时先展开）。 */
+/** 在模型对话框的对象区里点 role（收在「更多角色」里时先展开）。 */
 async function clickRole(page: Page, role: string) {
 	const dlg = await openModelDialog(page);
 	const btn = dlg.locator(`button[data-role="${role}"]`).first();
 	if (!(await btn.isVisible()))
 		await dlg
-			.locator("details > summary")
+			.locator('button[aria-expanded="false"]')
+			.filter({ hasText: zh.modelPicker.moreRoles.split("（")[0] })
 			.first()
 			.click()
 			.catch(() => {});
@@ -1644,7 +1645,7 @@ async function R20() {
 		const h0 = await waitHeads(page, turnCount(tid));
 		const start = records(tid)[0];
 		note(`$D 启动记录：${recText(start)}`);
-		// 启动记录的 role 就是 default：此时角色列表里 default 已是「当前」，点它不发命令（RoleList 跳过当前项）。
+		// 启动记录的 role 就是 default：此时角色列表里 default 已是「当前」，点它不发命令（模型对话框跳过当前项）。
 		// 先点 $A（不发消息）离开 default，再点回 default。
 		await pickRole(page, tid, rs.A);
 		const recDef = await pickRole(page, tid, "default");
@@ -1708,8 +1709,9 @@ async function R21() {
 		);
 		await page.goto(`${BASE}/`);
 		await prefs;
-		// 首屏的 role 胶囊（无障碍名「对象：<名字>」）：首屏偏好是全局助手时先切回 default role，
-		// 再在「指定模型…」里选这个模型（目录里有就点目录行，没有就用自由输入的「使用 …」行）
+		// 首屏的 role 胶囊（无障碍名「对象：<名字>」）：首屏偏好是全局助手时先切回 default role
+		// （default 只是别名时它不单列，点带「默认」徽标的那个 role），再在选择器里选这个模型
+		// （目录里有就点目录行，没有就用自由输入的「使用 …」行）
 		const capsule = page.getByRole("button", {
 			name: new RegExp(`^${zh.roleCapsule.label.split("{{")[0]}`),
 		});
@@ -1719,20 +1721,14 @@ async function R21() {
 		) {
 			await capsule.click();
 			await popover
-				.getByRole("button", {
-					name: new RegExp(`^${zh.roles.names.default}`),
-				})
+				.locator("button[data-entry]")
+				.filter({ hasText: zh.modelPicker.default })
 				.first()
 				.click();
 			await popover.waitFor({ state: "hidden", timeout: 5_000 });
 		}
 		await capsule.click();
-		await popover
-			.getByRole("button", {
-				name: new RegExp(`^${zh.roleCapsule.pickModel}`),
-			})
-			.click();
-		await popover.getByLabel(zh.roleCapsule.modelInput).fill(model);
+		await popover.getByLabel(zh.modelPicker.searchFree).fill(model);
 		await popover
 			.locator(`[data-model="${model}"], [data-model-custom="${model}"]`)
 			.first()

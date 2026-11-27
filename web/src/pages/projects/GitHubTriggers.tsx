@@ -24,11 +24,12 @@ import {
 	useSetProjectGates,
 	useUpdateGitHubTrigger,
 } from "../../api/github-queries";
-import { ModelPickerBody } from "../../components/composer/ModelPickerBody";
+import { pickedModel } from "../../components/model-picker/ModelField";
+import { ModelPicker } from "../../components/model-picker/ModelPicker";
+import { ModelPickerPopover } from "../../components/model-picker/ModelPickerPopover";
 import { Badge, Callout, ListRow } from "../../components/ui/data";
 import { Icon } from "../../components/ui/icons";
 import { ModelLogo } from "../../components/ui/ModelLogo";
-import { Popover } from "../../components/ui/PickerPopover";
 import {
 	Button,
 	Dialog,
@@ -341,20 +342,26 @@ function ModelPool({
 						{t("github.triggers.addModel")}
 					</Button>
 					{open && (
-						<Popover side="bottom" onClose={() => setOpen(false)}>
-							<div className="p-1">
-								<ModelPickerBody
-									free
-									onPick={({ provider, id }) => {
-										if (
-											!value.some((x) => x.provider === provider && x.id === id)
+						<ModelPickerPopover
+							title={t("github.triggers.addModel")}
+							onClose={() => setOpen(false)}
+						>
+							<ModelPicker
+								free="model"
+								onPick={(target) => {
+									const picked = pickedModel(target);
+									if (!picked) return;
+									if (
+										!value.some(
+											(x) =>
+												x.provider === picked.provider && x.id === picked.id,
 										)
-											onChange([...value, { provider, id }]);
-										setOpen(false);
-									}}
-								/>
-							</div>
-						</Popover>
+									)
+										onChange([...value, picked]);
+									setOpen(false);
+								}}
+							/>
+						</ModelPickerPopover>
 					)}
 				</span>
 			</div>

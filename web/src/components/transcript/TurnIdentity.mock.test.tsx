@@ -23,9 +23,8 @@ import {
 import type { OmpFrame } from "../../state/thread-reducer";
 import { buildTranscript } from "../../state/transcript";
 import { uiStore } from "../../state/ui";
-import { RoleList } from "../composer/RolePicker";
+import { ModelChip } from "../composer/ComposerMeta";
 import { resetRoleState } from "../composer/RoleTrack";
-import { ThreadDialogs } from "../thread/Dialogs";
 import { TranscriptContext, type TranscriptContextValue } from "./context";
 import { Transcript } from "./Transcript";
 
@@ -192,8 +191,7 @@ function mount(threadId: string) {
 	return render(
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
-				<RoleList threadId={threadId} onPicked={() => undefined} />
-				<ThreadDialogs threadId={threadId} />
+				<ModelChip threadId={threadId} />
 				<View threadId={threadId} />
 			</MemoryRouter>
 		</QueryClientProvider>,
@@ -261,7 +259,8 @@ describe("线程页集成：点 role 与手动选同一模型（mock 后端）",
 		const before = heads().length;
 		expect(before).toBe(7);
 
-		// 1. 点 Mare（角色列表），发一条
+		// 1. 模型对话框里点 Mare（角色行），发一条
+		act(() => uiStore.getState().open({ kind: "model" }));
 		fireEvent.click(await screen.findByRole("button", { name: /^Mare/ }));
 		await vi.waitFor(() =>
 			expect(bridge.sent).toContainEqual({
@@ -317,6 +316,7 @@ describe("线程页集成：点 role 与手动选同一模型（mock 后端）",
 		const T = M96_IDS.legacyThread;
 		subscribe(T);
 		mount(T);
+		act(() => uiStore.getState().open({ kind: "model" }));
 		fireEvent.click(await screen.findByRole("button", { name: /^Mare/ }));
 		await vi.waitFor(() =>
 			expect(

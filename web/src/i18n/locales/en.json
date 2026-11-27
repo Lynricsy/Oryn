@@ -250,7 +250,6 @@
 		"newOrbDefault": "New orb (default)",
 		"noProject": "No project",
 		"defaultModel": "Default model",
-		"thinkingUnknown": "Supported levels not known yet",
 		"profileTitle": "Browser profile",
 		"profileNone": "No profile",
 		"profileInUse": "In use",
@@ -260,10 +259,29 @@
 		"label": "Talk to: {{name}}",
 		"title": "Talk to",
 		"assistantHint": "New assistant conversation",
-		"pickModel": "Specific model…",
-		"back": "Back",
-		"modelInput": "Search or enter provider/model id",
-		"useModel": "Use {{model}}"
+		"pickForAssistant": "Use this model for the assistant",
+		"pickForNew": "Use for the new conversation"
+	},
+	"modelPicker": {
+		"searchFree": "Search or enter provider/model id",
+		"searchPattern": "Search or enter a model pattern (provider/id, wildcard, @role)",
+		"use": "Use {{model}}",
+		"default": "Default",
+		"groups": "Groups",
+		"entries": "Targets",
+		"frequent": "Frequent",
+		"moreRoles": "More roles ({{n}})",
+		"favorite": "Favorite {{model}}",
+		"unfavorite": "Unfavorite {{model}}",
+		"capThinking": "Thinking",
+		"capImage": "Image input",
+		"capContext": "{{n}} context",
+		"preset": "Preset",
+		"levelsUnknown": "Not in the catalog; thinking levels unknown",
+		"noThinking": "This model has no adjustable thinking",
+		"pick": "Select",
+		"keyMove": "Move",
+		"keyClose": "Close"
 	},
 	"dockPill": {
 		"expand": "Expand composer",
@@ -1000,13 +1018,8 @@
 		"thinking": "Thinking",
 		"thinkingButton": "Thinking: {{level}}. Click to change",
 		"roles": "Roles",
-		"allModels": "All models",
 		"refresh": "Refresh",
 		"catalogStale": "The model list may be out of date (read {{time}})",
-		"moreRoles": "More roles ({{n}})",
-		"presetLevel": "Level preset by this role",
-		"currentLevel": "changed to {{level}}",
-		"effectiveLevel": "Level in effect (changed manually, differs from the role preset)",
 		"levelLabel": "Thinking: {{level}}",
 		"levels": {
 			"auto": "Auto",
@@ -1031,6 +1044,7 @@
 	},
 	"roles": {
 		"track": "Role models",
+		"loading": "Loading roles…",
 		"switched": "Switched to {{role}}: {{model}}",
 		"onlyOne": "Only one role model is available",
 		"unresolved": "The web client can't resolve this role's model ({{raw}})",
@@ -2071,8 +2085,6 @@
 			"followNamed": "Follow default ({{name}})",
 			"follow": "Follow default",
 			"missing": "{{name}} (no longer in the catalog)",
-			"option": "{{name}} · {{provider}} ({{family}})",
-			"optionUnavailable": "{{name}} · {{provider}} — unavailable: {{reason}}",
 			"unknownReason": "unsupported protocol",
 			"unavailable": "{{n}} models can't be used by Hindsight (greyed out); the reason is in each option.",
 			"needsRestart": "Restart Hindsight",
@@ -2707,7 +2719,8 @@
 		"models": {
 			"placeholder": "provider/model, or @role",
 			"add": "Add",
-			"remove": "Remove {{model}}"
+			"remove": "Remove {{model}}",
+			"clear": "Clear {{label}}"
 		},
 		"subagents": {
 			"bundledTitle": "Built-in agents",

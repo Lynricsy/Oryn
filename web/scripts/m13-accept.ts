@@ -500,55 +500,57 @@ async function openCapsule(p: Page) {
 	await popover(p).first().waitFor();
 }
 
-/** 首屏胶囊里选一项（全局助手 / role 名）。 */
+/** 首屏胶囊里选一个对象行（全局助手 / role 名；只认对象行，不点同名的模型行）。 */
 async function pickTarget(p: Page, name: string) {
 	await openCapsule(p);
 	await popover(p)
 		.getByRole("button", { name: new RegExp(`^${name}`) })
+		.and(p.locator("[data-entry]"))
 		.first()
 		.click();
 	await sleep(300);
 }
 
-/** 首屏胶囊「指定模型…」里列出的模型（`[data-model]`）。 */
+/** 首屏胶囊选择器里按厂商列出的模型（`[data-model]`；常用区用 `data-model-shortcut`，不重复计）。 */
 async function capsuleModels(p: Page): Promise<string[]> {
 	await openCapsule(p);
-	await popover(p)
-		.getByRole("button", { name: /^指定模型/ })
-		.click();
 	await popover(p).locator("[data-model]").first().waitFor();
 	return popover(p)
 		.locator("[data-model]")
 		.evaluateAll((els) => els.map((e) => e.getAttribute("data-model") ?? ""));
 }
 
-/** 模型角色页某个 role 的模型输入框所带 datalist 的选项（去掉 @role）。 */
+/** 模型角色页某个 role 的模型字段：点开它的模型选择器，读其中按厂商列出的模型（`[data-model]`）。 */
 async function settingsModels(p: Page, roleLabel: string): Promise<string[]> {
 	await p
 		.getByRole("button", { name: `设置 ${roleLabel}`, exact: true })
 		.click();
-	const input = p.getByLabel(`${roleLabel} 的模型`);
-	await input.waitFor();
-	const list = await input.getAttribute("list");
-	if (!list) throw new Error("模型输入框没有 datalist");
-	const read = async () =>
-		(
-			await p
-				.locator(`datalist[id="${list}"] option`)
-				.evaluateAll((els) => els.map((e) => e.getAttribute("value") ?? ""))
-		).filter((v) => v && !v.startsWith("@"));
-	// 目录是异步读的：等到有模型选项再取
-	return waitFor(
-		"模型角色编辑器的候选出现",
+	await p
+		.getByRole("button", { name: `${roleLabel} 的模型`, exact: true })
+		.click();
+	const picker = p.locator("[data-model-picker]").last();
+	await picker.waitFor();
+	const read = () =>
+		picker
+			.locator("[data-model]")
+			.evaluateAll((els) => els.map((e) => e.getAttribute("data-model") ?? ""));
+	// 目录是异步读的：等到有模型行再取
+	const models = await waitFor(
+		"模型角色编辑器的模型选择器出现模型",
 		async () => {
 			const v = await read();
 			return v.length > 0 ? v : null;
 		},
 		30_000,
 	).catch(read);
+	await p.keyboard.press("Escape");
+	return models;
 }
 
-/** 线程页 `/model` 对话框里的模型。 */
+/** 线程页的模型选择器：输入坞模型按钮上的弹层（桌面）/ 底部抽屉（窄屏），两者都是名为「模型」的 dialog。 */
+const threadPicker = (p: Page) => p.getByRole("dialog", { name: "模型" });
+
+/** 线程页 `/model` 打开的模型选择器里的模型。 */
 async function dialogModels(p: Page): Promise<string[]> {
 	const box = p.locator('textarea[aria-label="消息"]');
 	await box.waitFor({ timeout: 30_000 });
@@ -556,7 +558,7 @@ async function dialogModels(p: Page): Promise<string[]> {
 	await sleep(300);
 	await p.keyboard.press("Escape");
 	await box.press("Enter");
-	const dlg = p.getByRole("dialog", { name: "模型" });
+	const dlg = threadPicker(p);
 	await dlg.waitFor();
 	await dlg.locator("[data-model]").first().waitFor();
 	return dlg
@@ -672,10 +674,10 @@ async function mockR1() {
 	await shot(p, "mock-R1-home-models");
 	expect(
 		sameSet(home, chat),
-		`首屏「指定模型…」列表 = 目录 chat 模型（${home.length} 个）`,
+		`首屏胶囊选择器的模型列表 = 目录 chat 模型（${home.length} 个）`,
 	);
 	expect(!home.includes("web/exa"), "非对话模型（web/exa）不在列表里");
-	// 思考档位：选 Opus 5.5 后胶囊的思考级别等于目录的 thinking
+	// 思考档位：选 Opus 5.5 后，再打开时检视栏（高亮落在选中项上）的思考级别等于目录的 thinking
 	const opus = catalog.models.find((m) => m.id === "claude-opus-5-5");
 	await popover(p).locator('[data-model="anthropic/claude-opus-5-5"]').click();
 	await openCapsule(p);
@@ -683,11 +685,7 @@ async function mockR1() {
 		.getByRole("radiogroup", { name: "思考级别" })
 		.getByRole("radio")
 		.allInnerTexts();
-	const want = [
-		"默认",
-		"自动",
-		...(opus?.thinking ?? []).map((l) => LEVEL_ZH[l] ?? l),
-	];
+	const want = ["自动", ...(opus?.thinking ?? []).map((l) => LEVEL_ZH[l] ?? l)];
 	expect(
 		radios.map((s) => s.trim()).join(",") === want.join(","),
 		`选中 Opus 5.5 后思考级别 = ${radios.join("/")}（目录 ${opus?.thinking?.join("/")}）`,
@@ -732,7 +730,8 @@ async function mockR2() {
 	await spaGo(p, `/t/${MAIN_THREAD}`);
 	await dialogModels(p);
 	const n0 = (await reqs(p)).length;
-	await dialog(p).getByRole("button", { name: "刷新" }).click();
+	// 「刷新」在选择器自己的页脚里（弹层内），不在输入坞或页面别处
+	await threadPicker(p).getByRole("button", { name: "刷新" }).click();
 	await sleep(500);
 	expect(
 		(await reqs(p))
@@ -1572,52 +1571,46 @@ async function mockR13() {
 		(await p.getByTestId("role-capsule-popover").count()) === 1,
 		"桌面端是锚在胶囊上的弹层",
 	);
+	// 选择器列表的行序：对象行（`data-entry`）在前，然后是按厂商分组的模型行（`data-model`）
 	const items = await popover(p).evaluate((el) =>
-		[...el.querySelectorAll("button, [role=radiogroup], p, span")]
-			.filter(
-				(n) =>
-					n.tagName === "BUTTON" || n.getAttribute("role") === "radiogroup",
-			)
-			.map((n) =>
-				n.getAttribute("role") === "radiogroup"
-					? "#思考级别"
-					: (n.textContent ?? "").trim(),
-			)
-			.filter((t) => !t.startsWith("#") || t === "#思考级别"),
+		[...el.querySelectorAll("[data-entry], [data-model]")].map((n) =>
+			n.hasAttribute("data-entry")
+				? `entry:${n.getAttribute("data-entry")}`
+				: "model",
+		),
 	);
-	note(`弹层内容 ${items.map((s) => clip(s, 18)).join(" | ")}`);
-	const idx = (re: RegExp) => items.findIndex((s) => re.test(s));
-	const iA = idx(/^全局助手/);
-	const iRoles = MOCK_CYCLE.map((r) => items.findIndex((s) => s.includes(r)));
-	const iModel = idx(/^指定模型/);
+	note(`选择器行序 ${items.slice(0, 12).join(" | ")}`);
+	const iA = items.indexOf("entry:assistant");
+	const iRoles = MOCK_CYCLE.map((r) => items.indexOf(`entry:${r}`));
+	const iModel = items.indexOf("model");
 	expect(iA === 0, "第一项是全局助手");
 	expect(
 		iRoles.every((v, i) => v > iA && (i === 0 || v > (iRoles[i - 1] ?? -1))),
 		"然后是 cycleOrder 里的各 role，按顺序",
 	);
-	expect(iModel > Math.max(...iRoles), "然后是「指定模型…」");
-	const roleRow = popover(p).getByRole("button", { name: /^Mare/ });
+	expect(iModel > Math.max(...iRoles), "然后是按厂商分组的模型");
+	const roleRow = popover(p)
+		.getByRole("button", { name: /^Mare/ })
+		.and(p.locator("[data-entry]"));
 	expect(
 		(await roleRow.locator("[data-avatar]").count()) > 0 &&
 			/gpt|sol/i.test(await roleRow.innerText()),
 		"role 行带头像、名字与 selector 解析出的模型",
 	);
 	await shot(p, "mock-R13-popover");
-	// 选一个有思考档位的 role 后弹层末尾是思考强度
-	await popover(p).getByRole("button", { name: /^Mare/ }).click();
+	// 选一个有思考档位的 role 后再打开：高亮落在它上面，检视栏里是它的思考级别
+	await roleRow.click();
 	await openCapsule(p);
-	const tail = await popover(p).evaluate((el) => {
-		const rg = el.querySelector("[role=radiogroup]");
-		const pm = [...el.querySelectorAll("button")].find((b) =>
-			(b.textContent ?? "").startsWith("指定模型"),
-		);
+	const inspector = await popover(p).evaluate((el) => {
+		const rg = el.querySelector("aside [role=radiogroup]");
+		const hi = el.querySelector("[data-highlighted] [data-role]");
 		return (
 			!!rg &&
-			!!pm &&
-			!!(pm.compareDocumentPosition(rg) & Node.DOCUMENT_POSITION_FOLLOWING)
+			hi?.getAttribute("data-role") === "Mare" &&
+			hi.getAttribute("aria-current") === "true"
 		);
 	});
-	expect(tail, "思考强度在「指定模型…」之后");
+	expect(inspector, "思考级别在检视栏里，跟着高亮的选中项（Mare）");
 	const lbl2 = (await capsule(p).getAttribute("aria-label")) ?? "";
 	expect(
 		lbl2 === "对象：Mare" &&
@@ -1755,9 +1748,6 @@ async function mockR16() {
 	const p = await mockHome();
 	await pickTarget(p, "全局助手");
 	await openCapsule(p);
-	await popover(p)
-		.getByRole("button", { name: /^指定模型/ })
-		.click();
 	await popover(p).locator('[data-model="anthropic/claude-sonnet-5"]').click();
 	await p.getByTestId("attach-file-input").setInputFiles({
 		name: "m13-r16.txt",
@@ -1838,7 +1828,7 @@ async function mockR17() {
 	);
 	await dialogModels(p);
 	expect(
-		(await dialog(p).getByText("全局助手").count()) === 0,
+		(await threadPicker(p).getByText("全局助手").count()) === 0,
 		"线程内模型对话框没有「全局助手」选项",
 	);
 	await shot(p, "mock-R17-thread-model-dialog");
@@ -2277,10 +2267,16 @@ async function mockR28() {
 	);
 	expect(true, "内置 agent 可停用（task.disabledAgents）");
 	await row.getByRole("button", { name: "设置 scout 的模型与头像" }).click();
-	await row
-		.getByLabel("为 scout 添加覆盖模型")
-		.fill("anthropic/claude-sonnet-5");
-	await row.getByRole("button", { name: "添加", exact: true }).click();
+	// 「添加」打开模型选择器：筛选后点目录里的模型行（目录里没有时点「使用 …」）
+	await row.getByRole("button", { name: "为 scout 添加覆盖模型" }).click();
+	const overridePicker = p.locator("[data-model-picker]").last();
+	await overridePicker.getByRole("textbox").fill("anthropic/claude-sonnet-5");
+	await overridePicker
+		.locator(
+			'[data-model="anthropic/claude-sonnet-5"], [data-model-custom="anthropic/claude-sonnet-5"]',
+		)
+		.first()
+		.click();
 	await waitFor(
 		"agentModelOverrides.scout",
 		async () =>
@@ -3022,7 +3018,7 @@ async function realR1() {
 	const home = await capsuleModels(p);
 	expect(
 		sameSet(home, chat),
-		`首屏「指定模型…」= 中央目录（${home.length} 个）`,
+		`首屏胶囊选择器的模型列表 = 中央目录（${home.length} 个）`,
 	);
 	await popover(p).locator('[data-model="m13fake/m13-model-a"]').click();
 	await openCapsule(p);
@@ -3032,11 +3028,7 @@ async function realR1() {
 			.getByRole("radio")
 			.allInnerTexts()
 	).map((s) => s.trim());
-	const want = [
-		"默认",
-		"自动",
-		...(fake?.thinking ?? []).map((l) => LEVEL_ZH[l] ?? l),
-	];
+	const want = ["自动", ...(fake?.thinking ?? []).map((l) => LEVEL_ZH[l] ?? l)];
 	expect(
 		radios.join(",") === want.join(","),
 		`首屏选中 m13fake 模型后的思考级别 = ${radios.join("/")}`,

@@ -56,6 +56,7 @@ import { useSpaces } from "../../api/space-queries";
 import { useSshHosts } from "../../api/ssh-queries";
 import { confirmAction } from "../../lib/confirm";
 import { formatDateTime } from "../../lib/format";
+import { modelSelector } from "../../lib/model-picker";
 import {
 	browserZone,
 	CRON_PRESETS,
@@ -70,7 +71,6 @@ import { parseTitleCard } from "../../lib/title";
 import { useModelCaps } from "../../state/model-caps";
 import { useIndex } from "../../state/stores";
 import {
-	modelSelector,
 	RoleCapsule,
 	type Target,
 	targetModel,

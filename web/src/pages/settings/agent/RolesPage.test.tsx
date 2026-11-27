@@ -117,13 +117,24 @@ describe("RolesPage", () => {
 		expect(body).toContain("# 轮换");
 	});
 
-	it("模型与显示名：失焦提交，写 modelRoles 与 modelTags", async () => {
+	it("模型与显示名：选择器选中即提交，写 modelRoles 与 modelTags", async () => {
 		renderPage(<RolesPage />);
 		fireEvent.click(await screen.findByRole("button", { name: "设置 默认" }));
-		const model = screen.getByLabelText("默认 的模型");
+		const model = screen.getByRole("button", { name: "默认 的模型" });
 		await waitFor(() => expect(model).toBeEnabled());
-		fireEvent.change(model, { target: { value: "openai/gpt-5" } });
-		fireEvent.blur(model);
+		expect(model).toHaveAttribute("aria-haspopup", "dialog");
+		fireEvent.click(model);
+		const gpt = await waitFor(() => {
+			const el = document.querySelector<HTMLElement>(
+				'[data-model-picker] button[data-model="openai/gpt-5"]',
+			);
+			if (!el) throw new Error("no gpt-5 row");
+			return el;
+		});
+		fireEvent.click(gpt);
+		// 触发按钮显示目录里的名字与选择器
+		await waitFor(() => expect(model).toHaveTextContent("GPT-5"));
+		expect(model).toHaveTextContent("openai/gpt-5");
 		await waitFor(() =>
 			expect(lastConfig()).toEqual({
 				modelRoles: { default: "openai/gpt-5" },
@@ -139,6 +150,30 @@ describe("RolesPage", () => {
 			}),
 		);
 		expect(roleRow("default")).toHaveTextContent("主力");
+	});
+
+	it("模型模式：通配与 :level 后缀经「使用 …」原样提交；清除写空", async () => {
+		home.files["config.yml"] = "modelRoles:\n  default: openai/gpt-5\n";
+		renderPage(<RolesPage />);
+		fireEvent.click(await screen.findByRole("button", { name: "设置 默认" }));
+		const model = screen.getByRole("button", { name: "默认 的模型" });
+		await waitFor(() => expect(model).toBeEnabled());
+		fireEvent.click(model);
+		const search = await screen.findByRole("textbox", {
+			name: "搜索或输入模型模式（provider/id、通配、@角色）",
+		});
+		fireEvent.change(search, { target: { value: "anthropic/*:high" } });
+		fireEvent.click(
+			screen.getByRole("button", { name: /^使用 anthropic\/\*:high/ }),
+		);
+		await waitFor(() =>
+			expect(lastConfig()).toEqual({
+				modelRoles: { default: "anthropic/*:high" },
+			}),
+		);
+		expect(model).toHaveTextContent("anthropic/*:high");
+		fireEvent.click(screen.getByRole("button", { name: "清除默认 的模型" }));
+		await waitFor(() => expect(lastConfig()).toEqual({}));
 	});
 
 	it("新建自定义 role 加到轮换末尾；删除时清掉 cycleOrder、modelRoles 与 modelTags", async () => {

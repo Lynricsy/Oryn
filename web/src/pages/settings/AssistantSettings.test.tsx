@@ -315,7 +315,8 @@ describe("设置 → 全局助手", () => {
 			target: { value: "anthropic/claude-opus-4-6" },
 		});
 		fireEvent.click(
-			screen.getByRole("button", { name: "使用 anthropic/claude-opus-4-6" }),
+			// 高亮行带 ⌘/Ctrl+数字键帽，无障碍名以「使用 …」开头
+			screen.getByRole("button", { name: /^使用 anthropic\/claude-opus-4-6/ }),
 		);
 		await waitFor(() =>
 			expect(within(card).getByTestId("assistant-model")).toHaveTextContent(

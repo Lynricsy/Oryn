@@ -273,7 +273,8 @@ overlay(
 	async (page) => {
 		const d = await newSchedule(page);
 		await d.getByRole("button", { name: /^对象：/ }).click();
-		await page.getByRole("button", { name: /指定模型/ }).click();
+		// 同一个选择器输入筛选后的状态（列表收窄后弹层高度不变、检视栏跟随高亮）
+		await page.locator("[data-model-picker] input").fill("claude");
 	},
 );
 overlay("settings.automations.edit", "automations", (page) =>
@@ -376,6 +377,14 @@ surface({
 overlay("settings.agent-models.new", "agent-models", (page) =>
 	btn(page, "新建角色").click(),
 );
+// 模型角色编辑器里的模型字段：点触发按钮打开统一模型选择器
+overlay("settings.agent-models.model-picker", "agent-models", async (page) => {
+	await btn(page, "设置 默认").click();
+	await page
+		.locator("main")
+		.getByRole("button", { name: "默认 的模型", exact: true })
+		.click();
+});
 surface({
 	id: "settings.agent-models.expanded",
 	path: "/settings/agent-models",

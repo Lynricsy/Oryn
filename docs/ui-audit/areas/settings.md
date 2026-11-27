@@ -91,7 +91,7 @@ spec：`web/e2e/ui-audit/settings.e2e.ts`。代码：`web/src/pages/SettingsPage
 | `settings.automations.row-menu` | 定时行「…」菜单 | 自动化 → nightly 行「…」 | 菜单 |
 | `settings.automations.new` | 新建定时任务 | 自动化 → 创建 | 弹窗（手机为底部抽屉） |
 | `settings.automations.new.role-picker` | 定时对话框里的「对象」选择 | 新建定时任务 → 对象胶囊 | 对话框内下拉（手机为抽屉） |
-| `settings.automations.new.model-picker` | 定时对话框里的「指定模型」 | 对象胶囊 → 指定模型… | 对话框内下拉（手机为抽屉） |
+| `settings.automations.new.model-picker` | 定时对话框里对象选择器输入筛选后的状态 | 对象胶囊 → 搜索框输入 | 对话框内下拉（手机为抽屉） |
 | `settings.automations.edit` | 编辑定时（含运行记录） | 自动化 → 点 nightly | 弹窗 |
 | `settings.about` | 关于、协调宿主、退出登录 | 更多 → 关于 | 页面 |
 | `settings.desktop` | 桌面应用（仅桌面壳；只跑桌面视口） | 桌面 App → 更多 → 桌面应用 | 页面 |

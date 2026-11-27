@@ -140,12 +140,7 @@ surface({
 		await dialog.getByRole("button", { name: "添加模型" }).click();
 		return lastOverlay(page);
 	},
-	close: async (page) => {
-		await page
-			.getByTestId("github-trigger-dialog")
-			.getByRole("button", { name: "添加模型" })
-			.click();
-	},
+	// 关：缺省的 Escape（统一选择器在窄屏是底部抽屉，模态背景里的「添加模型」点不到；Escape 只关选择器，不关触发规则对话框）
 	reopen: async (page) => {
 		await page
 			.getByTestId("github-trigger-dialog")

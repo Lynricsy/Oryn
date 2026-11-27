@@ -13,10 +13,14 @@ import {
 	usePutResearchSettings,
 	useResearchSettings,
 } from "../../api/research-queries";
-import { ModelPickerBody } from "../../components/composer/ModelPickerBody";
+import { pickedModel } from "../../components/model-picker/ModelField";
+import {
+	ModelPicker,
+	modelKey,
+} from "../../components/model-picker/ModelPicker";
+import { ModelPickerPopover } from "../../components/model-picker/ModelPickerPopover";
 import { GroupNote } from "../../components/settings/agent-config-ui";
 import { ModelLogo } from "../../components/ui/ModelLogo";
-import { Popover } from "../../components/ui/PickerPopover";
 import {
 	Button,
 	ErrorText,
@@ -176,18 +180,21 @@ function ResearchBody({
 									{t("settings.research.modelChange")}
 								</Button>
 								{picking && (
-									<Popover side="bottom" onClose={() => setPicking(false)}>
-										<div className="p-1">
-											<ModelPickerBody
-												free
-												current={model}
-												onPick={({ provider, id }) => {
-													save({ model: { provider, id } });
-													setPicking(false);
-												}}
-											/>
-										</div>
-									</Popover>
+									<ModelPickerPopover
+										title={t("settings.research.model")}
+										onClose={() => setPicking(false)}
+									>
+										<ModelPicker
+											free="model"
+											selected={model ? modelKey(model) : undefined}
+											onPick={(target) => {
+												const picked = pickedModel(target);
+												if (!picked) return;
+												save({ model: picked });
+												setPicking(false);
+											}}
+										/>
+									</ModelPickerPopover>
 								)}
 							</span>
 						</>

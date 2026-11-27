@@ -7,8 +7,8 @@ spec：`web/e2e/ui-audit/home.e2e.ts`
 | id | 界面 | 打开路径（用户怎么点到） | 形态 |
 |---|---|---|---|
 | home | 首页：品牌标、标题、输入托盘与四个胶囊 | 启动后默认页 `/`；侧栏「新建线程」 | 页面 |
-| home.role-picker | 对话对象选择（全局助手 / 各 role / 默认 / 指定模型…） | 首页托盘左下「对象」胶囊 | 下拉（桌面）/ 底部抽屉（手机） |
-| home.model-picker | 指定模型：模型目录 + 筛选框 | 对象胶囊 → 「指定模型…」 | 下拉（桌面）/ 底部抽屉（手机） |
+| home.role-picker | 对话对象选择（统一模型选择器：分组竖轨 / 对象与模型列表 / 检视栏与思考级别） | 首页托盘左下「对象」胶囊 | 下拉（桌面）/ 底部抽屉（手机） |
+| home.model-picker | 同一选择器输入筛选后的状态（筛「claude」） | 对象胶囊 → 搜索框输入 | 下拉（桌面）/ 底部抽屉（手机） |
 | home.runner-picker | 执行位置（新 orb 规格、Runners） | 托盘「local · medium」胶囊 | 下拉 |
 | home.profile-picker | 浏览器 Profile | 托盘「浏览器 Profile」胶囊 | 下拉 |
 | home.project-picker | 项目 | 托盘「无项目」胶囊 | 下拉 |

@@ -1416,7 +1416,10 @@ const SCREENS: Screen[] = [
 			await openThread(page, MAIN_THREAD);
 			await composer(page).fill("/model");
 			await composer(page).press("Enter");
-			await page.getByRole("dialog").waitFor({ timeout: 10_000 });
+			// 模型按钮上的弹层（窄屏是底部抽屉），都是名为「模型」的 dialog
+			await page
+				.getByRole("dialog", { name: "模型" })
+				.waitFor({ timeout: 10_000 });
 			await settle(page);
 		},
 	},

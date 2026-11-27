@@ -1,6 +1,7 @@
 /**
- * 首屏 role 胶囊（M13 5.3）：`allowAssistant=false` 时没有全局助手项（R17）；选 role、选全局助手、指定模型（目录与自由输入）
- * 三种 onChange 的取值；role 行给出按中央目录解析出的模型；窄视口下渲染为底部抽屉。
+ * 首屏 role 胶囊（M13 5.3）：`allowAssistant=false` 时没有全局助手项（R17）；选 role、选全局助手、选模型（目录与自由输入）
+ * 的 onChange 取值（全局助手下选模型 = 助手改用该模型）；role 行给出按中央目录解析出的模型；思考级别跟着高亮项
+ * （改选中项 = 就地改级别，改别的项 = 连同级别选中它）；窄视口下渲染为底部抽屉。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -181,9 +182,8 @@ describe("RoleCapsule", () => {
 		fireEvent.click(screen.getByRole("button", { name: /^全局助手/ }));
 		expect(changes.at(-1)).toEqual({ kind: "assistant" });
 
-		// 全局助手下指定模型：仍是助手对象，带上模型
+		// 全局助手下选模型：仍是助手对象，带上模型（模型行直接在选择器里）
 		openCapsule();
-		fireEvent.click(screen.getByRole("button", { name: /^指定模型/ }));
 		fireEvent.click(
 			await vi.waitFor(() => {
 				const el = document.querySelector<HTMLElement>(
@@ -197,16 +197,27 @@ describe("RoleCapsule", () => {
 			kind: "assistant",
 			model: { provider: "openai", id: "gpt-x", name: "GPT X" },
 		});
+		// 改用了别的模型的助手再点「全局助手」：重置为默认模型
+		openCapsule();
+		expect(screen.getByRole("button", { name: /^全局助手/ })).toHaveAttribute(
+			"aria-current",
+			"true",
+		);
+		fireEvent.click(screen.getByRole("button", { name: /^全局助手/ }));
+		expect(changes.at(-1)).toEqual({ kind: "assistant" });
 
-		// 普通对象下指定模型：自由输入目录里没有的 provider/id
+		// 普通对象下选模型：自由输入目录里没有的 provider/id
 		openCapsule();
 		fireEvent.click(screen.getByRole("button", { name: /^快速/ }));
 		openCapsule();
-		fireEvent.click(screen.getByRole("button", { name: /^指定模型/ }));
 		fireEvent.change(screen.getByLabelText("搜索或输入 provider/模型 id"), {
 			target: { value: "acme/custom-1" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "使用 acme/custom-1" }));
+		fireEvent.click(
+			document.querySelector(
+				'[data-model-custom="acme/custom-1"]',
+			) as HTMLElement,
+		);
 		expect(changes.at(-1)).toEqual({
 			kind: "model",
 			model: { provider: "acme", id: "custom-1" },
@@ -278,11 +289,11 @@ describe("RoleCapsule", () => {
 		);
 		openCapsule();
 		const row = await screen.findByRole("button", { name: /^昔涟.*Opus/ });
-		// 选中项：Option 选中时带实底 bg-hover（未选中只有 hover:bg-hover）
-		expect(row.className.split(/\s+/)).toContain("bg-hover");
-		expect(
-			screen.getByRole("button", { name: /^Mare/ }).className.split(/\s+/),
-		).not.toContain("bg-hover");
+		// 选中项带 aria-current
+		expect(row).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("button", { name: /^Mare/ })).not.toHaveAttribute(
+			"aria-current",
+		);
 		expect(screen.queryByRole("button", { name: /^默认/ })).toBeNull();
 		// 不在 cycleOrder 的其它 role 不列出
 		expect(screen.queryByRole("button", { name: /^快速/ })).toBeNull();
@@ -300,11 +311,12 @@ describe("RoleCapsule", () => {
 		]);
 	});
 
-	/** 弹层里某个 role 行画的思考级别（没有图形时 undefined）。 */
+	/** 选择器里某个对象行画的思考级别（没有图形时 undefined）；只看对象行，不看同名的模型行。 */
 	const rowLevel = (name: RegExp) =>
 		screen
-			.getByRole("button", { name })
-			.querySelector("[data-level]")
+			.getAllByRole("button", { name })
+			.find((b) => b.hasAttribute("data-entry"))
+			?.querySelector("[data-level]")
 			?.getAttribute("data-level") ?? undefined;
 
 	it("role 行画出各自实际生效的思考级别：显式级别优先，其余跟 default 的显式级别并按模型能力收窄", async () => {
@@ -367,7 +379,8 @@ describe("RoleCapsule", () => {
 		expect(rowLevel(/^Fixed/)).toBe("low");
 		expect(rowLevel(/^默认/)).toBe("high");
 		const group = screen.getByRole("radiogroup", { name: "思考级别" });
-		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+		// role 的预设级别在检视栏里另标「预设」
+		expect(within(group).getByRole("radio", { name: /^高/ })).toHaveAttribute(
 			"aria-checked",
 			"true",
 		);
@@ -440,5 +453,91 @@ describe("RoleCapsule", () => {
 			"aria-checked",
 			"true",
 		);
+	});
+
+	it("点别的 role 的思考级别：连同级别选中该 role 并关闭；点到它自己的级别时不单独指定", async () => {
+		roleList = [
+			{ role: "Mare", inCycle: true, selector: "anthropic/claude-opus-5-5" },
+			{ role: "default", inCycle: true, selector: "openai/gpt-x" },
+		];
+		defaultThinking = "low";
+		const changes = mount(true, { kind: "role", role: "default" });
+		openCapsule();
+		await vi.waitFor(() => expect(rowLevel(/^Mare/)).toBe("low"));
+		// 检视栏跟着高亮项：移到 Mare，列出 Mare 的模型支持的级别，选中它自己的级别
+		fireEvent.mouseMove(
+			screen
+				.getAllByRole("button", { name: /^Mare/ })
+				.find((b) => b.hasAttribute("data-entry")) as HTMLElement,
+		);
+		const group = screen.getByRole("radiogroup", { name: "思考级别" });
+		expect(
+			within(group)
+				.getAllByRole("radio")
+				.map((r) => r.textContent),
+		).toEqual(["自动", "低预设", "中", "高", "超高"]);
+		expect(within(group).getByRole("radio", { name: /^低/ })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		fireEvent.click(within(group).getByRole("radio", { name: "超高" }));
+		expect(changes).toEqual([
+			{ kind: "role", role: "Mare", thinking: "xhigh" },
+		]);
+		expect(screen.queryByTestId("role-capsule-popover")).toBeNull();
+
+		// 再打开：高亮落在选中的 Mare 上，级别是改过的 xhigh；移到 default 点它自己的 low，不带 thinking
+		openCapsule();
+		expect(
+			within(screen.getByRole("radiogroup", { name: "思考级别" })).getByRole(
+				"radio",
+				{ name: "超高" },
+			),
+		).toHaveAttribute("aria-checked", "true");
+		fireEvent.mouseMove(
+			screen
+				.getAllByRole("button", { name: /^默认/ })
+				.find((b) => b.hasAttribute("data-entry")) as HTMLElement,
+		);
+		fireEvent.click(
+			within(screen.getByRole("radiogroup", { name: "思考级别" })).getByRole(
+				"radio",
+				{ name: /^低/ },
+			),
+		);
+		expect(changes.at(-1)).toEqual({ kind: "role", role: "default" });
+	});
+
+	it("全局助手下给模型挑级别：助手改用该模型并带上级别", async () => {
+		assistantSettings = { thinkingLevel: "high" };
+		const changes = mount(true, { kind: "assistant" });
+		openCapsule();
+		const opus = await vi.waitFor(() => {
+			const el = document.querySelector<HTMLElement>(
+				'[data-model="anthropic/claude-opus-5-5"]',
+			);
+			if (!el) throw new Error("模型列表未就绪");
+			return el;
+		});
+		fireEvent.mouseMove(opus);
+		expect(screen.getByText("全局助手改用此模型")).toBeInTheDocument();
+		const group = screen.getByRole("radiogroup", { name: "思考级别" });
+		// 助手的默认档位 high，该模型支持
+		expect(within(group).getByRole("radio", { name: "高" })).toHaveAttribute(
+			"aria-checked",
+			"true",
+		);
+		fireEvent.click(within(group).getByRole("radio", { name: "中" }));
+		expect(changes).toEqual([
+			{
+				kind: "assistant",
+				model: {
+					provider: "anthropic",
+					id: "claude-opus-5-5",
+					name: "Claude Opus 5.5",
+				},
+				thinking: "medium",
+			},
+		]);
 	});
 });

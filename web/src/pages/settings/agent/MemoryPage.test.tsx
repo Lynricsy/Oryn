@@ -205,14 +205,25 @@ describe("MemoryPage", () => {
 	});
 });
 
-/** 用途的选择器（自绘 combobox，按外层 data-purpose 取更稳）。 */
+/** 用途的模型字段（打开统一选择器的触发按钮，按外层 data-purpose 取更稳）。 */
 async function purposeSelect(
 	container: HTMLElement,
 	purpose: string,
 ): Promise<HTMLElement> {
-	const selector = `[data-purpose="${purpose}"] [role="combobox"]`;
+	const selector = `[data-purpose="${purpose}"] button[aria-haspopup]`;
 	await waitFor(() => expect(container.querySelector(selector)).not.toBeNull());
 	return container.querySelector(selector) as HTMLElement;
+}
+
+/** 打开的选择器里某个模型行（`provider/id`）；常用区的同一模型不带 `data-model`，不会撞上。 */
+async function pickerModel(selector: string): Promise<HTMLElement> {
+	return waitFor(() => {
+		const el = document.querySelector<HTMLElement>(
+			`[data-model-picker] button[data-model="${selector}"]`,
+		);
+		if (!el) throw new Error(`no ${selector} row`);
+		return el;
+	});
 }
 
 describe("ModelsCard", () => {
@@ -220,17 +231,32 @@ describe("ModelsCard", () => {
 		const { container } = mount(<ModelsCard />);
 		const select = await purposeSelect(container, "default");
 		fireEvent.click(select);
-		const codex = await screen.findByRole("option", {
-			name: /GPT-5\.1 Codex/,
-		});
+		const codex = await pickerModel("openai-codex/gpt-5.1-codex");
+		expect(codex).toHaveAccessibleName(/^GPT-5\.1 Codex/);
 		expect(codex).toHaveAttribute("aria-disabled", "true");
 		expect(codex.textContent).toMatch(/openai-codex-responses/);
+		// 可用的模型行尾写协议族
+		expect(
+			(await pickerModel("openrouter/deepseek/deepseek-v3.2")).textContent,
+		).toContain(T("memoryPage.family.openai"));
 		fireEvent.keyDown(codex, { key: "Escape" });
-		// 其余用途第一项是「跟随默认」，未单独设置时显示的就是它
+		await waitFor(() =>
+			expect(document.querySelector("[data-model-picker]")).toBeNull(),
+		);
+		// 其余用途的对象区第一项是「跟随默认」，未单独设置时显示的就是它
 		const retain = await purposeSelect(container, "retain");
 		expect(retain).toHaveTextContent(
 			T("memoryPage.models.followNamed", { name: "Claude Haiku 4.5" }),
 		);
+		fireEvent.click(retain);
+		const follow = await waitFor(() => {
+			const el = document.querySelector<HTMLElement>(
+				'[data-model-picker] button[data-entry="follow"]',
+			);
+			if (!el) throw new Error("no follow row");
+			return el;
+		});
+		expect(follow).toHaveAttribute("aria-current", "true");
 	});
 
 	it("换了协议：显示 .env 片段与「需要重启 Hindsight」，点「我已重启」后消失", async () => {
@@ -238,9 +264,8 @@ describe("ModelsCard", () => {
 		const retain = await purposeSelect(container, "retain");
 		expect(screen.queryByText(T("memoryPage.models.needsRestart"))).toBeNull();
 		fireEvent.click(retain);
-		fireEvent.click(
-			await screen.findByRole("option", { name: /DeepSeek V3\.2/ }),
-		);
+		fireEvent.click(await pickerModel("openrouter/deepseek/deepseek-v3.2"));
+		expect(retain).toHaveTextContent("DeepSeek V3.2");
 		fireEvent.click(screen.getByRole("button", { name: T("common.save") }));
 		expect(
 			await screen.findByText(T("memoryPage.models.needsRestart")),
@@ -482,9 +507,7 @@ describe("EndpointsCard", () => {
 		);
 		const retain = await purposeSelect(container, "retain");
 		fireEvent.click(retain);
-		fireEvent.click(
-			await screen.findByRole("option", { name: /DeepSeek V3\.2/ }),
-		);
+		fireEvent.click(await pickerModel("openrouter/deepseek/deepseek-v3.2"));
 		expect(screen.queryByTestId("memory-env-snippet")).toBeNull();
 		const [saveModels] = screen.getAllByRole("button", {
 			name: T("common.save"),

@@ -4,7 +4,8 @@
  * 解析别名与回退链用的模型列表取中央模型目录 `useModelCatalog`）、
  * 切换（`lib/model-select.ts`：新 Core 发 oryn_select_model，旧 Core 回退 set_model + set_thinking_level；按序合并连按）、
  * 托盘闪色与读屏播报（轨道本身是 `RoleRail.tsx`，首页共用）。当前格：线程里有来源记录时只认记录（`recordedRoleIndex`，不读写本机记忆）；
- * 没有记录（旧 Core）时沿用本机记忆 + 现有的匹配逻辑。模型对话框里的角色列表（RolePicker.tsx）走同一套取数与切换。
+ * 没有记录（旧 Core）时沿用本机记忆 + 现有的匹配逻辑。线程模型对话框（`thread/Dialogs.tsx` 的 `ModelDialog`，统一选择器
+ * `ModelPicker`）的角色行由 `roleEntries` 组装，走同一套取数与切换。
  */
 import {
 	type QueryClient,
@@ -45,6 +46,8 @@ import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import { type AccentName, useTheme } from "../../state/theme";
 import { activeBranch } from "../../state/transcript";
 import { uiStore } from "../../state/ui";
+import type { PickerEntry } from "../model-picker/ModelPicker";
+import { IdentityAvatar } from "../ui/IdentityAvatar";
 import { describeError } from "../ui/primitives";
 import { type RailSlot, RoleRail } from "./RoleRail";
 
@@ -286,7 +289,8 @@ export function slotProblem(slot: RoleSlot): string | undefined {
 	return undefined;
 }
 
-async function refreshState(threadId: string) {
+/** 重读会话 state 写回线程 store（切模型、改级别之后）。 */
+export async function refreshState(threadId: string) {
 	const state = (await realtime.cmd(threadId, {
 		type: "get_state",
 	})) as SessionState;
@@ -338,11 +342,14 @@ function roleIndex(
 }
 
 /**
- * 每个线程一个串行的切换工作者：连按时只保留最新目标，在途的一次做完后再切到它（不乱序、不堆积）。
+ * 每个线程一个串行的切换工作者：连按时只保留最新目标（连同它的级别），在途的一次做完后再切到它（不乱序、不堆积）。
  * 刷新状态也在循环里：刷新期间排入的新目标在刷新返回后接着处理，队列确实为空才结束并清 `pending`。
  * 新 Core 路径在清 `pending` 之前等来源记录入库；旧 Core 路径没有记录，改写本机记忆。
  */
-const workers = new Map<string, { want?: RoleSlot; running: boolean }>();
+const workers = new Map<
+	string,
+	{ want?: RoleSlot; level?: string; running: boolean }
+>();
 
 async function drain(threadId: string) {
 	const w = workers.get(threadId);
@@ -354,16 +361,25 @@ async function drain(threadId: string) {
 		for (;;) {
 			const slot = w.want;
 			if (slot) {
+				const level = w.level;
 				w.want = undefined;
+				w.level = undefined;
 				const model = slot.model;
 				if (!model) continue;
 				const { legacy } = await selectRole(threadId, slot);
+				// 连同级别切换（模型对话框里点别的 role 的级别）：角色切好后级别与预设不同再改
+				const changed = level !== undefined && level !== slot.thinkingLevel;
+				if (changed)
+					await realtime.cmd(threadId, {
+						type: "set_thinking_level",
+						level: level as "auto",
+					});
 				if (legacy)
 					writeMemory(threadId, {
 						role: slot.id,
 						provider: model.provider,
 						id: model.id,
-						thinkingLevel: slot.thinkingLevel,
+						thinkingLevel: changed ? level : slot.thinkingLevel,
 					});
 				last = slot;
 				lastLegacy = legacy;
@@ -386,6 +402,7 @@ async function drain(threadId: string) {
 		}
 	} catch (e) {
 		w.want = undefined;
+		w.level = undefined;
 		patchThread(threadId, () => ({
 			message: { tone: "error", text: describeError(e, i18n.t) },
 		}));
@@ -395,8 +412,11 @@ async function drain(threadId: string) {
 	}
 }
 
-/** 切到某个角色：轨道立刻滑过去，命令按序发出。Ctrl+P、轨道点击与模型对话框共用。 */
-export function requestRole(threadId: string, slot: RoleSlot) {
+/**
+ * 切到某个角色：轨道立刻滑过去，命令按序发出。Ctrl+P、轨道点击与模型对话框共用。
+ * `level`：连同思考级别一起切（与角色预设不同时切好后再发 `set_thinking_level`）；连按时以最后一次为准。
+ */
+export function requestRole(threadId: string, slot: RoleSlot, level?: string) {
 	if (slot.status !== "ok") return;
 	patchThread(threadId, (s) => ({
 		pending: slot.id,
@@ -409,6 +429,7 @@ export function requestRole(threadId: string, slot: RoleSlot) {
 		workers.set(threadId, w);
 	}
 	w.want = slot;
+	w.level = level;
 	void drain(threadId);
 }
 
@@ -477,7 +498,7 @@ export interface RoleView extends RoleGroups {
 	currentId?: string;
 	/** 轨道里当前高亮的格：在途目标优先，否则当前角色。 */
 	trackId?: string;
-	/** 当前实际生效的思考级别（与模型对话框的思考级别下拉框同源），可能被手动改得和角色预设不同。 */
+	/** 当前实际生效的思考级别（与输入坞思考圆圈的配置值同源），可能被手动改得和角色预设不同。 */
 	currentLevel?: string;
 	/** 当前主题色：轨道色板据此跳过和强调色相近的色相。 */
 	accent: AccentName;
@@ -553,6 +574,75 @@ export function slotHue(
 	return roleHue(slot.id, view.cycle.indexOf(slot), view.accent);
 }
 
+/**
+ * role 的头像：与回合头、Ctrl+P 轨道同一套规则（turn-role 的 siteRoleFaces）：没进身份表的 role 用默认 Agent 身份。
+ */
+export function useRoleAvatar(): (roleId: string) => RailSlot["avatar"] {
+	const identities = useRoleIdentities().data?.roles;
+	const agent = useIdentity("agent").data;
+	return useMemo(() => {
+		const faces = new Map(siteRoleFaces(identities).map((f) => [f.role, f]));
+		return (roleId: string): RailSlot["avatar"] => {
+			const face = faces.get(roleId);
+			return face
+				? {
+						identity: {
+							avatarIcon: face.avatarIcon,
+							avatarImage: face.avatarImage,
+						},
+						of: "role",
+						glyph: face.glyph,
+					}
+				: {
+						identity: {
+							avatarIcon: agent?.avatarIcon,
+							avatarImage: agent?.avatarImage,
+						},
+						of: "agent",
+					};
+		};
+	}, [identities, agent]);
+}
+
+/**
+ * 角色视图 → 统一选择器（`ModelPicker`）的对象行：cycleOrder、其余 chat 角色在前，后台角色收进「更多角色」。
+ * 头像与首页对象胶囊、Ctrl+P 轨道一致；行尾级别图标：当前角色画实际生效的级别，其余画预设。
+ */
+export function roleEntries(
+	view: RoleView,
+	avatar: (roleId: string) => RailSlot["avatar"],
+): PickerEntry[] {
+	const entry = (slot: RoleSlot, more: boolean): PickerEntry => {
+		const ok = slot.status === "ok";
+		const a = avatar(slot.id);
+		return {
+			key: slot.id,
+			name: roleLabel(slot),
+			face: (
+				<IdentityAvatar
+					identity={a.identity}
+					of={a.of}
+					glyph={a.glyph}
+					size={18}
+					shape="circle"
+				/>
+			),
+			model: ok ? slot.model : undefined,
+			level:
+				slot.id === view.currentId ? view.currentLevel : slot.thinkingLevel,
+			hint: slot.raw,
+			problem: ok ? undefined : slotProblem(slot),
+			more,
+			data: { role: slot.id },
+		};
+	};
+	return [
+		...view.cycle.map((s) => entry(s, false)),
+		...view.others.map((s) => entry(s, false)),
+		...view.more.map((s) => entry(s, true)),
+	];
+}
+
 // ---------------------------------------------------------------- 快捷键与轨道
 
 /** Ctrl+P / Shift+Ctrl+P（mac ⌘P）：线程页循环切换角色模型，并屏蔽浏览器的打印。 */
@@ -592,39 +682,22 @@ export function RoleTrack({
 	// 按过一次之后不再看 agent 状态：orb 挂起时也要能显示错误提示
 	const view = useRoleView(threadId, queryable || thread.flash > 0);
 	const { cycle, accent } = view;
-	// 头像与回合头同一套规则（turn-role 的 siteRoleFaces）：没进身份表的 role 用默认 Agent 身份
-	const identities = useRoleIdentities().data?.roles;
-	const agent = useIdentity("agent").data;
-	const slots = useMemo<RailSlot[]>(() => {
-		const faces = new Map(siteRoleFaces(identities).map((f) => [f.role, f]));
-		return cycle.map((slot) => {
-			const ok = slot.status === "ok";
-			const face = faces.get(slot.id);
-			return {
-				id: slot.id,
-				label: roleLabel(slot),
-				hue: slotHue(slot, { cycle, accent }),
-				avatar: face
-					? {
-							identity: {
-								avatarIcon: face.avatarIcon,
-								avatarImage: face.avatarImage,
-							},
-							of: "role",
-							glyph: face.glyph,
-						}
-					: {
-							identity: {
-								avatarIcon: agent?.avatarIcon,
-								avatarImage: agent?.avatarImage,
-							},
-							of: "agent",
-						},
-				ok,
-				title: ok ? slotSelector(slot) : slotProblem(slot),
-			};
-		});
-	}, [cycle, accent, identities, agent]);
+	const avatar = useRoleAvatar();
+	const slots = useMemo<RailSlot[]>(
+		() =>
+			cycle.map((slot) => {
+				const ok = slot.status === "ok";
+				return {
+					id: slot.id,
+					label: roleLabel(slot),
+					hue: slotHue(slot, { cycle, accent }),
+					avatar: avatar(slot.id),
+					ok,
+					title: ok ? slotSelector(slot) : slotProblem(slot),
+				};
+			}),
+		[cycle, accent, avatar],
+	);
 	const targetHue = slots.find((s) => s.id === thread.pending)?.hue;
 
 	// 托盘描边闪一下目标角色色（CSS 动画结束即回到默认描边，不留痕）

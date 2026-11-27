@@ -74,6 +74,32 @@ function lastConfig(): Record<string, unknown> | undefined {
 	return put ? readConfigDoc(put.body).toJS() : undefined;
 }
 
+/** 点模型字段打开选择器，在搜索框里写模式，点「使用 …」行（高亮行带键帽，名字按前缀匹配）。 */
+async function pickPattern(trigger: HTMLElement, value: string): Promise<void> {
+	fireEvent.click(trigger);
+	const search = await screen.findByRole("textbox", {
+		name: "搜索或输入模型模式（provider/id、通配、@角色）",
+	});
+	fireEvent.change(search, { target: { value } });
+	const escaped = value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+	fireEvent.click(
+		screen.getByRole("button", { name: new RegExp(`^使用 ${escaped}`) }),
+	);
+}
+
+/** 点模型字段打开选择器，选对象区的 `@role` 行。 */
+async function pickRole(trigger: HTMLElement, role: string): Promise<void> {
+	fireEvent.click(trigger);
+	const row = await waitFor(() => {
+		const el = document.querySelector<HTMLElement>(
+			`[data-model-picker] button[data-entry="@${role}"]`,
+		);
+		if (!el) throw new Error(`no @${role} row`);
+		return el;
+	});
+	fireEvent.click(row);
+}
+
 beforeEach(() => {
 	resetHome({ "agents/foo.md": FOO });
 	avatarPuts = [];
@@ -116,18 +142,20 @@ describe("SubagentsPage", () => {
 		const dialog = await screen.findByRole("dialog", {
 			name: "设置 task 的模型与头像",
 		});
-		const input = within(dialog).getByLabelText("为 task 添加覆盖模型");
-		fireEvent.change(input, { target: { value: "openai/gpt-5" } });
-		fireEvent.keyDown(input, { key: "Enter" });
+		await pickPattern(
+			within(dialog).getByRole("button", { name: "为 task 添加覆盖模型" }),
+			"openai/gpt-5",
+		);
 		await waitFor(() =>
 			expect(lastConfig()).toEqual({
 				task: { agentModelOverrides: { task: "openai/gpt-5" } },
 			}),
 		);
 		// 再加一个：写成按顺序回退的列表
-		const again = within(dialog).getByLabelText("为 task 添加覆盖模型");
-		fireEvent.change(again, { target: { value: "@slow" } });
-		fireEvent.keyDown(again, { key: "Enter" });
+		await pickPattern(
+			within(dialog).getByRole("button", { name: "为 task 添加覆盖模型" }),
+			"@slow",
+		);
 		await waitFor(() =>
 			expect(lastConfig()).toEqual({
 				task: { agentModelOverrides: { task: ["openai/gpt-5", "@slow"] } },
@@ -159,9 +187,11 @@ describe("SubagentsPage", () => {
 		fireEvent.change(within(dialog).getByLabelText(/^描述/), {
 			target: { value: "审查 diff" },
 		});
-		const model = within(dialog).getByLabelText("添加模型");
-		fireEvent.change(model, { target: { value: "@smol" } });
-		fireEvent.keyDown(model, { key: "Enter" });
+		// 对象区的 @role 行：选中即追加 `@smol`
+		await pickRole(
+			within(dialog).getByRole("button", { name: "添加模型" }),
+			"smol",
+		);
 		fireEvent.click(
 			within(dialog).getByRole("combobox", { name: /^思考档位/ }),
 		);

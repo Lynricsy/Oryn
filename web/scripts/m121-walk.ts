@@ -1082,13 +1082,29 @@ async function w4() {
 	);
 	const n = await d.locator("button[data-model]").count();
 	expect(n > 0, `模型列表 ${n} 项`);
-	const current = await d
-		.locator("button[data-model].font-medium")
+	// 统一选择器：选中项是当前角色行（`data-entry`，aria-current）；认不出角色时是当前模型行（`font-medium`）
+	const currentRole = await d
+		.locator("button[data-entry][aria-current=true]")
 		.first()
-		.getAttribute("data-model", { timeout: 3000 })
+		.getAttribute("data-entry", { timeout: 3000 })
 		.catch(() => null);
-	note(`当前模型行：${current ?? "未标出"}`);
-	expect(current !== null, "当前模型行有选中样式");
+	const current =
+		currentRole === null
+			? await d
+					.locator("button[data-model].font-medium")
+					.first()
+					.getAttribute("data-model", { timeout: 3000 })
+					.catch(() => null)
+			: null;
+	note(
+		currentRole !== null
+			? `当前角色行：${currentRole}`
+			: `当前模型行：${current ?? "未标出"}`,
+	);
+	expect(
+		currentRole !== null || current !== null,
+		"当前角色行或当前模型行有选中样式",
+	);
 	await shots(p, "w4-model", async () => {
 		await ensureDialog(p, "模型", "/model");
 		await d

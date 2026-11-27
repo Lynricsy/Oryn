@@ -250,7 +250,6 @@
 		"newOrbDefault": "新 orb（默认）",
 		"noProject": "无项目",
 		"defaultModel": "默认模型",
-		"thinkingUnknown": "还不知道这个模型支持哪些级别",
 		"profileTitle": "浏览器 Profile",
 		"profileNone": "不用 Profile",
 		"profileInUse": "使用中",
@@ -260,10 +259,29 @@
 		"label": "对象：{{name}}",
 		"title": "对话对象",
 		"assistantHint": "新建助手对话",
-		"pickModel": "指定模型…",
-		"back": "返回",
-		"modelInput": "搜索或输入 provider/模型 id",
-		"useModel": "使用 {{model}}"
+		"pickForAssistant": "全局助手改用此模型",
+		"pickForNew": "用于新对话"
+	},
+	"modelPicker": {
+		"searchFree": "搜索或输入 provider/模型 id",
+		"searchPattern": "搜索或输入模型模式（provider/id、通配、@角色）",
+		"use": "使用 {{model}}",
+		"default": "默认",
+		"groups": "分组",
+		"entries": "对象",
+		"frequent": "常用",
+		"moreRoles": "更多角色（{{n}}）",
+		"favorite": "收藏 {{model}}",
+		"unfavorite": "取消收藏 {{model}}",
+		"capThinking": "思考",
+		"capImage": "图像输入",
+		"capContext": "{{n}} 上下文",
+		"preset": "预设",
+		"levelsUnknown": "目录里没有这个模型，思考级别未知",
+		"noThinking": "这个模型不能调节思考",
+		"pick": "选择",
+		"keyMove": "移动",
+		"keyClose": "关闭"
 	},
 	"dockPill": {
 		"expand": "展开输入框",
@@ -1000,13 +1018,8 @@
 		"thinking": "思考级别",
 		"thinkingButton": "思考级别：{{level}}，点击调整",
 		"roles": "角色",
-		"allModels": "全部模型",
 		"refresh": "刷新",
 		"catalogStale": "模型列表可能不是最新的（{{time}} 读取）",
-		"moreRoles": "更多角色（{{n}}）",
-		"presetLevel": "这个 role 预设的级别",
-		"currentLevel": "已改为 {{level}}",
-		"effectiveLevel": "当前实际生效的级别（已手动改过，与 role 预设不同）",
 		"levelLabel": "思考级别：{{level}}",
 		"levels": {
 			"auto": "自动",
@@ -1031,6 +1044,7 @@
 	},
 	"roles": {
 		"track": "角色模型",
+		"loading": "正在读取角色…",
 		"switched": "已切换到 {{role}}：{{model}}",
 		"onlyOne": "只有一个角色模型可用",
 		"unresolved": "网页端无法解析这个角色的模型（{{raw}}）",
@@ -2071,8 +2085,6 @@
 			"followNamed": "跟随默认（{{name}}）",
 			"follow": "跟随默认",
 			"missing": "{{name}}（已不在模型目录里）",
-			"option": "{{name}} · {{provider}}（{{family}}）",
-			"optionUnavailable": "{{name}} · {{provider}} — 不可用：{{reason}}",
 			"unknownReason": "协议不受支持",
 			"unavailable": "有 {{n}} 个模型不能用于 Hindsight（灰色项），原因写在选项里。",
 			"needsRestart": "需要重启 Hindsight",
@@ -2707,7 +2719,8 @@
 		"models": {
 			"placeholder": "provider/模型，或 @role",
 			"add": "添加",
-			"remove": "移除 {{model}}"
+			"remove": "移除 {{model}}",
+			"clear": "清除{{label}}"
 		},
 		"subagents": {
 			"bundledTitle": "内置 agent",

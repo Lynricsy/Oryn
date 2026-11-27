@@ -159,10 +159,9 @@ const capsule = () => screen.getByRole("button", { name: /^对象：/ });
 const stage = () => document.querySelector(".home-stage") as HTMLElement;
 const pills = () => screen.queryByTestId("home-pills");
 
-/** 打开 role 胶囊（没开时），点「指定模型…」，在目录里点该模型（目录读到后才有这一行）。 */
+/** 打开 role 胶囊（没开时），在选择器的目录里点该模型（目录读到后才有这一行）。 */
 async function pickModel(selector: string) {
 	if (!screen.queryByTestId("role-capsule-popover")) fireEvent.click(capsule());
-	fireEvent.click(screen.getByRole("button", { name: /^指定模型/ }));
 	const row = await vi.waitFor(() => {
 		const el = document.querySelector<HTMLElement>(
 			`[data-model="${selector}"]`,
@@ -173,22 +172,24 @@ async function pickModel(selector: string) {
 	fireEvent.click(row);
 }
 
-/** 打开 role 胶囊，读思考强度的选项（没有这一节时为 null）。 */
+/** 级别选项的级别名（去掉检视栏给 role 预设级别加的「预设」标注）。 */
+const levelName = (r: HTMLElement) =>
+	r.textContent?.replace(i18n.t("modelPicker.preset"), "") ?? null;
+
+/** 打开 role 胶囊，读检视栏里思考级别的选项（跟着高亮项，默认高亮选中项；没有这一节时为 null）。 */
 function thinkingLevels(): (string | null)[] | null {
 	if (!screen.queryByTestId("role-capsule-popover")) fireEvent.click(capsule());
 	const group = screen.queryByRole("radiogroup", { name: "思考级别" });
-	return group
-		? within(group)
-				.getAllByRole("radio")
-				.map((r) => r.textContent)
-		: null;
+	return group ? within(group).getAllByRole("radio").map(levelName) : null;
 }
 
-/** 思考强度里选中的那一档（没有选中项时 undefined）。 */
-const checkedLevel = () =>
-	screen
+/** 思考级别里选中的那一档（没有选中项时 undefined）。 */
+const checkedLevel = () => {
+	const on = screen
 		.getAllByRole("radio")
-		.find((r) => r.getAttribute("aria-checked") === "true")?.textContent;
+		.find((r) => r.getAttribute("aria-checked") === "true");
+	return on ? levelName(on) : undefined;
+};
 
 /** 胶囊右下角思考级别角标画的级别（没有角标时 undefined；弹层里 role 行的级别图形不算）。 */
 const cornerLevel = () =>

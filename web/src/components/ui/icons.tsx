@@ -164,6 +164,7 @@ import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { Square } from "@phosphor-icons/react/dist/csr/Square";
 import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { Stack } from "@phosphor-icons/react/dist/csr/Stack";
+import { Star } from "@phosphor-icons/react/dist/csr/Star";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Table } from "@phosphor-icons/react/dist/csr/Table";
@@ -248,6 +249,7 @@ const ICONS = {
 	back: ArrowLeft,
 	forward: ArrowRight,
 	sparkle: Sparkle,
+	star: Star,
 	refresh: ArrowsClockwise,
 	download: DownloadSimple,
 	upload: UploadSimple,

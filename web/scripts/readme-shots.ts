@@ -2669,7 +2669,7 @@ const assistant: Shooter = async (scheme) => {
 		await page.locator('button[aria-label^="对象："]').first().click();
 		const pop = page.locator("[data-testid=role-capsule-popover]");
 		await pop.waitFor();
-		await pop.getByText("全局助手", { exact: true }).first().click();
+		await pop.locator('button[data-entry="assistant"]').click();
 		await page
 			.locator("textarea")
 			.first()

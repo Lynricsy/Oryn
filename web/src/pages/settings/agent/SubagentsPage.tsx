@@ -8,7 +8,7 @@
  * 只能「载入最新内容」后重做，不会静默覆盖。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useId, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Document } from "yaml";
 import {
@@ -37,7 +37,10 @@ import {
 	GroupNote,
 } from "../../../components/settings/agent-config-ui";
 import { collectionEntries } from "../../../components/settings/MarkdownCollection";
-import { ModelPatternList } from "../../../components/settings/ModelPatternInput";
+import {
+	ModelPatternInput,
+	ModelPatternList,
+} from "../../../components/settings/ModelPatternInput";
 import { useAsync } from "../../../components/settings/useAsync";
 import { Badge, Callout } from "../../../components/ui/data";
 import { IdentityAvatar } from "../../../components/ui/IdentityAvatar";
@@ -551,7 +554,6 @@ export default function SubagentsPage(): ReactNode {
 								roles={roles}
 								disabled={!configReady}
 								label={t("agentPages.subagents.overrideInput", { name: open })}
-								placeholder={t("agentPages.models.placeholder")}
 								onChange={(next) => setOverride(open, next)}
 							/>
 						</Field>
@@ -608,7 +610,6 @@ function TargetField({
 	onChange(v: OptionalTarget): void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const listId = useId();
 	return (
 		<FormField label={label} aside={hint}>
 			{(p) => (
@@ -631,20 +632,14 @@ function TargetField({
 						onChange={(mode) => onChange({ ...value, mode })}
 					/>
 					{value.mode === "custom" && (
-						<TextInput
-							aria-label={t("agentPages.subagents.targetPattern", { label })}
-							className="font-mono"
-							list={listId}
+						<ModelPatternInput
+							label={t("agentPages.subagents.targetPattern", { label })}
 							placeholder={t("agentPages.models.placeholder")}
 							value={value.pattern}
-							onChange={(e) => onChange({ ...value, pattern: e.target.value })}
+							roles={roles}
+							onCommit={(pattern) => onChange({ ...value, pattern })}
 						/>
 					)}
-					<datalist id={listId}>
-						{roles.map((r) => (
-							<option key={r} value={`@${r}`} />
-						))}
-					</datalist>
 				</div>
 			)}
 		</FormField>
@@ -825,7 +820,6 @@ function AgentDialog({
 								value={form.model}
 								roles={roles}
 								label={t("agentPages.subagents.modelInput")}
-								placeholder={t("agentPages.models.placeholder")}
 								onChange={(next) => set("model", next)}
 							/>
 						</Field>

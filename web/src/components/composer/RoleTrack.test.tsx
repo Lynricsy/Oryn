@@ -1,7 +1,8 @@
 /**
- * Ctrl+P 角色轮换（Composer 层面）与模型对话框里的角色列表：发出的命令与轨道显示。
+ * Ctrl+P 角色轮换（Composer 层面）与线程模型选择器（输入坞模型按钮上的弹层，统一选择器）里的角色行：发出的命令与轨道显示。
  * M9.6：新 Core 发 oryn_select_model{role}（不发 set_model、不写本机记忆）；旧 Core 收到 Unknown command 后回退
  * set_model + set_thinking_level 并写本机记忆，之后不再试新命令。线程里有来源记录时当前格只认记录。
+ * 对话框里的思考级别：改已选中项的级别就地 set_thinking_level（不关）；点别的角色的级别 = 切角色 + 级别。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -21,8 +22,9 @@ import { resetLegacyCore } from "../../lib/model-select";
 import type { SessionState } from "../../omp/types";
 import { OmpCommandError } from "../../realtime/socket";
 import { getThreadStore, resetThreadStores } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import { Composer } from "./Composer";
-import { RoleList } from "./RolePicker";
+import { ModelChip } from "./ComposerMeta";
 import { resetRoleState, useRoleView } from "./RoleTrack";
 
 const { cmd } = vi.hoisted(() => ({ cmd: vi.fn() }));
@@ -349,32 +351,71 @@ describe("Ctrl+P 角色轮换", () => {
 	});
 });
 
-describe("模型对话框里的角色列表", () => {
-	it("按 cycleOrder 列出角色，其余 chat 角色在后，系统角色收进「更多」；点 Mare 发 oryn_select_model 并回调", async () => {
-		const onPicked = vi.fn();
-		wrap(<RoleList threadId={T} onPicked={onPicked} />);
+describe("模型对话框里的角色行", () => {
+	afterEach(() => {
+		act(() => uiStore.getState().close());
+	});
+
+	function openDialog() {
+		act(() => uiStore.getState().open({ kind: "model" }));
+	}
+
+	/** 中央目录给出候选模型及其思考级别（检视栏据此列级别）。 */
+	function stubCatalog() {
+		vi.stubGlobal("fetch", async () =>
+			Response.json({
+				models: CANDIDATES.map((c) => ({
+					...c,
+					selector: `${c.provider}/${c.id}`,
+					kind: "chat",
+					reasoning: true,
+					thinking: ["low", "medium", "high"],
+				})),
+				fetchedAt: 0,
+				stale: false,
+			}),
+		);
+	}
+
+	const radio = (name: RegExp) =>
+		within(screen.getByRole("radiogroup", { name: "思考级别" })).getByRole(
+			"radio",
+			{ name },
+		);
+
+	it("按 cycleOrder 列出角色，其余 chat 角色在后，系统角色收进「更多角色」；点 Mare 发 oryn_select_model 并关闭", async () => {
+		wrap(<ModelChip threadId={T} />);
+		openDialog();
 		const nahida = await screen.findByRole("button", { name: /^Nahida/ });
 		expect(nahida.getAttribute("aria-current")).toBe("true");
 		expect(nahida.getAttribute("data-role")).toBe("Nahida");
-		const rows = screen.getAllByRole("button").map((b) => b.textContent ?? "");
-		const prefixes = [
+		// 行序看 data-role（行首头像也带文字，不拿 textContent 比前缀）；显示名看无障碍名
+		const rows = () =>
+			[...document.querySelectorAll("[data-entry]")].map((b) =>
+				b.getAttribute("data-role"),
+			);
+		const named = (name: string) =>
+			screen
+				.getByRole("button", { name: new RegExp(`^${name}`) })
+				.getAttribute("data-role");
+		expect(rows()).toEqual([
 			"Hyacinthia",
 			"Nahida",
 			"Mare",
 			"Cyrene",
-			i18n.t("roles.names.default"),
-		];
-		prefixes.forEach((p, i) => {
-			expect(rows[i]?.startsWith(p)).toBe(true);
-		});
-		// commit 是后台角色：收在折叠的「更多」里
-		expect(rows.some((r) => r.startsWith(i18n.t("roles.names.commit")))).toBe(
-			true,
-		);
-		expect(screen.getByText(i18n.t("model.moreRoles", { n: 1 }))).toBeTruthy();
+			"default",
+		]);
+		expect(named(i18n.t("roles.names.default"))).toBe("default");
+		// commit 是后台角色：收在折叠的「更多角色」里，展开后排在最后
+		const more = screen.getByRole("button", { name: "更多角色（1）" });
+		expect(more.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(more);
+		expect(more.getAttribute("aria-expanded")).toBe("true");
+		expect(rows().at(-1)).toBe("commit");
+		expect(named(i18n.t("roles.names.commit"))).toBe("commit");
 
 		fireEvent.click(screen.getByRole("button", { name: /^Mare/ }));
-		expect(onPicked).toHaveBeenCalledOnce();
+		expect(uiStore.getState().dialog).toBeNull();
 		await vi.waitFor(() =>
 			expect(framesOf("oryn_select_model")).toEqual([
 				{ type: "oryn_select_model", role: "Mare" },
@@ -387,9 +428,9 @@ describe("模型对话框里的角色列表", () => {
 		wrap(
 			<div className="glass">
 				<Composer threadId={LEGACY} />
-				<RoleList threadId={LEGACY} onPicked={() => undefined} />
 			</div>,
 		);
+		openDialog();
 		fireEvent.click(await screen.findByRole("button", { name: /^Mare/ }));
 		await vi.waitFor(() =>
 			expect(framesOf("set_thinking_level")).toEqual([
@@ -412,7 +453,8 @@ describe("模型对话框里的角色列表", () => {
 		);
 		expect(document.querySelector(".text-err")).toBeNull();
 
-		fireEvent.click(screen.getByRole("button", { name: /^Cyrene/ }));
+		openDialog();
+		fireEvent.click(await screen.findByRole("button", { name: /^Cyrene/ }));
 		await vi.waitFor(() =>
 			expect(framesOf("set_model").at(-1)).toEqual({
 				type: "set_model",
@@ -421,6 +463,74 @@ describe("模型对话框里的角色列表", () => {
 			}),
 		);
 		expect(framesOf("oryn_select_model")).toHaveLength(1);
+	});
+
+	it("已选中的角色改级别：就地发 set_thinking_level，不切角色，对话框不关", async () => {
+		stubCatalog();
+		wrap(<ModelChip threadId={T} />);
+		openDialog();
+		await screen.findByRole("button", { name: /^Nahida/ });
+		// 检视栏跟着高亮走：打开时高亮落在选中项（当前角色 Nahida），级别勾的是实际生效的 high
+		await vi.waitFor(() =>
+			expect(radio(/^高/).getAttribute("aria-checked")).toBe("true"),
+		);
+		fireEvent.click(radio(/^低/));
+		await vi.waitFor(() =>
+			expect(framesOf("set_thinking_level")).toEqual([
+				{ type: "set_thinking_level", level: "low" },
+			]),
+		);
+		expect(framesOf("oryn_select_model")).toEqual([]);
+		expect(uiStore.getState().dialog).toEqual({ kind: "model" });
+		await vi.waitFor(() =>
+			expect(radio(/^低/).getAttribute("aria-checked")).toBe("true"),
+		);
+	});
+
+	it("点别的角色的级别：切到该角色，与预设不同再发 set_thinking_level，然后关闭", async () => {
+		stubCatalog();
+		wrap(<ModelChip threadId={T} />);
+		openDialog();
+		const mare = await screen.findByRole("button", { name: /^Mare/ });
+		fireEvent.mouseMove(mare);
+		// 别的角色：勾的是它的预设 high，并标「预设」
+		await vi.waitFor(() =>
+			expect(radio(/^高/).getAttribute("aria-checked")).toBe("true"),
+		);
+		expect(radio(/^高/).textContent).toContain("预设");
+		fireEvent.click(radio(/^中/));
+		expect(uiStore.getState().dialog).toBeNull();
+		await vi.waitFor(() =>
+			expect(
+				cmd.mock.calls
+					.map((c) => c[1] as Record<string, unknown>)
+					.filter((f) => /model|thinking/.test(String(f.type)))
+					.filter((f) => !String(f.type).startsWith("get_")),
+			).toEqual([
+				{ type: "oryn_select_model", role: "Mare" },
+				{ type: "set_thinking_level", level: "medium" },
+			]),
+		);
+		expect(current).toMatchObject({ id: "gpt-6.1-sol", level: "medium" });
+	});
+
+	it("点别的角色与预设相同的级别：只切角色", async () => {
+		stubCatalog();
+		wrap(<ModelChip threadId={T} />);
+		openDialog();
+		fireEvent.mouseMove(await screen.findByRole("button", { name: /^Mare/ }));
+		await vi.waitFor(() => expect(radio(/^高/)).toBeTruthy());
+		fireEvent.click(radio(/^高/));
+		await vi.waitFor(() =>
+			expect(framesOf("oryn_select_model")).toEqual([
+				{ type: "oryn_select_model", role: "Mare" },
+			]),
+		);
+		// 等切换收尾（刷新状态）后再确认没有多发级别
+		await vi.waitFor(() =>
+			expect(framesOf("get_state").length).toBeGreaterThan(0),
+		);
+		expect(framesOf("set_thinking_level")).toEqual([]);
 	});
 });
 

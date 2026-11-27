@@ -44,7 +44,8 @@ surface({
 	only: "desktop",
 	open: async (page) => {
 		await page.getByRole("button", { name: /^对象：/ }).click();
-		await page.getByRole("button", { name: /指定模型/ }).click();
+		// 首页对象选择器输入筛选后的状态（隔离的托盘层叠上下文里、无 Popover API）
+		await page.locator("[data-model-picker] input").fill("claude");
 		return lastOverlay(page);
 	},
 });

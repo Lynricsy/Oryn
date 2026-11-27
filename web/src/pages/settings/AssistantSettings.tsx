@@ -24,12 +24,16 @@ import {
 import { useProviders } from "../../api/queries";
 import { useResearchSettings } from "../../api/research-queries";
 import { McpResearchToolsDialog } from "../../components/assistant/McpResearchToolsDialog";
-import { ModelPickerBody } from "../../components/composer/ModelPickerBody";
+import { pickedModel } from "../../components/model-picker/ModelField";
+import {
+	ModelPicker,
+	modelKey,
+} from "../../components/model-picker/ModelPicker";
+import { ModelPickerPopover } from "../../components/model-picker/ModelPickerPopover";
 import { GroupNote } from "../../components/settings/agent-config-ui";
 import { Icon } from "../../components/ui/icons";
 import { ModelLogo } from "../../components/ui/ModelLogo";
 import { typeHasDocker } from "../../components/ui/OrbBadges";
-import { Popover } from "../../components/ui/PickerPopover";
 import {
 	Button,
 	ErrorText,
@@ -275,21 +279,21 @@ function SettingsGroups({ saved }: { saved: Settings }): ReactNode {
 											{t("assistantSettings.modelChange")}
 										</Button>
 										{pickingModel && (
-											<Popover
-												side="bottom"
+											<ModelPickerPopover
+												title={t("assistantSettings.model")}
 												onClose={() => setPickingModel(false)}
 											>
-												<div className="p-1">
-													<ModelPickerBody
-														free
-														current={model}
-														onPick={({ provider: p, id }) => {
-															save("model", { model: { provider: p, id } });
-															setPickingModel(false);
-														}}
-													/>
-												</div>
-											</Popover>
+												<ModelPicker
+													free="model"
+													selected={model ? modelKey(model) : undefined}
+													onPick={(target) => {
+														const picked = pickedModel(target);
+														if (!picked) return;
+														save("model", { model: picked });
+														setPickingModel(false);
+													}}
+												/>
+											</ModelPickerPopover>
 										)}
 									</span>
 								</>
