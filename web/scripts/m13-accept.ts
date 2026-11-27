@@ -623,7 +623,8 @@ async function startMock() {
 	const warm = await openPage({ base: MOCK_BASE });
 	for (const [path, ready] of [
 		["/", 'textarea[aria-label="提示词"]'],
-		["/settings/identity", '[data-testid="identity-new-thread"]'],
+		// 「新对话默认对象」卡已挪到设置 → 输入（InputSettings）
+		["/settings/input", '[data-testid="identity-new-thread"]'],
 	] as const) {
 		await goto(warm, MOCK_BASE, path);
 		await warm.locator(ready).waitFor({ timeout: 180_000 });
@@ -1836,7 +1837,7 @@ async function mockR17() {
 
 async function mockR18() {
 	const p = await mockPage();
-	await goto(p, MOCK_BASE, "/settings/identity");
+	await goto(p, MOCK_BASE, "/settings/input");
 	const card = p.getByTestId("identity-new-thread");
 	await card.waitFor({ timeout: 30_000 });
 	await card.getByRole("radio", { name: /全局助手/ }).dispatchEvent("click");
@@ -3365,7 +3366,7 @@ async function realR16() {
 
 async function realR18() {
 	const p = await realPage();
-	await goto(p, REAL_UI, "/settings/identity");
+	await goto(p, REAL_UI, "/settings/input");
 	const card = p.getByTestId("identity-new-thread");
 	await card.waitFor({ timeout: 30_000 });
 	await card.getByRole("radio", { name: /全局助手/ }).dispatchEvent("click");
