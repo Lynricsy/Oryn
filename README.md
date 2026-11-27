@@ -31,8 +31,28 @@ API Key 与 Git 令牌默认由控制面出站代理按主机注入，环境里�
 </td>
 <td width="33%" valign="top">
 
+**🧪 Agent 沙箱**<br>
+线程里随手开一台零凭据、用完即焚的平级沙箱，断网跑不可信代码。
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
 **🧭 全局助手与 Space**<br>
 一个能联网、能派线程、有自己电脑的助手；Space 并行协调多条线程。
+
+</td>
+<td valign="top">
+
+**🎨 Artifacts 与设计画布**<br>
+页面、画布、文档、幻灯片与 Office 原生文件；TSX 设计画布、多版方案、原型与工程导出。
+
+</td>
+<td valign="top">
+
+**🪟 视图**<br>
+Agent 在对话里直接给出表单、KPI、图表与小工具，你的操作回到 Agent。
 
 </td>
 </tr>
@@ -45,22 +65,14 @@ API Key 与 Git 令牌默认由控制面出站代理按主机注入，环境里�
 </td>
 <td valign="top">
 
-**🎨 Artifacts**<br>
-Agent 做出页面、画布、文档与幻灯片，也直接交付 Word / Excel / PowerPoint / PDF 原生文件，带版本、评论、演示与发布。
+**📦 [Boxes](docs/features.md#boxes)**<br>
+常驻机器托管多个应用，各有独立地址、密钥与数据目录；线程可直接开在线上目录。
 
 </td>
 <td valign="top">
 
 **📱 全端同源**<br>
-Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端同步。
-
-</td>
-</tr>
-<tr>
-<td colspan="3" valign="top">
-
-**📦 [Boxes](docs/features.md#boxes)**<br>
-常驻机器托管多个应用，各有独立地址、密钥与数据目录；线程可直接开在线上应用目录。
+Web、Windows / macOS / Linux、Android、iOS、CLI 与 Chrome 扩展，服务端升级即全端同步。
 
 </td>
 </tr>
@@ -72,10 +84,10 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/workbench-dark.png">
-  <img alt="Oryn macOS 客户端三栏工作台：左侧是项目线程树、收件箱与悬浮分区底栏；中间是 Firecracker 快照恢复线程，收起的 read / edit 工具卡写明意图，运行中的 bash 卡以 Pseudo 视图显示执行轨迹；右侧是 microVM 的资源曲线、上下文分解与待办。" src="docs/assets/workbench-light.png" width="100%">
+  <img alt="Oryn macOS 客户端三栏工作台：左侧是项目线程树、收件箱与悬浮分区底栏；中间是 Firecracker 快照恢复线程，收起的 read / edit 工具卡写明意图，运行中的 bash 卡以 Pseudo 视图显示执行轨迹，输入坞页脚有提示缓存倒计时与命中率；右侧是 microVM 的资源曲线、上下文分解与待办。" src="docs/assets/workbench-light.png" width="100%">
 </picture>
 
-左边是按项目组织的线程树，中间是对话，右边是这台环境的一切：资源曲线、上下文构成、待办、Git 改动、文件、终端、Portal、远程桌面与 Artifacts。「信息」页把 orb、服务、浏览器 Profile 与 SSH 主机收成一层入口行，服务故障就地重启并显示进度，停机的环境在这里一键唤醒。
+左边是按项目组织的线程树，中间是对话，右边是这台环境的一切：资源曲线、上下文构成、待办、Git 改动、文件、终端、Portal、远程桌面与 Artifacts。「信息」页把 orb、服务、沙箱、浏览器 Profile 与 SSH 主机收成一层入口行，服务故障就地重启并显示进度，停机的环境在这里一键唤醒。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tool-cards-dark.png">
@@ -85,10 +97,21 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 - **工具卡**：收起、展开时头部都显示意图，右侧读数一眼说清结局（todo 的完成进度格、wait 等待中的任务与结局、搜索命中数、`+N −M`……）；运行中实时走表。展开后输入、输出按各工具的原生形态排版：搜索答案按 Markdown 渲染并附来源卡片，网页正文直接排版（外部内容不自动加载远程图片），子 agent 名册、问卷回执、调试器面板、终端窗口等；约 60 种语言的语法高亮；当前一批调用自动展开。
 - **bash 的 Pseudo 视图**：运行中逐行显示执行轨迹，正在执行的那行标出，失败与跳过一眼可见。
 - **后台任务**：转入后台的调用在卡片头部带一枚随任务走的标记；任务完成、失败、输出命中提醒都成为转录里的事件行；信息页像子 agent 一样列出后台任务，点开看输入、实时输出与事件时间线，运行中可以停止。
+- **转录动效**：贴底时平滑跟随新内容，往上滚一下立即停下；新消息与新块从下方淡入，流式正文匀速显现，思考块随思考自动展开、结束后合上成一行预览。打开线程、翻看历史不播放动画，系统开启「减少动态效果」时一律直接到位。
 - **思考档位**：模型胶囊右下角的图标就是这一回合实际生效的档位；回合头已经标出的模型与档位切换不再另起一行。
-- **输入框**：选中回复一键引用、`#` 引用 GitHub issue / PR，可选的「下一条消息预测」按 Tab 插入；`/` 命令菜单给每条命令配图标（与 omp TUI 一致），skill、MCP prompt 等按来源区分；输入命令参数时光标后有灰字参数提示（如 `/btw [question]`），子命令边输边补全名字与用法。
-- **右键菜单与「解释」**：转录消息、代码块、链接与图片、工具卡、侧栏线程行、收件箱、终端、编辑器与改动列表都有右键菜单，部分界面也支持菜单键或长按；选中一段文字可让模型解释、翻译、就此提问或跑自定义快捷动作，走旁路提问复用主会话的前缀缓存，结果显示在选区旁的解释卡里。快捷动作在「设置 → 选区快捷动作」里增删排序。
-- **计划模式**：输入 `/plan <任务>` 进入计划模式，agent 提交计划后弹出审批对话框，可选执行、压缩后执行、保留上下文执行、仅保存或提修改意见；和 omp TUI 一样可在「继续使用」里挑执行用的模型档位（默认是 `default`）。关掉后收成输入坞里的胶囊，`/plan-review` 重新打开。「仅保存」的路径可以写相对路径，按 agent 的工作目录解析；保存位置与没开始执行的原因（如压缩失败）写在转录的提示行里。
+- **问卷与附件**：`ask` 问卷按 omp 原始 HTML 还原，支持富文本、表格、图片与内联 SVG，选项是卡片，推荐项带徽标；附件图片显示缩略图，点开是全屏灯箱（缩放、旋转、多图画廊、复制与下载）；文件树、附件、diff 与工具卡用 Catppuccin 文件类型图标。
+- **右键菜单与「解释」**：转录消息、代码块、链接与图片、工具卡、侧栏线程行、收件箱、终端、编辑器与改动列表都有右键菜单，部分界面也支持菜单键或长按；选中一段文字可让模型解释、翻译、就此提问或跑自定义快捷动作，走旁路提问复用主会话的前缀缓存，结果显示在选区旁的解释卡里。快捷动作在「设置 → 输入与快捷键」里增删排序。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/model-cache-dark.png">
+  <img alt="左图：输入坞模型按钮上弹出的模型选择台，左侧竖轨按角色、常用与厂商分组，中间是模型列表，右侧检视栏显示 Claude Opus 5.5 的选择器、思考 / 图像输入 / 1M 上下文标签与思考级别；右图：输入坞页脚的提示缓存详情卡，写明剩余 4:30、存活 5 分钟、下一条消息读缓存 86k 新发 2.2k、上下文命中率 76% 与自动续期时刻。" src="docs/assets/model-cache-light.png" width="100%">
+</picture>
+
+- **模型选择台**：首页对象胶囊、输入坞、定时、助手、模型角色与子 agent 设置共用一个三栏选择台：左侧竖轨按角色、常用与厂商分组，中间可搜索的列表，右侧检视栏显示能力标签并就地切换思考级别；收藏与最近使用存在本机。
+- **提示缓存读数**：页脚的小圆环随缓存存活期倒计时消退，后面是剩余时间与当前上下文的缓存命中率；缓存失效时换成「缓存已冷 · 重写 128k」。点开看下一条消息读缓存与新发多少、缓存前缀大小、自动续期时刻与失效原因。
+- **输入框**：选中回复一键引用、`#` 引用 GitHub issue / PR，可选的「下一条消息预测」按 Tab 插入；`/` 命令菜单给每条命令配图标（与 omp TUI 一致），skill、MCP prompt 等按来源区分，输入参数时光标后有灰字提示（如 `/btw [question]`），子命令边输边补全。
+- **回退（Esc Esc）**：在转录里原位框选要回到的位置，用户消息、助手回复与工具回合都能选；`←` / `→` 预览同一分叉点的兄弟分支，`f` 过滤，`Ctrl+O` 展开工具与思考块。原路径保留为分支，提示条上可撤销。
+- **计划模式**：输入 `/plan <任务>` 进入计划模式，agent 提交计划后弹出审批对话框，可选执行、压缩后执行、保留上下文执行、仅保存或提修改意见；和 omp TUI 一样可在「继续使用」里挑执行用的模型档位（默认是 `default`）。关掉后收成输入坞里的胶囊，`/plan-review` 重新打开。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/explain-changes-dark.png">
@@ -102,7 +125,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
   <img alt="文件面板的浏览器内预览：左为一份 PDF 基准报告（演示数据），右为带代码、表格输出与图表的 Jupyter Notebook。" src="docs/assets/file-preview-light.png" width="100%">
 </picture>
 
-文件面板在浏览器里直接预览 PDF、Office、Notebook、音视频、HEIC / PSD 图片、压缩包与 3D 模型，不经第三方服务；环境停机时也能只读浏览，不会唤醒它。
+文件面板在浏览器里直接预览 PDF、Office、Notebook、音视频、HEIC / PSD 图片、压缩包与 3D 模型，不经第三方服务；Word、Excel、PowerPoint 与 PDF 可以一键「转为 artifact」。环境停机时也能只读浏览，不会唤醒它。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/desktop-control-dark.png">
@@ -112,12 +135,10 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 远程桌面里 Agent 操作浏览器时你只读观看；遇到登录、验证码时它停下来等你接管，交还后接着干，手机通知上也能点「完成」。
 
 <picture>
-  <img alt="线程右面板的桌面页签：左侧对话里有 desktop_record 开始与停止的工具卡，右侧远程桌面里终端窗口叠在 VS Code 之上，画面下方居中一条任务栏，依次为 Chromium、终端、VS Code、文件管理器、文本编辑器与 LibreOffice。" src="docs/assets/desktop-dock-light.png" width="100%">
+  <img alt="线程右面板的桌面页签：左侧对话里有 desktop_record 开始与停止的工具卡，右侧远程桌面里终端窗口叠在代码编辑器之上，画面下方居中一条任务栏，依次为 Chromium、终端、代码编辑器、文件管理器、文本编辑器与 LibreOffice。" src="docs/assets/desktop-dock-light.png" width="100%">
 </picture>
 
-画面下方的任务栏内置 Chromium、终端、代码编辑器（VSCodium，部署方可换成官方 VS Code）、文件管理器、文本编辑器与 LibreOffice；Agent 可直接读取窗口无障碍树、按 `.oryn/desktop/resume` 自启动桌面环境，并用 `desktop_record` 把操作录成视频放进对话。
-
-远程桌面的底色与外面的面板同色（浅色 `--panel`），两者只靠一圈细边框分隔；窗口用 orbd 自带的扁平 openbox 主题 Oryn：浅色标题栏与 GTK 应用的菜单栏连成一块，1px 细外框，标题居中，只留最大化与关闭按钮。已有的 orb 需升级并重启 orbd 后才换上新底色与标题栏。
+画面下方的任务栏内置 Chromium、终端、代码编辑器（公开镜像为 VSCodium，本机派生镜像可换成官方 VS Code）、文件管理器、文本编辑器与 LibreOffice，窗口用与面板同色的扁平主题。Agent 可直接读取窗口无障碍树、按 `.oryn/desktop/resume` 自启动桌面环境，并用 `desktop_record` 把操作录成视频放进对话。
 
 ## 执行环境
 
@@ -130,9 +151,16 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 - **环境跟着线程走**：新线程总有一台新环境，删掉最后一个线程环境即回收，全部归档即冻结，不用手动管理。
 - **快照与预热池**：项目首次 `.oryn/setup` 后自动快照，之后的新线程跳过构建；高频项目可留常驻预热池。
-- **冻结与唤醒**：空闲自动冻结，打开线程或访问受管服务时自动唤醒。
-- **Agent 沙箱**：线程里的 agent 可以随手开一台零凭据、用完即焚的平级沙箱（Firecracker 或 Docker，断网或可出网，运行中可切断网络），传文件、跑命令、起后台作业；空闲 30 分钟、到期或线程归档时自动销毁，主人在线程信息页查看与销毁。详见 [features.md「Agent 沙箱」](docs/features.md#agent-沙箱)。
+- **冻结与唤醒**：空闲自动冻结，打开线程或访问受管服务时自动唤醒。空闲回收、数据保留与磁盘上限可以在「设置 → 控制面」里覆盖配置文件。
 - **开发镜像**：Arch Linux（x64 / ARM64），预装主流语言、语言服务器、文档与媒体工具链和图形桌面；已启用 BlackArch 源，安全工具按需用 pacman 安装。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sandbox-providers-dark.png">
+  <img alt="左图：X28 隔离回归线程，转录里是 sandbox_exec 工具卡（确认断网、跑 vsock 越权 PoC、后台模糊测试），右侧信息页的「沙箱」区块列出一台运行中的 KVM 断网沙箱与空闲倒计时，以及一台已空闲回收的 Docker 沙箱；右图：Provider 总览页，顶部是节点、orb、内存、可写盘、CPU 与任务队列的读数，下方是 local 节点卡片的宿主机 CPU、内存、存储与 orb 状态分布。" src="docs/assets/sandbox-providers-light.png" width="100%">
+</picture>
+
+- **Agent 沙箱**：线程里的 agent 可以随手开一台零凭据、用完即焚的平级沙箱（Firecracker 或 Docker，断网或可出网，运行中可切断网络），传文件、跑命令、起后台作业；空闲 30 分钟、到期或线程归档时自动销毁，主人在线程信息页查看与销毁。详见 [features.md「Agent 沙箱」](docs/features.md#agent-沙箱)。
+- **Provider 总览**：`/providers` 一页看每个 Provider 节点的在线状态、宿主机 CPU / 内存 / 磁盘、orb 状态分布、快照与任务队列，展开可看每台 orb 的可写盘与实占核数。
 
 ## Boxes
 
@@ -148,7 +176,28 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 - **运行时段**：按每日开机、关机时刻与时区启停；box 不空闲冻结，掉线后自动拉起。
 - **在线上目录开线程**：线程可以直接开在 box 或某个应用的线上目录，排查线上数据不用另配环境。
 
-## 收件箱、项目与 Artifacts
+## Artifacts、设计画布与视图
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/design-variants-dark.png">
+  <img alt="Artifact 查看器里的画布：虚线框起的「方案组 · 官网首屏」并排三版首屏——A 冷静克制（浅灰单列）、B 暖调杂志（衬线标题，另有一个部署页画框）、C 高对比（黑底荧光绿按钮），每版右上角有「选定此方案」，A 版画框上显示 agent 正在改的指针。" src="docs/assets/design-variants-light.png" width="100%">
+</picture>
+
+- **Artifacts**：Agent 产出的页面、画布、文档与幻灯片在不透明源的沙箱帧里渲染；有版本历史（按 agent 回合折叠）、评论、画布编辑器、演示模式，可导出 Word / PowerPoint / PDF，也可发布成私有、访问码或公开链接。
+- **Office 原生文件**：Word / Excel / PowerPoint / PDF 文件本身也是带版本的 artifact，Agent 按内置 `oryn-office` 技能制作；浏览器内预览、按页内位置或单元格区域评论、上传新版本、下载原件。部署可选的 Collabora 引擎后还能在浏览器里直接编辑并高保真转换。
+- **设计画布**：orb 线程用 `design_open` 把画布升级成 TSX + Tailwind v4 多帧设计画布；有活跃 orb 且配置了 Portal 域名时直连 Vite 热更新，回合结束封存源码与静态产物。14 条无头浏览器探针规则检查截断、错位、对比度与审美问题，没过就自动再改一轮；`design_directions` 发牌选定视觉方向。
+- **多版方案**：同一屏的 2–4 版方案并排成「方案组」，每版一句话说明差别。选定后落选的画框收进「备选方案」页，不再参与检查与交付，Agent 下一回合把选中方案的主题统一到其余各帧。
+- **原型与交付**：画框可套手机、平板、浏览器外壳，原型模式按 `<Link>` 跳转；导出样机 PNG / PDF（含长图），或导出带锁文件的可运行前端工程，一键部署到 box。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/views-dark.png">
+  <img alt="左图：push 线程转录里的声明式视图「离线补拉回归：四端结果」，四个 KPI 读数、每日补拉耗时 p50 / p95 折线图、按端完整率表格与一条 iOS 合并推送的警告；右图：同一线程里待作答的「开 PR 之前」表单，含目标分支、重试次数、评审人、灰度比例滑块、压缩提交开关与说明输入框。" src="docs/assets/views-light.png" width="100%">
+</picture>
+
+- **[视图](docs/features.md#视图)**：`render_ui` 用 Oryn 的组件拼装（KPI、属性表、表格、列表、进度条、Chart.js 图表、SVG 示意图、表单、快捷回复按钮，以及卡片、分栏、标签页容器），跟随应用主题；`render_html` 是模型写的 HTML，在独立源的沙箱帧里运行。流式期间逐块出现，参数还没到时先显示扫光占位。
+- **回传**：表单提交、按钮点击回到 Agent，缺省作为你的下一条消息；模型也可以挂起等你作答，作答作为这次调用的结果让它当场继续。每个表单只能作答一次，之后锁定并显示已提交的内容。设置里一个开关即可关闭。
+
+## 收件箱与项目
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/artifacts-inbox-dark.png">
@@ -156,8 +205,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 - **收件箱分诊台**：按紧急程度列出等你处理、出错、已完成未读与运行中的线程，每行写明在等你什么，选项题在行内直接作答。
-- **Artifacts**：Agent 产出的页面、画布、文档与幻灯片在沙箱里渲染；有版本历史、评论、画布编辑器、演示模式，可导出 Word / PowerPoint / PDF，也可发布成链接。真实的 Word / Excel / PowerPoint / PDF 文件本身也是带版本的 artifact：浏览器内预览、按页或单元格区域评论、上传新版本、下载原件；部署可选的 Collabora 引擎后还能在浏览器里直接编辑并高保真转换。
-- **[视图](docs/features.md#视图)**：Agent 直接在对话里给出可交互的界面——表单、选项按钮、KPI、表格、图表、示意图，或沙箱里运行的 HTML 小工具；你的操作回到 Agent，可以作为下一条消息，也可以作为这次调用的结果让它当场继续。设置里一个开关即可关闭。
+- **Artifacts 总览**：大卡片预览、类型标签、搜索、筛选、导入与回收站；线程右面板与命令面板里也能找到。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/project-palette-dark.png">
@@ -174,8 +222,8 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
   <img alt="全局助手：左为置顶的主线对话，自动化结果折叠成一行「幕后」，助手只把要紧的说出口；右为首屏选中全局助手：输入框背后的点阵染上助手色，两侧渐变线止于输入框边缘。" src="docs/assets/assistant-light.png" width="100%">
 </picture>
 
-- **全局助手**：能自己搜索、读网页、生图、调 MCP；能遥控一台属于它的电脑；也能替你开线程、发话，并经内置的 `oryn` 技能操作 Oryn 里几乎所有功能（项目、Space、box、分享、各项设置…）。删除、公开分享与密钥类设置要你点确认卡。对话标题与线程一样按 omp 标题卡（`<图标> <代码>: <标题>`，使用 Nerd 字形）展示：侧栏与页头带图标，页头另有代码徽标。
-- **全局助手设置**：在「设置 → 全局助手」配置默认模型与思考档位（改动同步切换主线，已有其他对话不变），以及附加的**自定义提示词**（最多 8000 字，追加到内置能力与安全规则之后，不覆盖内置规则、不影响 Space 协调者与后台研究员；保存后新对话立即生效，运行中的助手对话在空闲后自动应用）。
+- **全局助手**：能自己搜索、读网页、生图、调 MCP；能遥控一台属于它的电脑；也能替你开线程、发话，并经内置的 `oryn` 技能操作 Oryn 里几乎所有功能（项目、Space、box、分享、多文件技能、各项设置…）。删除、公开分享与密钥类设置要你点确认卡。对话标题与线程一样按 omp 标题卡（`<图标> <代码>: <标题>`，使用 Nerd 字形）展示。
+- **全局助手设置**：在「设置 → 全局助手」配置默认模型与思考档位（改动同步切换主线），以及附加的**自定义提示词**（最多 8000 字，追加到内置能力与安全规则之后，不覆盖内置规则、不影响 Space 协调者与后台研究员）。
 - **主线**：一条置顶的永久对话，定时与 GitHub 规则的结果汇到这里，助手判断值得说才打扰你。
 - **主人记忆**：助手记得关于你的长期偏好，可查看出处、让事实失效或按来源遗忘。
 
@@ -199,13 +247,14 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/settings-dark.png">
-  <img alt="设置页：左为模型角色页，列出轮换顺序里每个角色的模型与思考档位；右为 SSH 主机页，列出全局主机、钥匙与网关审计。" src="docs/assets/settings-light.png" width="100%">
+  <img alt="设置页：左侧是按个人、助手与 Agent、工作区分组的设置导航与搜索框；左图为模型与角色分区，列出默认 Agent 身份、默认思考档位与轮换顺序里每个角色的模型；右图为 SSH 主机分区，列出全局主机、钥匙与网关审计。" src="docs/assets/settings-light.png" width="100%">
 </picture>
 
+- **设置页**：约 20 个分区按「个人 / 助手与 Agent / 工作区」分组导航，可搜索；「账户」里管理 Passkey（新增、改名、删除）并重新生成恢复码，「外观」里切换界面语言（同时传给 agent），「控制面」里覆盖运维参数。
 - **图形化 Agent 配置**：技能、子 Agent、模型角色、规则、扩展与 MCP 做成表单，保存后数秒内下发到所有运行中的环境。技能目录、扩展与工具子目录可以管理附属文件，也能把文件夹或 zip 整个导入。
 - **项目级配置**：每个项目另有一层规则与技能，镜像进环境但不写进仓库，`git status` 保持干净；还可以有自己的环境变量与 Git 令牌，只注入本项目的环境，同名时覆盖全局密钥。
 - **Hindsight 记忆**：同一项目的线程共享记忆，不同项目互不可见；跨项目的经验要你批准才生效。
-- **GitHub**：环境里 `git` 与 `gh` 免登录；PR 状态与 CI 结果显示在线程页头，评审与 CI 失败回流进线程；回流消息与定时运行、线程报告等自动消息一样，在转录里显示为独立的系统卡片，不会和你亲手发的消息混淆，CI 失败、要求修改等需要留意的事件会标色，长正文自动折叠，评论里的图片只显示为链接、不会自动加载；分诊、PR 评审、发布哨兵三个自动化预设。
+- **GitHub**：环境里 `git` 与 `gh` 免登录；PR 状态与 CI 结果显示在线程页头，评审与 CI 失败回流进线程，在转录里显示为独立的系统卡片，需要留意的事件标色、长正文自动折叠、评论里的图片不自动加载；分诊、PR 评审、发布哨兵三个自动化预设。
 - **SSH 主机**：登记一次，Agent 就能用主机名读写远端文件、并发执行命令；私钥留在控制面，每条命令记审计。
 
 ## 全平台客户端
@@ -218,14 +267,11 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 | 平台 | 形态 | 亮点 |
 |---|---|---|
 | 浏览器 | Web / PWA | 无需安装 |
-| Windows / macOS / Linux | Tauri 2 桌面 App | 无系统标题栏，macOS 原生红绿灯（侧栏字标按剩余宽度显示）；托盘、全局快捷键、`oryn://` 深链接 |
-| Android | Tauri 2 App（`foss` / `gms`） | 端到端加密推送：`foss` 走 UnifiedPush，`gms` 配对即经官方推送网关走 FCM；通知上直接作答 |
-| iOS | Tauri 2 App（TestFlight） | iOS 26 原生 Liquid Glass：系统底栏悬浮在内容之上（按住冒出液珠、横滑换项），页头与新建线程页的侧栏钮跟随下沉卡片开合；视图菜单是系统液态玻璃菜单，标题菜单从胶囊里形变展开、贴合内容高度，见 [附录 A](docs/mobile.md#附录-aios) |
+| Windows / macOS / Linux | Tauri 2 桌面 App | 无系统标题栏，macOS 原生红绿灯；托盘、全局快捷键、`oryn://` 深链接、开机自启（可隐藏窗口） |
+| Android | Tauri 2 App（`foss` / `gms`） | 沉浸式全面屏；端到端加密推送：`foss` 走 UnifiedPush，`gms` 配对即经官方推送网关走 FCM；通知上直接作答 |
+| iOS | Tauri 2 App（TestFlight） | iOS 26 原生 Liquid Glass：系统底栏悬浮在内容之上，页头视图菜单是系统液态玻璃菜单，标题菜单从胶囊里形变展开；APNs 推送经官方网关，见 [附录 A](docs/mobile.md#附录-aios) |
 | 终端 | `oryn` CLI | `thread attach` 流式交互，`sync` 把远端改动实时镜像到本机 |
-
-客户端只带一个配对页，配对后加载服务器自己的 Web UI；设备令牌存在系统凭据库，网页脚本读不到；桌面 App 中的 HTTP(S) 外链交给系统默认浏览器打开。
-
-服务端、桌面与移动 App 统一发版：推送 tag `v<版本>`（预发布 `v<版本>-rc.N`）后，[`release.yml`](.github/workflows/release.yml) 在同一个 GitHub Release 里发布服务端二进制（Linux x64 / ARM64，另有 macOS Runner 用的 `orbd`）、三平台安装包与 Android APK / AAB，并把 iOS 包上传 TestFlight；全部成功才发布。步骤见 [桌面端「发版」](docs/desktop.md#发版)，服务端安装见 [部署第 1 节](docs/deploy.md#1-安装二进制与镜像)。
+| Chrome | 浏览器中继扩展 | 让 agent 复用本机 Chrome 的登录态与内网；按标签页授权，新标签与高危操作在扩展里非阻塞审批，见 [features.md](docs/features.md#本机浏览器中继chrome-扩展) |
 
 ## 架构与安全
 
@@ -403,6 +449,8 @@ oryn orb service ls | start <名> | logs <名>           # 查看或启停 .oryn
 oryn orb desktop status | browser start               # 查看虚拟桌面状态或拉起受管 Chromium
 oryn thread new "跑一遍全量集成测试" && oryn thread wait <id>   # 派生子线程并等待其静止（退出码 0/3/4/124）
 oryn boxes deploy --on workbench --name wiki --create        # 将当前仓库 HEAD 构建打包并部署到 box（首次可顺手建 box）
+oryn artifact pull <artifact> --to report.docx               # 取回 artifact 的文件（Office 文件修改前先取回）
+oryn design eject <artifact> --to ./site                     # 把设计画布导出成可独立构建的前端工程
 
 # Agent 沙箱（零凭据、用完即焚；orb 外只能用 ls 与 rm）
 id=$(oryn sandbox up --network none --backend kvm)           # 开一台断网的沙箱（--network egress 可出网；--idle / --ttl 设回收期限）
