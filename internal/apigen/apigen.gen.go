@@ -77,6 +77,27 @@ func (e AgentStatus) Valid() bool {
 	}
 }
 
+// Defines values for AiDataPurpose.
+const (
+	AiDataPurposeChat   AiDataPurpose = "chat"
+	AiDataPurposeMemory AiDataPurpose = "memory"
+	AiDataPurposeWeb    AiDataPurpose = "web"
+)
+
+// Valid indicates whether the value is a known member of the AiDataPurpose enum.
+func (e AiDataPurpose) Valid() bool {
+	switch e {
+	case AiDataPurposeChat:
+		return true
+	case AiDataPurposeMemory:
+		return true
+	case AiDataPurposeWeb:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ArtifactAccess.
 const (
 	ArtifactAccessCode    ArtifactAccess = "code"
@@ -5134,6 +5155,39 @@ type AgentLiveState struct {
 
 // AgentStatus 线程 agent 进程状态；`none` = 尚未启动或 orb 不可用
 type AgentStatus string
+
+// AiDataConsent defines model for AiDataConsent.
+type AiDataConsent struct {
+	// ConsentedAt 最近一次同意的时间（Unix 毫秒）；null = 未同意或已撤回
+	ConsentedAt           *int64            `json:"consentedAt"`
+	ConsentedRecipientIds []string          `json:"consentedRecipientIds"`
+	Recipients            []AiDataRecipient `json:"recipients"`
+
+	// Required 当前有接收方不在已同意列表里
+	Required bool `json:"required"`
+}
+
+// AiDataConsentUpdate defines model for AiDataConsentUpdate.
+type AiDataConsentUpdate struct {
+	RecipientIds []string `json:"recipientIds"`
+}
+
+// AiDataPurpose `chat`：对话与 agent 任务（消息、附件、agent 读到的文件与工具输出）；`memory`：记忆（抽取、嵌入、重排、判断的记忆文本）；
+// `web`：全局助手联网（搜索词与打开的网址）。
+type AiDataPurpose string
+
+// AiDataRecipient defines model for AiDataRecipient.
+type AiDataRecipient struct {
+	// Host 上游主机（已知时）
+	Host *string `json:"host,omitempty"`
+
+	// ID 稳定标识，如 `model:anthropic`、`memory-embed:<host>`、`web:public`
+	ID string `json:"id"`
+
+	// Name 显示名（已知 provider 用其品牌名，否则为 provider 键或主机名）
+	Name     string          `json:"name"`
+	Purposes []AiDataPurpose `json:"purposes"`
+}
 
 // AppSessionCode App 会话一次性码（M6）；以 `GET /auth/app?code=…&next=…` 兑换
 type AppSessionCode struct {
@@ -15622,6 +15676,9 @@ type PutAgentAvatarJSONRequestBody = AgentAvatarInput
 // PutAgentIdentityJSONRequestBody defines body for PutAgentIdentity for application/json ContentType.
 type PutAgentIdentityJSONRequestBody = AgentIdentity
 
+// PutAiDataConsentJSONRequestBody defines body for PutAiDataConsent for application/json ContentType.
+type PutAiDataConsentJSONRequestBody = AiDataConsentUpdate
+
 // PutArtifactPrefsJSONRequestBody defines body for PutArtifactPrefs for application/json ContentType.
 type PutArtifactPrefsJSONRequestBody = ArtifactPrefs
 
@@ -19272,6 +19329,15 @@ type ServerInterface interface {
 	// PutAgentIdentity 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
 	// (PUT /api/v1/settings/agent-identity)
 	PutAgentIdentity(w http.ResponseWriter, r *http.Request)
+	// DeleteAiDataConsent 撤回同意
+	// (DELETE /api/v1/settings/ai-data-consent)
+	DeleteAiDataConsent(w http.ResponseWriter, r *http.Request)
+	// GetAiDataConsent AI 数据共享同意状态
+	// (GET /api/v1/settings/ai-data-consent)
+	GetAiDataConsent(w http.ResponseWriter, r *http.Request)
+	// PutAiDataConsent 记录同意（整体替换）
+	// (PUT /api/v1/settings/ai-data-consent)
+	PutAiDataConsent(w http.ResponseWriter, r *http.Request)
 	// GetArtifactPrefs Artifacts 设置
 	// (GET /api/v1/settings/artifacts)
 	GetArtifactPrefs(w http.ResponseWriter, r *http.Request)
@@ -21456,6 +21522,24 @@ func (_ Unimplemented) GetAgentIdentity(w http.ResponseWriter, r *http.Request) 
 // PutAgentIdentity 设置全局 agent 身份（整体替换：省略的字段即清除；`{}` = 恢复默认）
 // (PUT /api/v1/settings/agent-identity)
 func (_ Unimplemented) PutAgentIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteAiDataConsent 撤回同意
+// (DELETE /api/v1/settings/ai-data-consent)
+func (_ Unimplemented) DeleteAiDataConsent(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetAiDataConsent AI 数据共享同意状态
+// (GET /api/v1/settings/ai-data-consent)
+func (_ Unimplemented) GetAiDataConsent(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutAiDataConsent 记录同意（整体替换）
+// (PUT /api/v1/settings/ai-data-consent)
+func (_ Unimplemented) PutAiDataConsent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -31427,6 +31511,48 @@ func (siw *ServerInterfaceWrapper) PutAgentIdentity(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteAiDataConsent operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAiDataConsent(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAiDataConsent(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAiDataConsent operation middleware
+func (siw *ServerInterfaceWrapper) GetAiDataConsent(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAiDataConsent(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAiDataConsent operation middleware
+func (siw *ServerInterfaceWrapper) PutAiDataConsent(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAiDataConsent(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetArtifactPrefs operation middleware
 func (siw *ServerInterfaceWrapper) GetArtifactPrefs(w http.ResponseWriter, r *http.Request) {
 
@@ -34686,6 +34812,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/language", wrapper.PutLanguageSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/settings/ai-data-consent", wrapper.DeleteAiDataConsent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/ai-data-consent", wrapper.GetAiDataConsent)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/ai-data-consent", wrapper.PutAiDataConsent)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/settings/generative-ui", wrapper.GetGenerativeUISettings)

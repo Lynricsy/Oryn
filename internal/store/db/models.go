@@ -887,6 +887,8 @@ type Owner struct {
 	SelectionActions         string  `json:"selectionActions"`
 	Language                 string  `json:"language"`
 	GenerativeUi             int64   `json:"generativeUi"`
+	AiConsentAt              *int64  `json:"aiConsentAt"`
+	AiConsentRecipients      string  `json:"aiConsentRecipients"`
 }
 
 type OwnerMemoryChunk struct {

@@ -2940,6 +2940,62 @@ paths:
               schema: { $ref: '#/components/schemas/LanguageSettings' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/ai-data-consent:
+    get:
+      tags: [settings]
+      operationId: getAiDataConsent
+      summary: AI 数据共享同意状态
+      description: |
+        按当前配置推导会收到主人个人数据（对话、附件、agent 读到的文件与工具输出、记忆文本、搜索词与网址）的第三方，
+        并给出主人的同意记录。`required` = 当前有接收方不在已同意列表里（客户端据此弹出同意框）。
+        尚未初始化所有者时同意记录为空。
+      responses:
+        '200':
+          description: 当前接收方与同意记录
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiDataConsent' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putAiDataConsent
+      summary: 记录同意（整体替换）
+      description: |
+        以当前时间记录主人同意向 `recipientIds` 列出的接收方发送数据。id 必须都在当前接收方里，否则 400；
+        尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AiDataConsentUpdate' }
+      responses:
+        '200':
+          description: 写入后的状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiDataConsent' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [settings]
+      operationId: deleteAiDataConsent
+      summary: 撤回同意
+      description: 清空同意记录；尚未初始化所有者 → 409。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '200':
+          description: 撤回后的状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AiDataConsent' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/settings/generative-ui:
     get:
       tags: [settings]
@@ -10726,6 +10782,46 @@ components:
       required: [language]
       properties:
         language: { $ref: '#/components/schemas/LanguageCode' }
+    AiDataPurpose:
+      type: string
+      enum: [chat, memory, web]
+      x-enum-varnames: [AiDataPurposeChat, AiDataPurposeMemory, AiDataPurposeWeb]
+      description: |
+        `chat`：对话与 agent 任务（消息、附件、agent 读到的文件与工具输出）；`memory`：记忆（抽取、嵌入、重排、判断的记忆文本）；
+        `web`：全局助手联网（搜索词与打开的网址）。
+    AiDataRecipient:
+      type: object
+      required: [id, name, purposes]
+      properties:
+        id: { type: string, description: '稳定标识，如 `model:anthropic`、`memory-embed:<host>`、`web:public`' }
+        name: { type: string, description: 显示名（已知 provider 用其品牌名，否则为 provider 键或主机名） }
+        host: { type: string, description: 上游主机（已知时） }
+        purposes:
+          type: array
+          items: { $ref: '#/components/schemas/AiDataPurpose' }
+    AiDataConsent:
+      type: object
+      required: [recipients, consentedAt, consentedRecipientIds, required]
+      properties:
+        recipients:
+          type: array
+          items: { $ref: '#/components/schemas/AiDataRecipient' }
+        consentedAt:
+          type: integer
+          format: int64
+          nullable: true
+          description: 最近一次同意的时间（Unix 毫秒）；null = 未同意或已撤回
+        consentedRecipientIds:
+          type: array
+          items: { type: string }
+        required: { type: boolean, description: 当前有接收方不在已同意列表里 }
+    AiDataConsentUpdate:
+      type: object
+      required: [recipientIds]
+      properties:
+        recipientIds:
+          type: array
+          items: { type: string }
     GenerativeUISettings:
       type: object
       required: [enabled]

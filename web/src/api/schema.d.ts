@@ -2503,6 +2503,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/ai-data-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * AI 数据共享同意状态
+         * @description 按当前配置推导会收到主人个人数据（对话、附件、agent 读到的文件与工具输出、记忆文本、搜索词与网址）的第三方，
+         *     并给出主人的同意记录。`required` = 当前有接收方不在已同意列表里（客户端据此弹出同意框）。
+         *     尚未初始化所有者时同意记录为空。
+         */
+        get: operations["getAiDataConsent"];
+        /**
+         * 记录同意（整体替换）
+         * @description 以当前时间记录主人同意向 `recipientIds` 列出的接收方发送数据。id 必须都在当前接收方里，否则 400；
+         *     尚未初始化所有者 → 409。
+         */
+        put: operations["putAiDataConsent"];
+        post?: never;
+        /**
+         * 撤回同意
+         * @description 清空同意记录；尚未初始化所有者 → 409。
+         */
+        delete: operations["deleteAiDataConsent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/generative-ui": {
         parameters: {
             query?: never;
@@ -8295,6 +8326,35 @@ export interface components {
         LanguageCode: "zh-CN" | "en";
         LanguageSettings: {
             language: components["schemas"]["LanguageCode"];
+        };
+        /**
+         * @description `chat`：对话与 agent 任务（消息、附件、agent 读到的文件与工具输出）；`memory`：记忆（抽取、嵌入、重排、判断的记忆文本）；
+         *     `web`：全局助手联网（搜索词与打开的网址）。
+         * @enum {string}
+         */
+        AiDataPurpose: "chat" | "memory" | "web";
+        AiDataRecipient: {
+            /** @description 稳定标识，如 `model:anthropic`、`memory-embed:<host>`、`web:public` */
+            id: string;
+            /** @description 显示名（已知 provider 用其品牌名，否则为 provider 键或主机名） */
+            name: string;
+            /** @description 上游主机（已知时） */
+            host?: string;
+            purposes: components["schemas"]["AiDataPurpose"][];
+        };
+        AiDataConsent: {
+            recipients: components["schemas"]["AiDataRecipient"][];
+            /**
+             * Format: int64
+             * @description 最近一次同意的时间（Unix 毫秒）；null = 未同意或已撤回
+             */
+            consentedAt: number | null;
+            consentedRecipientIds: string[];
+            /** @description 当前有接收方不在已同意列表里 */
+            required: boolean;
+        };
+        AiDataConsentUpdate: {
+            recipientIds: string[];
         };
         GenerativeUISettings: {
             /** @description M33：agent 是否可以用 render_ui / render_html 在对话里给出视图（关闭后不注册工具、不注入指引） */
@@ -17474,6 +17534,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LanguageSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAiDataConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前接收方与同意记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDataConsent"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putAiDataConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiDataConsentUpdate"];
+            };
+        };
+        responses: {
+            /** @description 写入后的状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDataConsent"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteAiDataConsent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 撤回后的状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDataConsent"];
                 };
             };
             default: components["responses"]["Error"];
