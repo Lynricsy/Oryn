@@ -21,6 +21,19 @@ export function resetHome(files: Record<string, string>): void {
 	home.deletes = [];
 }
 
+/** 生成式 UI 总开关（`/api/v1/settings/generative-ui`，扩展与工具页首）。`fail` 时写入返回 500。 */
+export const generativeUi = {
+	enabled: true,
+	puts: [] as boolean[],
+	fail: false,
+};
+
+export function resetGenerativeUi(): void {
+	generativeUi.enabled = true;
+	generativeUi.puts = [];
+	generativeUi.fail = false;
+}
+
 const PREFIX = "/api/v1/agent-config/files/";
 
 function meta(path: string, body: string) {
@@ -41,6 +54,19 @@ export const agentFetch = vi.fn(
 				? input
 				: new Request(new URL(String(input), "http://x"), init);
 		const url = new URL(req.url, "http://x");
+		if (url.pathname === "/api/v1/settings/generative-ui") {
+			if (req.method === "PUT") {
+				const { enabled } = (await req.json()) as { enabled: boolean };
+				generativeUi.puts.push(enabled);
+				if (generativeUi.fail)
+					return Response.json(
+						{ code: "internal", message: "boom" },
+						{ status: 500 },
+					);
+				generativeUi.enabled = enabled;
+			}
+			return Response.json({ enabled: generativeUi.enabled });
+		}
 		if (url.pathname === "/api/v1/agent-config/files")
 			return Response.json({
 				files: Object.entries(home.files).map(([p, c]) => meta(p, c)),

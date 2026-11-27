@@ -727,6 +727,8 @@ export class MockServer {
 	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
 	/** 全局语言设置（`owner.language`）。 */
 	languageSettings: Schemas["LanguageSettings"] = { language: "zh-CN" };
+	/** 生成式 UI 总开关（`owner.generative_ui`，M33）。 */
+	generativeUiSettings: Schemas["GenerativeUISettings"] = { enabled: true };
 	/** 控制面运维参数的覆盖：JSON 路径（分组.字段）→ 值与写入时间。 */
 	opsOverrides = new Map<string, { value: number | boolean; at: number }>();
 	/** 自定义选区快捷动作（`owner.selection_actions`，M22）。 */
@@ -2049,6 +2051,18 @@ export class MockServer {
 				this.languageSettings = { language: b.language };
 			}
 			return json(this.languageSettings);
+		}
+		if (p === "settings/generative-ui") {
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["GenerativeUISettings"];
+				if (typeof b.enabled !== "boolean")
+					return json(
+						{ code: "invalid_request", message: "enabled 必须是布尔值" },
+						400,
+					);
+				this.generativeUiSettings = { enabled: b.enabled };
+			}
+			return json(this.generativeUiSettings);
 		}
 		if (p === "server/ops-settings") {
 			if (m === "PATCH") {

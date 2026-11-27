@@ -18,6 +18,10 @@ import {
 	useOmpConfig,
 } from "../../../api/agent-config-queries";
 import {
+	useGenerativeUiSettings,
+	useSetGenerativeUi,
+} from "../../../api/generative-ui-queries";
+import {
 	AgentErrorText,
 	AgentPageHead,
 	ConfirmDeleteDialog,
@@ -348,6 +352,7 @@ export default function ExtensionsPage() {
 	return (
 		<>
 			<AgentPageHead />
+			<GenerativeUiGroup />
 			<Callout tone="warn" icon="restart">
 				{t("agentPages.code.restart")}
 			</Callout>
@@ -416,6 +421,40 @@ export default function ExtensionsPage() {
 				/>
 			)}
 		</>
+	);
+}
+
+/** 生成式 UI 总开关（M33）：agent 能否用 render_ui / render_html 在对话里给出视图。下次启动 agent 时生效。 */
+function GenerativeUiGroup(): ReactNode {
+	const { t } = useTranslation();
+	const settings = useGenerativeUiSettings();
+	const set = useSetGenerativeUi();
+	return (
+		<Group title={t("agentPages.code.views.title")}>
+			<GroupList>
+				<GroupRow
+					icon="views"
+					title={t("agentPages.code.views.label")}
+					meta={t("agentPages.code.views.hint")}
+					trailing={
+						settings.isPending ? (
+							<Spinner />
+						) : settings.isError ? undefined : (
+							<Toggle
+								hideLabel
+								checked={settings.data.enabled}
+								onChange={(enabled) => set.mutate(enabled)}
+								label={t("agentPages.code.views.label")}
+							/>
+						)
+					}
+				>
+					{settings.error || set.error ? (
+						<ErrorText error={settings.error ?? set.error} />
+					) : undefined}
+				</GroupRow>
+			</GroupList>
+		</Group>
 	);
 }
 

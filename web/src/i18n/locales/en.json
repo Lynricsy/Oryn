@@ -2668,6 +2668,11 @@
 			}
 		},
 		"code": {
+			"views": {
+				"title": "Generative UI",
+				"label": "Answer with views",
+				"hint": "Lets agents answer with interactive views (forms, buttons, charts and more). Takes effect the next time an agent starts; existing views stay visible."
+			},
 			"notLoaded": "Won't load",
 			"open": "Edit source of {{name}}",
 			"restart": "Extensions, hooks and custom tools take effect after the session restarts.",

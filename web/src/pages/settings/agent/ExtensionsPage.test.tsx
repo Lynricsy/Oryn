@@ -6,9 +6,11 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	agentFetch,
+	generativeUi,
 	home,
 	lastDisabled,
 	renderPage,
+	resetGenerativeUi,
 	resetHome,
 } from "./agent-config-mock";
 import ExtensionsPage, {
@@ -58,6 +60,7 @@ const FILES: Record<string, string> = {
 
 beforeEach(() => {
 	resetHome(FILES);
+	resetGenerativeUi();
 	vi.stubGlobal("fetch", agentFetch);
 });
 
@@ -99,6 +102,31 @@ describe("名称推导", () => {
 });
 
 describe("ExtensionsPage", () => {
+	it("生成式 UI 开关：读出当前值，切换时先显示新值再写入", async () => {
+		renderPage(<ExtensionsPage />);
+		const toggle = await screen.findByRole("switch", {
+			name: "在对话里给出视图",
+		});
+		expect(toggle).toBeChecked();
+		fireEvent.click(toggle);
+		await waitFor(() => expect(toggle).not.toBeChecked());
+		await waitFor(() => expect(generativeUi.puts).toEqual([false]));
+		await waitFor(() => expect(generativeUi.enabled).toBe(false));
+		expect(toggle).not.toBeChecked();
+	});
+
+	it("生成式 UI 开关：写入失败时回滚", async () => {
+		generativeUi.fail = true;
+		renderPage(<ExtensionsPage />);
+		const toggle = await screen.findByRole("switch", {
+			name: "在对话里给出视图",
+		});
+		fireEvent.click(toggle);
+		await waitFor(() => expect(generativeUi.puts).toEqual([false]));
+		await waitFor(() => expect(toggle).toBeChecked());
+		expect(generativeUi.enabled).toBe(true);
+	});
+
 	it("提示需重启；启停写扩展模块、hook、工具的键", async () => {
 		renderPage(<ExtensionsPage />);
 		expect(
