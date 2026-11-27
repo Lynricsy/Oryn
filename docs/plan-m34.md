@@ -358,7 +358,12 @@ S7-->S10
 
 ## 探针结论
 
-（S0 完成后填写。）
+2026-11-27 实测（探针代码不入库，临时目录已删）。环境：本机现有的引擎依赖（tailwindcss 4.3.5、vite 7.3.8、@tailwindcss/vite 4.3.5、react 19.1.1）、`/usr/bin/chromium`。
+
+- **S0 通过，不走失败分支。** 工作副本：`theme.css` 的 `@theme` 定义 `--color-accent: #0f766e`、`--font-display: "Georgia", serif`；`src/themes/warm.css` 是 `:root[data-oryn-theme="warm"]{--color-accent:#c2410c;--font-display:"Courier New", monospace}`。在 `orynDesignCss` 的占位替换里，`theme.css` 之后加了 `@import` 主题文件；在 `mount` 里给 `b` 帧写了 `data-oryn-theme="warm"`。
+  - 构建：主题文件原样进了产物 CSS，不在任何 layer 里。Tailwind 的 token 在 `@layer theme{:root,:host{…}}` 里。用 `--dump-dom` 取计算样式：`a` 帧是 `rgb(15, 118, 110)` / `Georgia, serif`，`b` 帧是 `rgb(194, 65, 12)` / `"Courier New", monospace`。
+  - dev：两帧的计算样式与构建一致。把 `warm.css` 的强调色改成 `#1d4ed8` 后，`b` 帧 104 ms 热更为 `rgb(29, 78, 216)`，`a` 帧不变。
+  - 结论：主题文件经 `@import` 之后，由 Tailwind 的依赖跟踪负责改动时的热更；**新建或删除主题文件**仍要按 C2 重新加载 styles 模块（同 `theme.css` 的现有做法）。
 
 ## 回退点
 
