@@ -226,7 +226,11 @@ export function GroupOverlay({
 	);
 }
 
-/** 用户选定方案后的提示条（C5）：`group` 还是已选定时显示，关掉或组不再选定时消失。 */
+/**
+ * 用户选定方案后的提示条（C5）：`group` 还是已选定时显示，关掉或组不再选定时消失。
+ * 固定在画布视口右下角、与底部工具条同一行（工具条居中，提示条最宽到工具条右侧为止）：这一行落在适合全部时的留白里，
+ * 不压画框，也不压画框上方的名称行与方案标签。
+ */
 export function PickNotice({
 	artifactId,
 	doc,
@@ -242,38 +246,37 @@ export function PickNotice({
 	const g = doc.groups?.find((x) => x.id === group);
 	const v = g?.variants.find((x) => x.id === g.picked);
 	if (!v) return null;
+	const text = t(
+		doc.design
+			? "artifacts.canvas.groups.noticeDesign"
+			: "artifacts.canvas.groups.notice",
+		{ name: v.name },
+	);
 	return (
-		<div className="pointer-events-none absolute inset-x-0 bottom-16 z-10 flex justify-center px-2">
-			<div
-				role="status"
-				data-testid="canvas-pick-notice"
-				className="pointer-events-auto flex max-w-full items-center gap-2 rounded-lg border border-border bg-panel py-1 pr-1 pl-3 text-sm shadow-sm"
-			>
-				<span className="min-w-0 truncate">
-					{t(
-						doc.design
-							? "artifacts.canvas.groups.noticeDesign"
-							: "artifacts.canvas.groups.notice",
-						{ name: v.name },
-					)}
-				</span>
-				{!doc.design && (
-					<UnifyButton
-						artifactId={artifactId}
-						doc={doc}
-						group={group}
-						onSent={onClose}
-					/>
-				)}
-				<IconButton
-					icon="close"
-					box="sm"
-					size={14}
-					label={t("artifacts.canvas.groups.dismiss")}
-					data-testid="canvas-pick-dismiss"
-					onClick={onClose}
+		<div
+			role="status"
+			data-testid="canvas-pick-notice"
+			className="absolute right-2 bottom-2 z-10 flex max-w-[calc(50%-17.5rem)] items-center gap-1.5 overflow-hidden rounded-xl border border-border bg-panel p-1 pl-2.5 text-sm shadow-md"
+		>
+			<span title={text} className="min-w-0 truncate">
+				{text}
+			</span>
+			{!doc.design && (
+				<UnifyButton
+					artifactId={artifactId}
+					doc={doc}
+					group={group}
+					onSent={onClose}
 				/>
-			</div>
+			)}
+			<IconButton
+				icon="close"
+				box="sm"
+				size={14}
+				label={t("artifacts.canvas.groups.dismiss")}
+				data-testid="canvas-pick-dismiss"
+				onClick={onClose}
+			/>
 		</div>
 	);
 }
