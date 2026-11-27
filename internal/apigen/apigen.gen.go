@@ -13438,6 +13438,21 @@ type VapidKey struct {
 	PublicKey string `json:"publicKey"`
 }
 
+// ViewFrame defines model for ViewFrame.
+type ViewFrame struct {
+	// Token 帧令牌（16 个随机字节的小写无填充 base32）
+	Token ArtifactFrameToken `json:"token"`
+
+	// URL 帧根地址（寻址同 artifact 帧：`a-<令牌>.<portal_domain>` 或 `<public_url>/_af/<令牌>/`）
+	URL string `json:"url"`
+}
+
+// ViewFrameRequest defines model for ViewFrameRequest.
+type ViewFrameRequest struct {
+	// ToolCallID 转录里 render_html 调用的 toolCall id
+	ToolCallID string `json:"toolCallId"`
+}
+
 // WebAuthnCeremony defines model for WebAuthnCeremony.
 type WebAuthnCeremony struct {
 	// CeremonyID 本次仪式的服务端会话句柄，finish 时回传
@@ -15512,6 +15527,9 @@ type CreateProviderJSONRequestBody = ProviderCreateRequest
 // ReceiveGitHubWebhookJSONRequestBody defines body for ReceiveGitHubWebhook for application/json ContentType.
 type ReceiveGitHubWebhookJSONRequestBody ReceiveGitHubWebhookJSONBody
 
+// OpenPublicShareViewFrameJSONRequestBody defines body for OpenPublicShareViewFrame for application/json ContentType.
+type OpenPublicShareViewFrameJSONRequestBody = ViewFrameRequest
+
 // CreatePushSubscriptionJSONRequestBody defines body for CreatePushSubscription for application/json ContentType.
 type CreatePushSubscriptionJSONRequestBody = PushSubscriptionInput
 
@@ -15622,6 +15640,9 @@ type PutThreadScheduleJSONRequestBody = ScheduleInput
 
 // CreateThreadShareJSONRequestBody defines body for CreateThreadShare for application/json ContentType.
 type CreateThreadShareJSONRequestBody = CreateThreadShareRequest
+
+// OpenViewFrameJSONRequestBody defines body for OpenViewFrame for application/json ContentType.
+type OpenViewFrameJSONRequestBody = ViewFrameRequest
 
 // ProviderByeJSONRequestBody defines body for ProviderBye for application/json ContentType.
 type ProviderByeJSONRequestBody = ProviderByeRequest
@@ -19081,6 +19102,9 @@ type ServerInterface interface {
 	// GetPublicShareIdentity 分享页的身份（全局 agent 身份 + 这段对话里用到且设了头像的 role）
 	// (GET /api/v1/public/shares/{slug}/identity)
 	GetPublicShareIdentity(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
+	// OpenPublicShareViewFrame 为公开分享里的一次 render_html 调用申请视图帧（M33，匿名）
+	// (POST /api/v1/public/shares/{slug}/view-frames)
+	OpenPublicShareViewFrame(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
 	// RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
 	// (DELETE /api/v1/published-files/{id})
 	RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath)
@@ -19408,6 +19432,9 @@ type ServerInterface interface {
 	// ListThreadSSHHosts 线程所在 orb 可见的 SSH 主机
 	// (GET /api/v1/threads/{id}/ssh-hosts)
 	ListThreadSSHHosts(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// OpenViewFrame 为转录里的一次 render_html 调用申请视图帧（M33）
+	// (POST /api/v1/threads/{id}/view-frames)
+	OpenViewFrame(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
 	// WakeThread 唤醒线程所在 orb（异步）
 	// (POST /api/v1/threads/{id}/wake)
 	WakeThread(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
@@ -21148,6 +21175,12 @@ func (_ Unimplemented) GetPublicShareIdentity(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// OpenPublicShareViewFrame 为公开分享里的一次 render_html 调用申请视图帧（M33，匿名）
+// (POST /api/v1/public/shares/{slug}/view-frames)
+func (_ Unimplemented) OpenPublicShareViewFrame(w http.ResponseWriter, r *http.Request, slug ShareSlugPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // RevokePublishedFile 撤回已发布的文件（公开 URL 立即 404；附件本身保留）
 // (DELETE /api/v1/published-files/{id})
 func (_ Unimplemented) RevokePublishedFile(w http.ResponseWriter, r *http.Request, id PublishedFileIDPath) {
@@ -21799,6 +21832,12 @@ func (_ Unimplemented) CreateThreadShare(w http.ResponseWriter, r *http.Request,
 // ListThreadSSHHosts 线程所在 orb 可见的 SSH 主机
 // (GET /api/v1/threads/{id}/ssh-hosts)
 func (_ Unimplemented) ListThreadSSHHosts(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// OpenViewFrame 为转录里的一次 render_html 调用申请视图帧（M33）
+// (POST /api/v1/threads/{id}/view-frames)
+func (_ Unimplemented) OpenViewFrame(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -30462,6 +30501,32 @@ func (siw *ServerInterfaceWrapper) GetPublicShareIdentity(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// OpenPublicShareViewFrame operation middleware
+func (siw *ServerInterfaceWrapper) OpenPublicShareViewFrame(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "slug" -------------
+	var slug ShareSlugPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", chi.URLParam(r, "slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenPublicShareViewFrame(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RevokePublishedFile operation middleware
 func (siw *ServerInterfaceWrapper) RevokePublishedFile(w http.ResponseWriter, r *http.Request) {
 
@@ -33721,6 +33786,32 @@ func (siw *ServerInterfaceWrapper) ListThreadSSHHosts(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// OpenViewFrame operation middleware
+func (siw *ServerInterfaceWrapper) OpenViewFrame(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenViewFrame(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // WakeThread operation middleware
 func (siw *ServerInterfaceWrapper) WakeThread(w http.ResponseWriter, r *http.Request) {
 
@@ -34717,6 +34808,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Delete(options.BaseURL+"/api/v1/artifact-frames/{token}", wrapper.CloseArtifactFrame)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/threads/{id}/view-frames", wrapper.OpenViewFrame)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/open-link", wrapper.OpenArtifactLink)
 	})
 	r.Group(func(r chi.Router) {
@@ -35225,6 +35319,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/shares/{slug}/blobs/{sha256}", wrapper.GetPublicShareBlob)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/public/shares/{slug}/view-frames", wrapper.OpenPublicShareViewFrame)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/ws-ticket", wrapper.CreateWsTicket)

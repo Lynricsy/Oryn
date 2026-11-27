@@ -118,6 +118,8 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("threads", opDeny, deny(denyNative("create_thread")), "createThread")
 	set("threads", opDeny, deny(denyBinary("pass library file ids in create_thread's files, or use put_thread_file")), "uploadAttachment")
 	set("threads", opDeny, deny(denyBinary("use read_thread_file on the copy in the thread's orb")), "getAttachmentContent")
+	// 视图帧（M33）：只有浏览器里的 HTML 视图用，令牌就是帧的访问凭证
+	set("threads", opDeny, deny(denyClient), "openViewFrame")
 
 	// thread-files
 	set("thread-files", opRead, none, "getOrbFsRoots", "statOrbFs", "listOrbGitCommits")
@@ -319,7 +321,8 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("desktop", opConfirm, thread, "bindThreadBrowserRelay")
 	// 内部接口：不是用户操作，不进文档
 	set("", opDeny, none, "getBlob", "createWsTicket", "connectWs", "orbDesktopSocket", "browserRelaySocket", "sshHostTerminal", "connectPublicShareWs",
-		"getPublicShare", "getPublicShareIdentity", "listPublicShareEntries", "getPublicShareBlob", "receiveGitHubWebhook", "receiveScheduleWebhook",
+		"getPublicShare", "getPublicShareIdentity", "listPublicShareEntries", "getPublicShareBlob", "openPublicShareViewFrame",
+		"receiveGitHubWebhook", "receiveScheduleWebhook",
 		"finishGitHubOAuth", "providerHello", "providerClaimJob", "providerCompleteJob", "providerBye", "providerClaimFs",
 		"providerReplyFs", "orbLink", "orbWhoami", "prepareOrbSync", "getOrbSyncBundle")
 	return m

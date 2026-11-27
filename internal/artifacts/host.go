@@ -38,6 +38,8 @@ type Host struct {
 	runtimeJS []byte
 	// beaconJS 是发布页的访客心跳脚本（public.go）；没构建 Web 时为空。
 	beaconJS []byte
+	// view 是视图帧的运行时与内置库（view.go）；没构建 Web 时为空。
+	view viewAssets
 	// caps 是页面运行时端点认得的能力（runtime.go）。
 	caps map[string]runtimeCap
 
@@ -64,6 +66,7 @@ func NewHost(s *Service, cfg HostConfig) *Host {
 	if js, ok := h.asset(beaconAsset); ok {
 		h.beaconJS = inlineScript(js)
 	}
+	h.view = loadViewAssets(h.asset)
 	h.caps = h.runtimeCaps()
 	return h
 }
@@ -114,6 +117,10 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 	f, ok := h.use(token)
 	if !ok {
 		frameError(w, http.StatusNotFound, "帧不存在或已过期")
+		return
+	}
+	if f.view != nil {
+		h.serveView(w, r, f, p)
 		return
 	}
 	sandbox, ancestors := sandboxFrame, f.ancestors

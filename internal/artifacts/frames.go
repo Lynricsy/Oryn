@@ -40,6 +40,10 @@ type frame struct {
 	ancestors string
 	// locale 是类型化 artifact 查看器的界面语言（申请帧时给出；空 = 由查看器自己决定）。
 	locale string
+	// view 非空时这是视图帧（M33，view.go）：每次取帧根时现取内容；artifactID 等字段不用。
+	view func(context.Context) (ViewDoc, error)
+	// public：公开分享页的访客申请的视图帧，计入匿名配额（maxPublicFrames）。
+	public bool
 	usedAt time.Time
 }
 
@@ -139,7 +143,8 @@ func (h *Host) CloseFrame(token string) {
 	h.mu.Unlock()
 }
 
-// add 登记一个帧：先清掉过期的，满了再淘汰最久未用的。
+// add 登记一个帧：先清掉过期的，满了再淘汰最久未用的。公开帧只在公开帧之间淘汰（上限 maxPublicFrames），
+// 匿名访客挤不掉主人的帧。
 func (h *Host) add(f *frame) string {
 	now := h.now()
 	f.usedAt = now
@@ -151,17 +156,34 @@ func (h *Host) add(f *frame) string {
 			delete(h.frames, t)
 		}
 	}
-	for len(h.frames) >= maxFrames {
-		oldest := ""
-		for t, g := range h.frames {
-			if oldest == "" || g.usedAt.Before(h.frames[oldest].usedAt) {
-				oldest = t
-			}
+	if f.public {
+		for h.evictOldest(func(g *frame) bool { return g.public }, maxPublicFrames) {
 		}
-		delete(h.frames, oldest)
+	} else {
+		for h.evictOldest(func(*frame) bool { return true }, maxFrames) {
+		}
 	}
 	h.frames[token] = f
 	return token
+}
+
+// evictOldest 在满足 match 的帧已有 limit 个及以上时淘汰其中最久未用的一个，返回是否淘汰了。调用方持有 h.mu。
+func (h *Host) evictOldest(match func(*frame) bool, limit int) bool {
+	n, oldest := 0, ""
+	for t, g := range h.frames {
+		if !match(g) {
+			continue
+		}
+		n++
+		if oldest == "" || g.usedAt.Before(h.frames[oldest].usedAt) {
+			oldest = t
+		}
+	}
+	if n < limit {
+		return false
+	}
+	delete(h.frames, oldest)
+	return true
 }
 
 // use 取出一个帧的快照并刷新其使用时间；不存在或已过期时 ok 为假。

@@ -186,6 +186,21 @@ func ParseMessage(e Entry) (Message, bool) {
 	return m, true
 }
 
+// ToolCallArgs 在 assistant 消息条目里找 id 为 callID、工具名为 name 的调用，返回它的参数（转录里的原始 JSON，
+// 即模型的原始输出）；不是 assistant 消息或没有这次调用时 ok 为假。
+func ToolCallArgs(e Entry, callID, name string) (json.RawMessage, bool) {
+	r, ok := parseRaw(e)
+	if !ok || r.Role != "assistant" {
+		return nil, false
+	}
+	for _, b := range blocks(r.Content) {
+		if b.Type == "toolCall" && b.ID == callID && b.Name == name {
+			return b.Arguments, true
+		}
+	}
+	return nil, false
+}
+
 // automatedPrefix 是控制面代发的 user 消息的头行前缀（线程回报、定时运行、GitHub 事件等，
 // 见 coord/reports.go、schedule/loop.go、github/message.go）。
 const automatedPrefix = "[Oryn "
