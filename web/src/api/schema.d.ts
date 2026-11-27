@@ -3536,8 +3536,27 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径） */
+        /** 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径） */
         post: operations["importArtifact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifacts/{id}/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 为 Office artifact 上传新版本（请求体是整个文件；作者是用户） */
+        post: operations["uploadArtifactVersion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7999,15 +8018,15 @@ export interface components {
             scope: components["schemas"]["AssistantFileScope"];
         };
         /**
-         * @description `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片
+         * @description `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档（含 Word 与 PDF）、`slides` 幻灯片（含 PowerPoint）、`sheet` 表格（Excel）
          * @enum {string}
          */
-        ArtifactKind: "web" | "canvas" | "document" | "slides";
+        ArtifactKind: "web" | "canvas" | "document" | "slides" | "sheet";
         /**
-         * @description 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+         * @description 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`。`docx` 起的七个是 Office 类型：版本里只有入口这一个原生文件
          * @enum {string}
          */
-        ArtifactType: "document" | "slides";
+        ArtifactType: "document" | "slides" | "docx" | "docm" | "xlsx" | "xlsm" | "pptx" | "pptm" | "pdf";
         /** @enum {string} */
         ArtifactOrigin: "agent" | "import";
         /**
@@ -8135,10 +8154,10 @@ export interface components {
             url: string;
         };
         /**
-         * @description `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图
+         * @description `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片、Word 与 PowerPoint；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图；`original` Office artifact 的原件
          * @enum {string}
          */
-        ArtifactExportFormat: "html" | "zip" | "md" | "pdf" | "project" | "mockup-png" | "mockup-pdf";
+        ArtifactExportFormat: "html" | "zip" | "md" | "pdf" | "project" | "mockup-png" | "mockup-pdf" | "original";
         /**
          * @description `clean` 无问题；`issues` 有问题；`stale` 检查结果早于当前源码；`unverified` 未检查或检查没跑成
          * @enum {string}
@@ -8195,13 +8214,13 @@ export interface components {
         };
         /** @description `act_<ulid>`（artifact 评论串） */
         ArtifactCommentThreadId: string;
-        /** @description 评论的锚点；`offset` / `tag` 为空表示整个页面 */
+        /** @description 评论的锚点；`offset` / `tag` 为空表示整个页面。类型化 artifact 用 `page` + `x` / `y`（页内位置）、`range`（表格区域）或 `block`（文档块） */
         ArtifactCommentAnchor: {
             /** @description 锚点最近一次定位所在的版本 */
             version: number;
-            /** @description 版本里的 HTML 文件 */
+            /** @description 版本里的 HTML 文件；类型化 artifact 为入口文件 */
             path: string;
-            /** @description 画布页面上的锚点：画框在阅读顺序里的序号与名字 */
+            /** @description 画布页面上的锚点：画框在阅读顺序里的序号与名字；类型化 artifact 为页（幻灯片 / 工作表）的序号与名字 */
             page: {
                 number: number;
                 name: string;
@@ -8215,6 +8234,14 @@ export interface components {
             missing: boolean;
             /** @description 设计画布的源码位置 `src/frames/x.tsx:行:列`（取自元素的 `data-oryn-loc`）；省略或 null = 没有 */
             loc?: string | null;
+            /** @description 页内归一化横坐标（0–1）；与 `y` 同空表示整页 */
+            x?: number | null;
+            /** @description 页内归一化纵坐标（0–1） */
+            y?: number | null;
+            /** @description 表格的单元格区域（如 `B2:C3`） */
+            range?: string | null;
+            /** @description Markdown 文档的块序号（从 0 起）；空 = 整篇 */
+            block?: number | null;
         };
         ArtifactComment: {
             n: number;
@@ -18809,6 +18836,8 @@ export interface operations {
         parameters: {
             query?: {
                 projectId?: components["schemas"]["ProjectId"];
+                /** @description 归属的线程（从文件面板「转为 artifact」）；缺省 projectId 时取该线程的项目 */
+                threadId?: components["schemas"]["ThreadId"];
                 /** @description 上传时的文件名或文件夹名（没有 `<title>` 时作标题） */
                 name?: string;
             };
@@ -18833,7 +18862,53 @@ export interface operations {
                     "application/json": components["schemas"]["Artifact"];
                 };
             };
-            /** @description 错误；导入特有的错误码：`too_large`、`too_many`（413）、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`（400） */
+            /** @description 错误；导入特有的错误码：`too_large`、`too_many`（413）、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`、`unsupported_format`（旧版或 OpenDocument 格式）、`bad_office`（Office 文件校验不过）（400） */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    uploadArtifactVersion: {
+        parameters: {
+            query: {
+                baseVersion: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 上传后的 artifact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            /** @description `baseVersion` 之后入口文件被改过 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactConflict"];
+                };
+            };
+            /** @description 错误：`invalid`（不是 Office artifact）、`bad_office`（400）；`too_large`（413）；`locked`（423，编辑器占用中） */
             default: {
                 headers: {
                     [name: string]: unknown;

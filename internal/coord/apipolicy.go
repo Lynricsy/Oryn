@@ -220,7 +220,8 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("artifacts", opDeny, deny(denyNative("restore_artifact_version")), "restoreArtifactVersion")
 	set("artifacts", opDeny, deny(denyNative("reply_artifact_comment")), "replyArtifactComment")
 	set("artifacts", opDeny, deny(denyNative("resolve_artifact_comment")), "patchArtifactComment")
-	set("artifacts", opDeny, deny(denyNative("update_artifact")), "editArtifactElement", "applyArtifactCanvasOps", "setArtifactParams")
+	set("artifacts", opDeny, deny(denyNative("update_artifact")), "editArtifactElement", "applyArtifactCanvasOps", "setArtifactParams",
+		"uploadArtifactVersion")
 	set("artifacts", opDeny, deny(denyNative("import_artifact")), "importArtifact")
 	set("artifacts", opDeny, deny(denyNative("export_artifact")), "exportArtifact")
 	set("artifacts", opDeny, deny(denyNative("read_artifact")), "getArtifactFile")

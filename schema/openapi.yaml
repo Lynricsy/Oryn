@@ -4313,7 +4313,7 @@ paths:
     post:
       tags: [artifacts]
       operationId: importArtifact
-      summary: 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径）
+      summary: 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径）
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -4322,6 +4322,10 @@ paths:
         - name: projectId
           in: query
           schema: { $ref: '#/components/schemas/ProjectId' }
+        - name: threadId
+          in: query
+          description: 归属的线程（从文件面板「转为 artifact」）；缺省 projectId 时取该线程的项目
+          schema: { $ref: '#/components/schemas/ThreadId' }
         - name: name
           in: query
           description: 上传时的文件名或文件夹名（没有 `<title>` 时作标题）
@@ -4342,7 +4346,44 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Artifact' }
         default:
-          description: 错误；导入特有的错误码：`too_large`、`too_many`（413）、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`（400）
+          description: 错误；导入特有的错误码：`too_large`、`too_many`（413）、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`、`unsupported_format`（旧版或 OpenDocument 格式）、`bad_office`（Office 文件校验不过）（400）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/v1/artifacts/{id}/upload:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: uploadArtifactVersion
+      summary: 为 Office artifact 上传新版本（请求体是整个文件；作者是用户）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      parameters:
+        - name: baseVersion
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: 上传后的 artifact
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artifact' }
+        '409':
+          description: '`baseVersion` 之后入口文件被改过'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactConflict' }
+        default:
+          description: 错误：`invalid`（不是 Office artifact）、`bad_office`（400）；`too_large`（413）；`locked`（423，编辑器占用中）
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -10395,12 +10436,12 @@ components:
         scope: { $ref: '#/components/schemas/AssistantFileScope' }
     ArtifactKind:
       type: string
-      enum: [web, canvas, document, slides]
-      description: '`web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片'
+      enum: [web, canvas, document, slides, sheet]
+      description: '`web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档（含 Word 与 PDF）、`slides` 幻灯片（含 PowerPoint）、`sheet` 表格（Excel）'
     ArtifactType:
       type: string
-      enum: [document, slides]
-      description: 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+      enum: [document, slides, docx, docm, xlsx, xlsm, pptx, pptm, pdf]
+      description: 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`。`docx` 起的七个是 Office 类型：版本里只有入口这一个原生文件
     ArtifactOrigin:
       type: string
       enum: [agent, import]
@@ -10595,9 +10636,9 @@ components:
         url: { type: string }
     ArtifactExportFormat:
       type: string
-      enum: [html, zip, md, pdf, project, mockup-png, mockup-pdf]
-      x-enum-varnames: [ArtifactExportHTML, ArtifactExportZip, ArtifactExportMarkdown, ArtifactExportPDF, ArtifactExportProject, ArtifactExportMockupPNG, ArtifactExportMockupPDF]
-      description: '`html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图'
+      enum: [html, zip, md, pdf, project, mockup-png, mockup-pdf, original]
+      x-enum-varnames: [ArtifactExportHTML, ArtifactExportZip, ArtifactExportMarkdown, ArtifactExportPDF, ArtifactExportProject, ArtifactExportMockupPNG, ArtifactExportMockupPDF, ArtifactExportOriginal]
+      description: '`html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片、Word 与 PowerPoint；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图；`original` Office artifact 的原件'
     ArtifactCheckStatus:
       type: string
       enum: [clean, issues, stale, unverified]
@@ -10684,7 +10725,7 @@ components:
       description: '`act_<ulid>`（artifact 评论串）'
     ArtifactCommentAnchor:
       type: object
-      description: 评论的锚点；`offset` / `tag` 为空表示整个页面
+      description: 评论的锚点；`offset` / `tag` 为空表示整个页面。类型化 artifact 用 `page` + `x` / `y`（页内位置）、`range`（表格区域）或 `block`（文档块）
       required: [version, path, page, offset, tag, text, missing]
       properties:
         version:
@@ -10692,11 +10733,11 @@ components:
           description: 锚点最近一次定位所在的版本
         path:
           type: string
-          description: 版本里的 HTML 文件
+          description: 版本里的 HTML 文件；类型化 artifact 为入口文件
         page:
           type: object
           nullable: true
-          description: 画布页面上的锚点：画框在阅读顺序里的序号与名字
+          description: 画布页面上的锚点：画框在阅读顺序里的序号与名字；类型化 artifact 为页（幻灯片 / 工作表）的序号与名字
           required: [number, name]
           properties:
             number: { type: integer }
@@ -10722,6 +10763,28 @@ components:
           maxLength: 512
           pattern: '^src/[A-Za-z0-9._/-]+\.(tsx|ts|jsx|js):[1-9][0-9]*:[1-9][0-9]*$'
           description: 设计画布的源码位置 `src/frames/x.tsx:行:列`（取自元素的 `data-oryn-loc`）；省略或 null = 没有
+        x:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: 页内归一化横坐标（0–1）；与 `y` 同空表示整页
+        y:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: 页内归一化纵坐标（0–1）
+        range:
+          type: string
+          nullable: true
+          pattern: '^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$'
+          description: 表格的单元格区域（如 `B2:C3`）
+        block:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: Markdown 文档的块序号（从 0 起）；空 = 整篇
     ArtifactComment:
       type: object
       required: [n, authorLabel, body, createdAt]

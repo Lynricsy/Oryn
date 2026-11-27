@@ -167,6 +167,7 @@ const (
 	ArtifactExportMarkdown  ArtifactExportFormat = "md"
 	ArtifactExportMockupPDF ArtifactExportFormat = "mockup-pdf"
 	ArtifactExportMockupPNG ArtifactExportFormat = "mockup-png"
+	ArtifactExportOriginal  ArtifactExportFormat = "original"
 	ArtifactExportPDF       ArtifactExportFormat = "pdf"
 	ArtifactExportProject   ArtifactExportFormat = "project"
 	ArtifactExportZip       ArtifactExportFormat = "zip"
@@ -183,6 +184,8 @@ func (e ArtifactExportFormat) Valid() bool {
 		return true
 	case ArtifactExportMockupPNG:
 		return true
+	case ArtifactExportOriginal:
+		return true
 	case ArtifactExportPDF:
 		return true
 	case ArtifactExportProject:
@@ -198,6 +201,7 @@ func (e ArtifactExportFormat) Valid() bool {
 const (
 	ArtifactKindCanvas   ArtifactKind = "canvas"
 	ArtifactKindDocument ArtifactKind = "document"
+	ArtifactKindSheet    ArtifactKind = "sheet"
 	ArtifactKindSlides   ArtifactKind = "slides"
 	ArtifactKindWeb      ArtifactKind = "web"
 )
@@ -208,6 +212,8 @@ func (e ArtifactKind) Valid() bool {
 	case ArtifactKindCanvas:
 		return true
 	case ArtifactKindDocument:
+		return true
+	case ArtifactKindSheet:
 		return true
 	case ArtifactKindSlides:
 		return true
@@ -262,16 +268,37 @@ func (e ArtifactThreadActivityDoing) Valid() bool {
 
 // Defines values for ArtifactType.
 const (
+	ArtifactTypeDocm     ArtifactType = "docm"
 	ArtifactTypeDocument ArtifactType = "document"
+	ArtifactTypeDocx     ArtifactType = "docx"
+	ArtifactTypePdf      ArtifactType = "pdf"
+	ArtifactTypePptm     ArtifactType = "pptm"
+	ArtifactTypePptx     ArtifactType = "pptx"
 	ArtifactTypeSlides   ArtifactType = "slides"
+	ArtifactTypeXlsm     ArtifactType = "xlsm"
+	ArtifactTypeXlsx     ArtifactType = "xlsx"
 )
 
 // Valid indicates whether the value is a known member of the ArtifactType enum.
 func (e ArtifactType) Valid() bool {
 	switch e {
+	case ArtifactTypeDocm:
+		return true
 	case ArtifactTypeDocument:
 		return true
+	case ArtifactTypeDocx:
+		return true
+	case ArtifactTypePdf:
+		return true
+	case ArtifactTypePptm:
+		return true
+	case ArtifactTypePptx:
+		return true
 	case ArtifactTypeSlides:
+		return true
+	case ArtifactTypeXlsm:
+		return true
+	case ArtifactTypeXlsx:
 		return true
 	default:
 		return false
@@ -5068,7 +5095,7 @@ type Artifact struct {
 	// ID `art_<ulid>`（M14 artifact）
 	ID ArtifactID `json:"id"`
 
-	// Kind `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片
+	// Kind `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档（含 Word 与 PDF）、`slides` 幻灯片（含 PowerPoint）、`sheet` 表格（Excel）
 	Kind ArtifactKind `json:"kind"`
 
 	// OpenedAt UTC 毫秒时间戳
@@ -5094,7 +5121,7 @@ type Artifact struct {
 	ThreadID *ThreadID `json:"threadId,omitempty"`
 	Title    string    `json:"title"`
 
-	// Type 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+	// Type 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`。`docx` 起的七个是 Office 类型：版本里只有入口这一个原生文件
 	Type *ArtifactType `json:"type,omitempty"`
 
 	// UpdatedAt UTC 毫秒时间戳
@@ -5196,8 +5223,11 @@ type ArtifactComment struct {
 	N         int         `json:"n"`
 }
 
-// ArtifactCommentAnchor 评论的锚点；`offset` / `tag` 为空表示整个页面
+// ArtifactCommentAnchor 评论的锚点；`offset` / `tag` 为空表示整个页面。类型化 artifact 用 `page` + `x` / `y`（页内位置）、`range`（表格区域）或 `block`（文档块）
 type ArtifactCommentAnchor struct {
+	// Block Markdown 文档的块序号（从 0 起）；空 = 整篇
+	Block *int `json:"block,omitempty"`
+
 	// Loc 设计画布的源码位置 `src/frames/x.tsx:行:列`（取自元素的 `data-oryn-loc`）；省略或 null = 没有
 	Loc *string `json:"loc,omitempty"`
 
@@ -5207,26 +5237,35 @@ type ArtifactCommentAnchor struct {
 	// Offset 元素起始标签在文件里的 UTF-8 字节偏移；脚本生成的元素与整页锚点为空
 	Offset *int `json:"offset"`
 
-	// Page 画布页面上的锚点：画框在阅读顺序里的序号与名字
+	// Page 画布页面上的锚点：画框在阅读顺序里的序号与名字；类型化 artifact 为页（幻灯片 / 工作表）的序号与名字
 	Page *struct {
 		Name   string `json:"name"`
 		Number int    `json:"number"`
 	} `json:"page"`
 
-	// Path 版本里的 HTML 文件
-	Path string  `json:"path"`
-	Tag  *string `json:"tag"`
+	// Path 版本里的 HTML 文件；类型化 artifact 为入口文件
+	Path string `json:"path"`
+
+	// Range 表格的单元格区域（如 `B2:C3`）
+	Range *string `json:"range,omitempty"`
+	Tag   *string `json:"tag"`
 
 	// Text 元素文本片段（折叠空白后前 120 个字符）
 	Text string `json:"text"`
 
 	// Version 锚点最近一次定位所在的版本
 	Version int `json:"version"`
+
+	// X 页内归一化横坐标（0–1）；与 `y` 同空表示整页
+	X *float32 `json:"x,omitempty"`
+
+	// Y 页内归一化纵坐标（0–1）
+	Y *float32 `json:"y,omitempty"`
 }
 
 // ArtifactCommentCreate defines model for ArtifactCommentCreate.
 type ArtifactCommentCreate struct {
-	// Anchor 评论的锚点；`offset` / `tag` 为空表示整个页面
+	// Anchor 评论的锚点；`offset` / `tag` 为空表示整个页面。类型化 artifact 用 `page` + `x` / `y`（页内位置）、`range`（表格区域）或 `block`（文档块）
 	Anchor ArtifactCommentAnchor `json:"anchor"`
 	Body   string                `json:"body"`
 }
@@ -5243,7 +5282,7 @@ type ArtifactCommentReply struct {
 
 // ArtifactCommentThread defines model for ArtifactCommentThread.
 type ArtifactCommentThread struct {
-	// Anchor 评论的锚点；`offset` / `tag` 为空表示整个页面
+	// Anchor 评论的锚点；`offset` / `tag` 为空表示整个页面。类型化 artifact 用 `page` + `x` / `y`（页内位置）、`range`（表格区域）或 `block`（文档块）
 	Anchor   ArtifactCommentAnchor `json:"anchor"`
 	Comments []ArtifactComment     `json:"comments"`
 
@@ -5380,7 +5419,7 @@ type ArtifactElementEdit struct {
 	Text *string `json:"text,omitempty"`
 }
 
-// ArtifactExportFormat `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图
+// ArtifactExportFormat `html` 单文件页面；`zip` 全部文件；`md` 文档（有图片时为 zip）；`pdf` 幻灯片、Word 与 PowerPoint；`project` 设计画布导出为可运行的前端工程（zip）；`mockup-png`、`mockup-pdf` 设计画布的样机图；`original` Office artifact 的原件
 type ArtifactExportFormat string
 
 // ArtifactFile defines model for ArtifactFile.
@@ -5417,7 +5456,7 @@ type ArtifactFrameToken = string
 // ArtifactID `art_<ulid>`（M14 artifact）
 type ArtifactID = string
 
-// ArtifactKind `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档、`slides` 幻灯片
+// ArtifactKind `web` 页面、`canvas` 画布（有 `canvas.json`）、`document` 文档（含 Word 与 PDF）、`slides` 幻灯片（含 PowerPoint）、`sheet` 表格（Excel）
 type ArtifactKind string
 
 // ArtifactList defines model for ArtifactList.
@@ -5566,7 +5605,7 @@ type ArtifactThreadRef struct {
 	Title    string   `json:"title"`
 }
 
-// ArtifactType 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`
+// ArtifactType 类型化 artifact 的类型；缺省（plain）由文件决定是 `web` 还是 `canvas`。`docx` 起的七个是 Office 类型：版本里只有入口这一个原生文件
 type ArtifactType string
 
 // ArtifactVersion defines model for ArtifactVersion.
@@ -14237,6 +14276,9 @@ type ImportArtifactMultipartBody map[string]openapi_types.File
 type ImportArtifactParams struct {
 	ProjectID *ProjectID `form:"projectId,omitempty" json:"projectId,omitempty"`
 
+	// ThreadID 归属的线程（从文件面板「转为 artifact」）；缺省 projectId 时取该线程的项目
+	ThreadID *ThreadID `form:"threadId,omitempty" json:"threadId,omitempty"`
+
 	// Name 上传时的文件名或文件夹名（没有 `<title>` 时作标题）
 	Name *string `form:"name,omitempty" json:"name,omitempty"`
 }
@@ -14307,6 +14349,11 @@ type RenderArtifactPngParams struct {
 type GetArtifactThumbnailParams struct {
 	// Version 缺省 = 最新版本
 	Version *int `form:"version,omitempty" json:"version,omitempty"`
+}
+
+// UploadArtifactVersionParams defines parameters for UploadArtifactVersion.
+type UploadArtifactVersionParams struct {
+	BaseVersion int `form:"baseVersion" json:"baseVersion"`
 }
 
 // ListAssistantFilesParams defines parameters for ListAssistantFiles.
@@ -18090,7 +18137,7 @@ type ServerInterface interface {
 	// GetArtifactCapabilities 本控制面的 artifact 能力（帧的寻址方式、能否渲染、能否向模型提问）
 	// (GET /api/v1/artifacts/capabilities)
 	GetArtifactCapabilities(w http.ResponseWriter, r *http.Request)
-	// ImportArtifact 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径）
+	// ImportArtifact 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径）
 	// (POST /api/v1/artifacts/import)
 	ImportArtifact(w http.ResponseWriter, r *http.Request, params ImportArtifactParams)
 	// DeleteArtifact 移到「最近删除」（保留 30 天）；`permanent=true` 永久删除回收站里的 artifact
@@ -18171,6 +18218,9 @@ type ServerInterface interface {
 	// GetArtifactThumbnail 缩略图（720×450 JPEG）；请求的版本还没有时回最近一个有缩略图的更早版本，都没有回 404 `no_thumbnail`
 	// (GET /api/v1/artifacts/{id}/thumbnail)
 	GetArtifactThumbnail(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactThumbnailParams)
+	// UploadArtifactVersion 为 Office artifact 上传新版本（请求体是整个文件；作者是用户）
+	// (POST /api/v1/artifacts/{id}/upload)
+	UploadArtifactVersion(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params UploadArtifactVersionParams)
 	// ListArtifactVersions 版本列表（新的在前）
 	// (GET /api/v1/artifacts/{id}/versions)
 	ListArtifactVersions(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
@@ -19305,7 +19355,7 @@ func (_ Unimplemented) GetArtifactCapabilities(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ImportArtifact 导入一个 HTML 文件或带 index.html / canvas.json 的文件夹（每个 part 的字段名是相对路径）
+// ImportArtifact 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径）
 // (POST /api/v1/artifacts/import)
 func (_ Unimplemented) ImportArtifact(w http.ResponseWriter, r *http.Request, params ImportArtifactParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -19464,6 +19514,12 @@ func (_ Unimplemented) UndeleteArtifact(w http.ResponseWriter, r *http.Request, 
 // GetArtifactThumbnail 缩略图（720×450 JPEG）；请求的版本还没有时回最近一个有缩略图的更早版本，都没有回 404 `no_thumbnail`
 // (GET /api/v1/artifacts/{id}/thumbnail)
 func (_ Unimplemented) GetArtifactThumbnail(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params GetArtifactThumbnailParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UploadArtifactVersion 为 Office artifact 上传新版本（请求体是整个文件；作者是用户）
+// (POST /api/v1/artifacts/{id}/upload)
+func (_ Unimplemented) UploadArtifactVersion(w http.ResponseWriter, r *http.Request, id ArtifactIDPath, params UploadArtifactVersionParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -21929,6 +21985,19 @@ func (siw *ServerInterfaceWrapper) ImportArtifact(w http.ResponseWriter, r *http
 		return
 	}
 
+	// ------------- Optional query parameter "threadId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "threadId", r.URL.Query(), &params.ThreadID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "threadId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "threadId", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "name" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "name", r.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
@@ -22916,6 +22985,48 @@ func (siw *ServerInterfaceWrapper) GetArtifactThumbnail(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetArtifactThumbnail(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadArtifactVersion operation middleware
+func (siw *ServerInterfaceWrapper) UploadArtifactVersion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UploadArtifactVersionParams
+
+	// ------------- Required query parameter "baseVersion" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "baseVersion", r.URL.Query(), &params.BaseVersion, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "baseVersion"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "baseVersion", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadArtifactVersion(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34058,6 +34169,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/artifacts/import", wrapper.ImportArtifact)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/upload", wrapper.UploadArtifactVersion)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/export", wrapper.ExportArtifact)
