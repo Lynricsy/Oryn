@@ -789,6 +789,12 @@
 			"keep_context": "保留上下文执行",
 			"save": "仅保存",
 			"refine": "提修改意见"
+		},
+		"result": {
+			"saved": "计划已保存到 {{path}}，已开启新会话",
+			"savedNoFreshSession": "计划已保存到 {{path}}，但没有开启新会话（{{reason}}）",
+			"approvedNotDispatched": "计划已批准，但没有开始执行（{{reason}}）。计划仍固定在会话里，发条消息即可继续。",
+			"rejected": "已驳回计划，仍处于计划模式"
 		}
 	},
 	"rewind": {

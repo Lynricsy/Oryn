@@ -4382,10 +4382,21 @@ export class MockServer {
 				this.waiters.delete(`plan:${threadId}`);
 				this.broadcast({ type: "plan.resolved", threadId }, threadId);
 				this.refreshThreadState(threadId);
-				return this.respond(socket, threadId, id, type, {
-					approved: frame.approved === true,
-					dispatched: true,
-				});
+				return this.respond(
+					socket,
+					threadId,
+					id,
+					type,
+					frame.option === "save"
+						? {
+								approved: true,
+								dispatched: false,
+								reason: "saved",
+								savedPath: frame.savePath,
+								freshSessionStarted: true,
+							}
+						: { approved: frame.approved === true, dispatched: true },
+				);
 			case "set_plan_mode":
 				this.states.set(threadId, {
 					...state,

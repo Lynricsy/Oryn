@@ -789,6 +789,12 @@
 			"keep_context": "Execute keeping context",
 			"save": "Save only",
 			"refine": "Request changes"
+		},
+		"result": {
+			"saved": "Plan saved to {{path}}; a fresh session has started",
+			"savedNoFreshSession": "Plan saved to {{path}}, but no fresh session was started ({{reason}})",
+			"approvedNotDispatched": "Plan approved, but execution did not start ({{reason}}). The plan stays pinned to the session; send a message to continue.",
+			"rejected": "Plan dismissed; still in plan mode"
 		}
 	},
 	"rewind": {

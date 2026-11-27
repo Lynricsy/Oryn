@@ -302,6 +302,33 @@ export function describeSlashResult(
 	}
 }
 
+/**
+ * `plan_approval` 应答（RpcPlanApprovalResult）的本地提示：仅保存时给出写入路径；
+ * 没有派发回合（压缩失败、驳回……）时说明原因。已派发的执行 / 修改回合在转录里自然可见，返回 null。
+ */
+export function describePlanApproval(data: unknown): SlashResultNotice | null {
+	const d = isObject(data) ? data : {};
+	const reason = typeof d.reason === "string" ? d.reason : "";
+	if (typeof d.savedPath === "string" && d.savedPath) {
+		const path = d.savedPath;
+		return d.freshSessionStarted === false
+			? {
+					level: "warning",
+					key: "plan.result.savedNoFreshSession",
+					params: { path, reason },
+				}
+			: { level: "info", key: "plan.result.saved", params: { path } };
+	}
+	if (d.dispatched !== false) return null;
+	return d.approved === true
+		? {
+				level: "warning",
+				key: "plan.result.approvedNotDispatched",
+				params: { reason },
+			}
+		: { level: "warning", key: "plan.result.rejected" };
+}
+
 /** 在转录里插一条本地提示（与 omp 的 `notice` 帧同一条渲染路径，`source` 标明来自客户端）。 */
 export function pushLocalNotice(
 	threadId: string,

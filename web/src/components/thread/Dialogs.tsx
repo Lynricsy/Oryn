@@ -27,7 +27,13 @@ import type {
 	SessionState,
 } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
-import { forkThread, patchThread, renameThread } from "../../state/actions";
+import {
+	describePlanApproval,
+	forkThread,
+	patchThread,
+	pushLocalNotice,
+	renameThread,
+} from "../../state/actions";
 import type { JsonRecord } from "../../state/message-builder";
 import { agentQueryable, getThreadStore, useThread } from "../../state/stores";
 import {
@@ -1725,8 +1731,11 @@ export function PlanProposalDialog({
 					savePath,
 				};
 			else frame = { type: "plan_approval", approved: true, option: c };
-			await realtime.cmd(threadId, frame, 600_000);
+			const data = await realtime.cmd(threadId, frame, 600_000);
 			getThreadStore(threadId).getState().patchLocal({ planProposal: null });
+			// 对话框随即卸载：保存路径、未派发的原因落成转录里的本地提示
+			const r = describePlanApproval(data);
+			if (r) pushLocalNotice(threadId, r.level, t(r.key, { ...r.params }));
 		} catch (e) {
 			setError(e);
 		} finally {
