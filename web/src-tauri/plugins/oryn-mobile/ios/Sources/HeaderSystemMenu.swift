@@ -68,6 +68,8 @@ struct TrailMenuButton: UIViewRepresentable {
     let menu: HeaderMenuSpec
     let palette: HeaderPaletteSpec
     let dark: Bool
+    /// 位图图标的倍率（SwiftUI 环境的 displayScale；换屏或倍率变了要重画）
+    let scale: CGFloat
   }
 
   final class Coordinator {
@@ -101,12 +103,15 @@ struct TrailMenuButton: UIViewRepresentable {
     button.accessibilityLabel = trail.label
     button.dot = palette.dot(trail.dot).map { UIColor($0) }
 
-    let key = MenuKey(thread: threadKey, menu: trail.menu, palette: paletteSpec, dark: dark)
+    let scale = context.environment.displayScale
+    let key = MenuKey(
+      thread: threadKey, menu: trail.menu, palette: paletteSpec, dark: dark, scale: scale)
     guard coordinator.key != key else { return }
     coordinator.key = key
     let model = self.model
     let thread = threadKey
-    let menu = HeaderSystemMenu.build(trail.menu, palette: palette, dark: dark) { [weak model] item in
+    let menu = HeaderSystemMenu.build(trail.menu, palette: palette, dark: dark, scale: scale) {
+      [weak model] item in
       model?.chooseTrail(item, key: thread)
     }
     button.menu = menu
@@ -122,11 +127,11 @@ struct TrailMenuButton: UIViewRepresentable {
 @MainActor
 enum HeaderSystemMenu {
   static func build(
-    _ menu: HeaderMenuSpec, palette: HeaderPalette, dark: Bool,
+    _ menu: HeaderMenuSpec, palette: HeaderPalette, dark: Bool, scale: CGFloat,
     choose: @escaping (HeaderItemSpec) -> Void
   ) -> UIMenu {
     func element(_ item: HeaderItemSpec) -> UIMenuElement {
-      let image = icon(item, palette: palette, dark: dark)
+      let image = icon(item, palette: palette, dark: dark, scale: scale)
       let subtitle = [item.sub?.text, item.hint].compactMap { $0 }.joined(separator: " · ")
       if let kids = item.children, !kids.isEmpty {
         let sub = UIMenu(title: item.label, image: image, children: kids.map(element))
@@ -157,8 +162,11 @@ enum HeaderSystemMenu {
   }
 
   /// 纯 SF Symbol 交给系统按菜单的字色着色；带提醒点、或是字形 / 模板图 / 状态珠 / 色点的，
-  /// 用 SwiftUI 画成位图（按当前明暗解析颜色，保留原色）。
-  static func icon(_ item: HeaderItemSpec, palette: HeaderPalette, dark: Bool) -> UIImage? {
+  /// 用 SwiftUI 画成位图（按传入的明暗解析颜色、按传入的倍率出图，保留原色）。
+  /// 倍率由调用方从 SwiftUI 环境显式给：UITraitCollection.current 在 UIKit 指定回调之外未定义。
+  static func icon(
+    _ item: HeaderItemSpec, palette: HeaderPalette, dark: Bool, scale: CGFloat
+  ) -> UIImage? {
     let dot = palette.dot(item.dot)
     if dot == nil {
       guard let icon = item.icon else { return nil }
@@ -170,7 +178,7 @@ enum HeaderSystemMenu {
       content: MenuIconImage(icon: item.icon, dot: dot, palette: palette)
         .environment(\.colorScheme, dark ? .dark : .light)
     )
-    renderer.scale = UITraitCollection.current.displayScale
+    renderer.scale = scale
     return renderer.uiImage?.withRenderingMode(.alwaysOriginal)
   }
 }
