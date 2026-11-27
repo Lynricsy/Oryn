@@ -172,6 +172,8 @@ function shellSurface(
 						shortcut: "CommandOrControl+Shift+Space",
 						closeToTray: true,
 						autoUpdate: true,
+						autostart: false,
+						startHidden: false,
 					},
 					shortcutError: null,
 					tokenStore: "keyring",

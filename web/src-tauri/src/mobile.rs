@@ -738,7 +738,7 @@ mod android {
             let Some(m) = app.try_state::<MainLife>() else {
                 return;
             };
-            match webview::create_main(&app, &m.remote) {
+            match webview::create_main(&app, &m.remote, true) {
                 Ok(_) => eventlog::log("window.recreated", json!({})),
                 Err(e) => {
                     m.life

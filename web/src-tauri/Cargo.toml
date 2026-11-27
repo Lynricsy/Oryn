@@ -60,6 +60,7 @@ tauri-plugin-single-instance = { version = "=2.5.5", features = ["deep-link"] }
 tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-window-state = "=2.5.0"
 tauri-plugin-updater = "=2.14.1"
+tauri-plugin-autostart = "=2.7.0"
 keyring = "=4.2.0"
 
 # Linux 通知直接用 notify-rust（与通知插件同一版本）：插件不提供 appname，

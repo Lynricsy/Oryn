@@ -548,8 +548,8 @@ describe("移动壳（M7）", () => {
 		const show: NativeHeaderShow = { alpha: 1, ms: 120 };
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 11（桌面端开放 host_open_external，全平台统一外链打开）", () => {
-			expect(BRIDGE).toBe(11);
+		it("本页宿主协议版本为 12（桌面端开机自启与启动时隐藏）", () => {
+			expect(BRIDGE).toBe(12);
 		});
 
 		it("syncAssistantAvatar 在 bridge 9 旧壳上静默跳过，bridge 10 正常下发 host_sync_assistant_avatar", () => {

@@ -48,6 +48,8 @@ pub struct Config {
     /// 全局快捷键；空串 = 不注册。
     pub shortcut: String,
     pub close_to_tray: bool,
+    /// 由开机自启拉起时不显示主窗口（只在启动时读一次）。
+    pub start_hidden: bool,
     pub auto_update: bool,
     /// `zh-CN` | `en`；首次取系统语言。
     pub lang: String,
@@ -61,6 +63,7 @@ impl Default for Config {
             token_store: TokenStoreKind::Keyring,
             shortcut: DEFAULT_SHORTCUT.to_string(),
             close_to_tray: true,
+            start_hidden: false,
             auto_update: false,
             lang: Lang::system().as_str().to_string(),
         }
@@ -228,6 +231,7 @@ mod tests {
             token_store: TokenStoreKind::File,
             shortcut: "Control+Alt+K".into(),
             close_to_tray: false,
+            start_hidden: true,
             auto_update: true,
             lang: "en".into(),
         };
@@ -238,6 +242,7 @@ mod tests {
         assert_eq!(raw["tokenStore"], "file");
         assert_eq!(raw["serverUrl"], "https://oryn.example.com");
         assert_eq!(raw["closeToTray"], false);
+        assert_eq!(raw["startHidden"], true);
     }
 
     #[test]

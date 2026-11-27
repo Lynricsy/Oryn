@@ -140,8 +140,14 @@ fn on_navigation(app: &AppHandle, url: &Url, launcher: &str, server: Option<&str
 /// 连接页在应用资源里的路径。
 const LAUNCHER_PAGE: &str = "launcher.html";
 /// 创建主窗口（`tauri.conf.json` 的 `windows` 为空：钩子只能在代码里挂）。
-/// `remote` 为已开放的服务器 origin（Android 的导航白名单用）。
-pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<WebviewWindow> {
+/// `remote` 为已开放的服务器 origin（Android 的导航白名单用）；`visible` 为桌面端建窗时是否显示（移动端忽略）。
+pub fn create_main(
+    app: &AppHandle,
+    remote: &RemoteOrigin,
+    visible: bool,
+) -> tauri::Result<WebviewWindow> {
+    #[cfg(mobile)]
+    let _ = visible;
     let launcher = launcher_url(app)?;
     #[cfg(any(target_os = "android", target_os = "windows"))]
     let launcher_origin = launcher.as_str().to_string();
@@ -251,6 +257,7 @@ pub fn create_main(app: &AppHandle, remote: &RemoteOrigin) -> tauri::Result<Webv
         let opener = app.clone();
         builder
             .inner_size(1280.0, 820.0)
+            .visible(visible)
             .min_inner_size(380.0, 560.0)
             .on_new_window(move |url, _features| {
                 // 兜住 iframe（portal / artifact）或旧页面的新窗口请求：一律交给系统浏览器
@@ -488,7 +495,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":11"));
+        assert!(s.contains("\"bridge\":12"));
         assert!(s.contains("host_open_external"));
         assert!(s.contains("window!==window.top"));
         assert!(!s.contains("chrome"));

@@ -159,6 +159,53 @@ describe("设置 → 桌面应用", () => {
 		);
 	});
 
+	it("开机自启：开关提交 autostart；未开启时「自启时隐藏窗口」禁用", async () => {
+		info = makeInfo({
+			settings: {
+				...makeInfo().settings,
+				autostart: false,
+				startHidden: false,
+			},
+		});
+		render(<DesktopSettings />);
+		expect(await screen.findByLabelText("自启时隐藏窗口")).toBeDisabled();
+		fireEvent.click(screen.getByLabelText("开机自动启动"));
+		await waitFor(() =>
+			expect(fake.setSettings).toHaveBeenCalledWith({ autostart: true }),
+		);
+	});
+
+	it("已开机自启时「自启时隐藏窗口」提交 startHidden", async () => {
+		info = makeInfo({
+			settings: { ...makeInfo().settings, autostart: true, startHidden: false },
+		});
+		render(<DesktopSettings />);
+		const hidden = await screen.findByLabelText("自启时隐藏窗口");
+		expect(hidden).toBeEnabled();
+		fireEvent.click(hidden);
+		await waitFor(() =>
+			expect(fake.setSettings).toHaveBeenCalledWith({ startHidden: true }),
+		);
+	});
+
+	it("旧壳（settings 里没有 autostart）不显示自启两行", async () => {
+		render(<DesktopSettings />);
+		await screen.findByLabelText("关闭窗口时隐藏到托盘");
+		expect(screen.queryByText("开机自动启动")).toBeNull();
+		expect(screen.queryByText("自启时隐藏窗口")).toBeNull();
+	});
+
+	it("读不到自启登记：开关禁用并显示错误原因", async () => {
+		info = makeInfo({
+			settings: { ...makeInfo().settings, autostart: null },
+			autostartError: "boom",
+		});
+		render(<DesktopSettings />);
+		expect(await screen.findByLabelText("开机自动启动")).toBeDisabled();
+		expect(screen.getByLabelText("自启时隐藏窗口")).toBeDisabled();
+		expect(screen.getByText("boom")).toBeInTheDocument();
+	});
+
 	it("令牌存在文件里时给出警告；更换服务器不在这里（在账户与设备）", async () => {
 		info = makeInfo({ tokenStore: "file" });
 		render(<DesktopSettings />);

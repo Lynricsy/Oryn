@@ -67,6 +67,10 @@ export interface DesktopSettings {
 	shortcut: string;
 	closeToTray: boolean;
 	autoUpdate: boolean;
+	/** 系统里是否登记了开机自启：键不存在 = 旧壳（不支持）；`null` = 读不到。 */
+	autostart?: boolean | null;
+	/** 由开机自启拉起时不显示主窗口（旧壳缺省）。 */
+	startHidden?: boolean;
 }
 
 export type UpdateState =
@@ -81,6 +85,8 @@ export interface DesktopInfo {
 	settings: DesktopSettings;
 	/** 快捷键注册失败的原因（解析失败、被占用、Wayland 下不可用）；成功时缺省或 null。 */
 	shortcutError?: string | null;
+	/** 读取或改动开机自启登记失败的原因；成功时缺省或 null。 */
+	autostartError?: string | null;
 	tokenStore: "keyring" | "file";
 	update: {
 		state: UpdateState;
@@ -410,8 +416,8 @@ export interface Host {
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`；11 = 桌面端开放 `host_open_external`、`host_open_external` 支持 `mailto:`/`tel:`，全平台统一外链打开）。 */
-export const BRIDGE = 11;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`；11 = 桌面端开放 `host_open_external`、`host_open_external` 支持 `mailto:`/`tel:`，全平台统一外链打开；12 = 桌面端开机自启与启动时隐藏：settings 带 `autostart` / `startHidden`，`host_info` 带 `autostartError`）。 */
+export const BRIDGE = 12;
 export const HOST_EVENT = "oryn:host";
 
 export type Invoke = <T>(

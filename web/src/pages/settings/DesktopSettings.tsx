@@ -316,6 +316,46 @@ export default function DesktopSettings(): ReactNode {
 			</Group>
 			<Group title={t("desktop.groups.window")}>
 				<GroupList>
+					{info.settings.autostart !== undefined && (
+						<>
+							<GroupRow
+								icon="rocket"
+								title={t("desktop.autostart")}
+								meta={
+									info.autostartError ? (
+										<span className="text-err">{info.autostartError}</span>
+									) : info.settings.autostart === null ? (
+										t("desktop.autostartUnavailable")
+									) : (
+										t("desktop.autostartHint")
+									)
+								}
+								trailing={
+									<Toggle
+										hideLabel
+										checked={info.settings.autostart === true}
+										disabled={saving || info.settings.autostart === null}
+										onChange={(v) => void save({ autostart: v })}
+										label={t("desktop.autostart")}
+									/>
+								}
+							/>
+							<GroupRow
+								icon="eye"
+								title={t("desktop.startHidden")}
+								meta={t("desktop.startHiddenHint")}
+								trailing={
+									<Toggle
+										hideLabel
+										checked={info.settings.startHidden === true}
+										disabled={saving || info.settings.autostart !== true}
+										onChange={(v) => void save({ startHidden: v })}
+										label={t("desktop.startHidden")}
+									/>
+								}
+							/>
+						</>
+					)}
 					<GroupRow
 						icon="tray"
 						title={t("desktop.closeToTray")}

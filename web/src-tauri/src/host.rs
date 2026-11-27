@@ -31,8 +31,9 @@ pub const MAIN: &str = "main";
 /// 非空的 `host_tab_bar_set` / `host_header_set` 一律 `unsupported`，9 = 官方推送网关（M28）：`host_push_enable` 可带
 /// `transport: "default" | "unifiedpush"`，`MobileInfo.push` 增加 `alt`、`channel` 可为 `apns`、不再出现 `unsupported`，
 /// 错误码增加 `gateway_*`，10 = 移动端全局助手头像原生共享缓存同步（`host_sync_assistant_avatar`），
-/// 11 = 桌面端开放 `host_open_external`，全平台统一外链打开）。
-pub const BRIDGE: u32 = 11;
+/// 11 = 桌面端开放 `host_open_external`，全平台统一外链打开，
+/// 12 = 桌面端开机自启与启动时隐藏：settings 带 autostart / startHidden，host_info 带 autostartError）。
+pub const BRIDGE: u32 = 12;
 
 /// `host_open_external` 的令牌桶：突发 3，每 2 秒补 1。
 const OPEN_BURST: f64 = 3.0;
@@ -85,6 +86,9 @@ pub struct Desktop {
     pub shortcut: crate::shortcut::Registration,
     #[cfg(desktop)]
     pub updater: crate::updater::Updater,
+    /// 最近一次开启 / 关闭开机自启的失败；成功时清空。
+    #[cfg(desktop)]
+    autostart_error: Mutex<Option<String>>,
 }
 
 impl Desktop {
@@ -127,6 +131,8 @@ impl Desktop {
             shortcut: Default::default(),
             #[cfg(desktop)]
             updater: Default::default(),
+            #[cfg(desktop)]
+            autostart_error: Mutex::new(None),
         }
     }
 
@@ -140,6 +146,22 @@ impl Desktop {
 
     fn set_prefs(&self, f: impl FnOnce(&mut Prefs)) {
         f(&mut self.prefs.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+
+    #[cfg(desktop)]
+    fn set_autostart_error(&self, e: Option<String>) {
+        *self
+            .autostart_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = e;
+    }
+
+    #[cfg(desktop)]
+    fn autostart_error(&self) -> Option<String> {
+        self.autostart_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn lang(&self) -> Lang {
@@ -278,6 +300,12 @@ pub fn refresh_visibility(app: &AppHandle) {
         eventlog::log("window", json!({"visible": visible}));
         emit(app, json!({"type": "visibility", "visible": visible}));
     }
+}
+
+/// 启动时主窗口是否显示。只有「由开机自启拉起 + 开了启动时隐藏 + 已配对」才先不显示；未配对时连接页必须可见。
+#[cfg(desktop)]
+pub fn start_visible(autostart: bool, start_hidden: bool, paired: bool) -> bool {
+    !(autostart && start_hidden && paired)
 }
 
 /// 显示并聚焦主窗口。
@@ -520,6 +548,9 @@ pub struct DesktopSettings {
     pub shortcut: String,
     pub close_to_tray: bool,
     pub auto_update: bool,
+    /// 系统里是否登记了开机自启；读不到（含冒烟模式没注册插件）时为 `null`。
+    pub autostart: Option<bool>,
+    pub start_hidden: bool,
 }
 
 #[cfg(desktop)]
@@ -529,6 +560,8 @@ pub struct SettingsPatch {
     pub shortcut: Option<String>,
     pub close_to_tray: Option<bool>,
     pub auto_update: Option<bool>,
+    pub autostart: Option<bool>,
+    pub start_hidden: Option<bool>,
 }
 
 #[cfg(desktop)]
@@ -539,12 +572,24 @@ pub struct DesktopInfo {
     pub settings: DesktopSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shortcut_error: Option<String>,
+    /// 读取或改动开机自启登记的失败。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autostart_error: Option<String>,
     pub token_store: TokenStoreKind,
     pub update: Value,
 }
 
 #[cfg(desktop)]
-async fn desktop_info(d: &Desktop) -> DesktopInfo {
+async fn desktop_info(app: &AppHandle, d: &Desktop) -> DesktopInfo {
+    // 必须用 try_state：冒烟模式没注册自启插件，`ManagerExt::autolaunch()` 会 panic
+    let (autostart, autostart_error) =
+        match app.try_state::<tauri_plugin_autostart::AutoLaunchManager>() {
+            None => (None, None),
+            Some(m) => match m.is_enabled() {
+                Ok(v) => (Some(v), d.autostart_error()),
+                Err(e) => (None, Some(e.to_string())),
+            },
+        };
     let (settings, token_store) = {
         let core = d.core.lock().await;
         let cfg = core.config();
@@ -553,6 +598,8 @@ async fn desktop_info(d: &Desktop) -> DesktopInfo {
                 shortcut: cfg.shortcut.clone(),
                 close_to_tray: cfg.close_to_tray,
                 auto_update: cfg.auto_update,
+                autostart,
+                start_hidden: cfg.start_hidden,
             },
             core.token_store(),
         )
@@ -565,6 +612,7 @@ async fn desktop_info(d: &Desktop) -> DesktopInfo {
         version: d.version.clone(),
         settings,
         shortcut_error,
+        autostart_error,
         token_store,
         update,
     }
@@ -771,8 +819,8 @@ pub async fn host_reauth(path: String, d: State<'_, Arc<Desktop>>) -> Res<()> {
 
 #[cfg(desktop)]
 #[tauri::command]
-pub async fn host_info(d: State<'_, Arc<Desktop>>) -> Res<DesktopInfo> {
-    Ok(desktop_info(&d).await)
+pub async fn host_info(app: AppHandle, d: State<'_, Arc<Desktop>>) -> Res<DesktopInfo> {
+    Ok(desktop_info(&app, &d).await)
 }
 
 #[cfg(desktop)]
@@ -788,13 +836,24 @@ pub async fn host_set_settings(
             d.core.lock().await.update_config(|c| c.shortcut = shortcut);
         }
     }
-    if patch.close_to_tray.is_some() || patch.auto_update.is_some() {
+    // 开机自启以系统登记为准，不写 config.json
+    if let Some(on) = patch.autostart {
+        if let Some(m) = app.try_state::<tauri_plugin_autostart::AutoLaunchManager>() {
+            let res = if on { m.enable() } else { m.disable() };
+            d.set_autostart_error(res.err().map(|e| e.to_string()));
+        }
+    }
+    if patch.close_to_tray.is_some() || patch.auto_update.is_some() || patch.start_hidden.is_some()
+    {
         d.core.lock().await.update_config(|c| {
             if let Some(v) = patch.close_to_tray {
                 c.close_to_tray = v;
             }
             if let Some(v) = patch.auto_update {
                 c.auto_update = v;
+            }
+            if let Some(v) = patch.start_hidden {
+                c.start_hidden = v;
             }
         });
         d.set_prefs(|p| {
@@ -806,7 +865,7 @@ pub async fn host_set_settings(
             }
         });
     }
-    Ok(desktop_info(&d).await)
+    Ok(desktop_info(&app, &d).await)
 }
 
 #[cfg(desktop)]
@@ -890,6 +949,24 @@ mod tests {
         assert_eq!(p.close_to_tray, Some(false));
         assert_eq!(p.shortcut.as_deref(), Some(""));
         assert_eq!(p.auto_update, None);
+        assert_eq!(p.autostart, None);
+        let p: SettingsPatch =
+            serde_json::from_value(json!({"autostart": true, "startHidden": true})).unwrap();
+        assert_eq!(p.autostart, Some(true));
+        assert_eq!(p.start_hidden, Some(true));
+        assert_eq!(p.close_to_tray, None);
+    }
+
+    #[test]
+    fn start_visible() {
+        for a in [false, true] {
+            for h in [false, true] {
+                for p in [false, true] {
+                    let want = (a, h, p) != (true, true, true);
+                    assert_eq!(super::start_visible(a, h, p), want, "{a} {h} {p}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -900,8 +977,11 @@ mod tests {
                 shortcut: "Control+Alt+Space".into(),
                 close_to_tray: true,
                 auto_update: false,
+                autostart: None,
+                start_hidden: false,
             },
             shortcut_error: None,
+            autostart_error: Some("boom".into()),
             token_store: TokenStoreKind::File,
             update: json!({"state": "none"}),
         };
@@ -909,7 +989,11 @@ mod tests {
             serde_json::to_value(&info).unwrap(),
             json!({
                 "version": "0.1.0",
-                "settings": {"shortcut": "Control+Alt+Space", "closeToTray": true, "autoUpdate": false},
+                "settings": {
+                    "shortcut": "Control+Alt+Space", "closeToTray": true, "autoUpdate": false,
+                    "autostart": null, "startHidden": false
+                },
+                "autostartError": "boom",
                 "tokenStore": "file",
                 "update": {"state": "none"}
             })

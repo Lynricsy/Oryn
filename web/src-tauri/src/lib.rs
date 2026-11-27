@@ -61,6 +61,8 @@ pub struct Args {
     pub quit: bool,
     /// `--smoke`：临时配置目录、不注册单实例、不碰凭据库与网络，连接页就绪即退出 0。
     pub smoke: bool,
+    /// `--autostart`：由开机自启拉起。
+    pub autostart: bool,
     /// 因 argv 里有深链接而被忽略的其它参数（记 `deeplink.args_ignored`）。
     pub ignored: Vec<String>,
 }
@@ -88,6 +90,7 @@ impl Args {
             match a.as_str() {
                 "--quit" => out.quit = true,
                 "--smoke" => out.smoke = true,
+                "--autostart" => out.autostart = true,
                 "--server" => out.server = it.next(),
                 other => {
                     if let Some(v) = other.strip_prefix("--server=") {
@@ -122,7 +125,7 @@ pub fn run() {
     log_ignored(&args);
 
     // 插件顺序：single_instance（必须第一个）→ deep_link → window_state → global_shortcut
-    // → notification（桌面专用）→ opener → updater；
+    // → notification（桌面专用）→ opener → updater → autostart（冒烟模式不注册）；
     // 移动端：deep_link → opener → oryn-mobile（Android / iOS）→ barcode-scanner
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
@@ -150,6 +153,15 @@ pub fn run() {
             .plugin(tauri_plugin_notification::init())
             .plugin(opener_plugin())
             .plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    #[cfg(desktop)]
+    if !args.smoke {
+        builder = builder.plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--autostart"])
+                .app_name("Oryn")
+                .build(),
+        );
     }
     #[cfg(mobile)]
     {
@@ -256,8 +268,15 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
         Vault::open(config.token_store, &dir)
     };
 
+    // 由开机自启拉起、开了启动时隐藏且已配对时先不显示主窗口（未配对时连接页必须可见）
+    let visible = args.smoke
+        || host::start_visible(
+            args.autostart,
+            config.start_hidden,
+            config.device_id.is_some(),
+        );
     let remote = RemoteOrigin::default();
-    let window = webview::create_main(&handle, &remote)?;
+    let window = webview::create_main(&handle, &remote, visible)?;
     let launcher_url = window.url()?;
     host::wire_window(&handle, &window);
 
@@ -278,6 +297,9 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
     let (shortcut_cfg, lang) = (core.config().shortcut.clone(), core.config().lang());
     let d = Arc::new(Desktop::new(core, nav, args.smoke, version));
     app.manage(d.clone());
+    if !visible {
+        host::refresh_visibility(&handle);
+    }
 
     // 通知点击（macOS / Windows / iOS 经插件；Linux 由 notify::deliver 的等待线程直接调 notify::clicked；
     // Android 不带通知插件）
@@ -300,7 +322,13 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
             let _ = d.tray.set(t);
             d.set_tray_available(true);
         }
-        None => d.set_tray_available(false),
+        None => {
+            d.set_tray_available(false);
+            // 没有托盘就没有别的入口，隐藏启动时也必须显示
+            if !visible {
+                host::show_main(&handle);
+            }
+        }
     }
     let _ = d.shortcut.apply(&handle, &shortcut_cfg);
 
@@ -394,7 +422,7 @@ fn setup(app: &mut App, args: &Args, raw: &[String]) -> Result<(), Box<dyn std::
 
     let remote = RemoteOrigin::default();
     let launcher_url = webview::launcher_url(&handle)?;
-    webview::create_main(&handle, &remote)?;
+    webview::create_main(&handle, &remote, true)?;
     #[cfg(target_os = "android")]
     mobile::manage_main_life(&handle, remote.clone());
 
@@ -476,6 +504,10 @@ fn on_second_instance(app: &AppHandle, argv: Vec<String>, _cwd: String) {
         host::quit(app);
         return;
     }
+    // 登录时自启撞上已在运行的实例：不弹窗口
+    if args.autostart {
+        return;
+    }
     // 深链接 URL 已由插件的 deep-link feature 转给 on_open_url
     host::show_main(app);
 }
@@ -540,6 +572,7 @@ mod tests {
                 server: Some("https://a.example".into()),
                 quit: false,
                 smoke: true,
+                autostart: false,
                 ignored: Vec::new(),
             }
         );
@@ -549,6 +582,8 @@ mod tests {
         );
         assert!(parse(&["--quit"]).quit);
         assert_eq!(parse(&["--server"]).server, None);
+        assert!(parse(&["--autostart"]).autostart);
+        assert!(!parse(&["oryn://x", "--autostart"]).autostart);
     }
 
     #[test]
