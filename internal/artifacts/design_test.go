@@ -563,3 +563,146 @@ func TestExportDesignProject(t *testing.T) {
 	assert.Equal(t, CodeInvalid, linkCode(err))
 	assert.Contains(t, err.Error(), "缺少工程锁")
 }
+
+// M34 S4：封存按 src/variants.json 同步方案组——新组每个方案一列、放在第一个画布页现有画框下方；撞了 id 加 -2 后缀的帧
+// 映射到对应画框；已有方案里的新帧接在该方案最下面；不在方案里的新帧照旧接在右边；重封存保留 picked，选中的方案从
+// 清单删掉后 picked 置 null；清单不合法或组 id 撞上标注回 invalid；删掉清单就删掉组。
+func TestSealDesignVariants(t *testing.T) {
+	e := newEnv(t)
+	mkThread(t, e.st, "thr_a", "")
+	ctx := context.Background()
+	id := mkEmptyDesign(t, e, "thr_a")
+	src := fakeFetch{}
+	c := threadCaller("thr_a")
+	c.Internal, c.Fetch = true, src.fetch
+	frame := func(id string, w, h int) string {
+		return fmt.Sprintf(`{"id":%q,"name":%q,"width":%d,"height":%d,"device":"none","links":[]}`, id, id, w, h)
+	}
+	login := frame("login", 1280, 800)
+	r := mustCall(t, e.s, c, OpSealDesign, sealParams(t, id, 1, sealFiles(src, map[string]string{
+		"src/frames/login.tsx": "login", "dist/login.html": "<p>login</p>", "dist/frames.json": framesJSON(login),
+	}), nil))
+	require.Equal(t, 2, sealVersion(t, r))
+	// 用户在画布上贴了一张 id 为 hero 的便签：之后的帧 hero 只能用 hero-2
+	user := threadCaller("thr_a")
+	mustCall(t, e.s, user, OpUpdate, `{"id":"`+id+`","baseVersion":2,"canvas":[{"op":"add","object":{"type":"note","id":"hero","kind":"sticky","canvas":"canvas-1","x":10,"y":10,"text":"t"}}]}`)
+
+	all := []string{login, frame("home-a", 400, 800), frame("home-b", 600, 800), frame("pricing-b", 700, 300),
+		frame("home-c", 500, 800), frame("hero", 390, 844), frame("about", 800, 600)}
+	files := map[string]string{
+		"dist/frames.json":    framesJSON(all...),
+		"src/themes/calm.css": `:root[data-oryn-theme="calm"]{--color-accent:#0f766e}`,
+		"src/variants.json": `{"groups":[{"id":"home","name":"首页首屏","variants":[
+			{"id":"a","name":"冷静","theme":"calm","frames":["home-a"]},
+			{"id":"b","name":"暖调","frames":["home-b","pricing-b"]},
+			{"id":"c","name":"杂志","frames":["home-c","hero"]}]}]}`,
+	}
+	for _, f := range []string{"home-a", "home-b", "pricing-b", "home-c", "hero", "about"} {
+		files["src/frames/"+f+".tsx"], files["dist/"+f+".html"] = f, "<p>"+f+"</p>"
+	}
+	r = mustCall(t, e.s, c, OpSealDesign, sealParams(t, id, 3, sealFiles(src, files), nil))
+	v := sealVersion(t, r)
+	doc := loadDoc(t, e, id, v)
+	pos := func(doc canvas.Doc, id string) [3]any {
+		p, ok := doc.PageByID(id)
+		require.True(t, ok, id)
+		return [3]any{p.Canvas, p.X, p.Y}
+	}
+	// 上边缘 = login 的下边缘 800 + 48*4；列宽取该方案最宽的帧，列间距 96，列内间距 48
+	top := 800.0 + canvas.PageGap*4
+	assert.Equal(t, [3]any{"canvas-1", 0.0, top}, pos(doc, "home-a"))
+	assert.Equal(t, [3]any{"canvas-1", 496.0, top}, pos(doc, "home-b"))
+	assert.Equal(t, [3]any{"canvas-1", 496.0, top + 800 + 48}, pos(doc, "pricing-b"))
+	assert.Equal(t, [3]any{"canvas-1", 1292.0, top}, pos(doc, "home-c"))
+	assert.Equal(t, [3]any{"canvas-1", 1292.0, top + 800 + 48}, pos(doc, "hero-2"))
+	assert.Equal(t, [3]any{"canvas-1", 1840.0, 0.0}, pos(doc, "about"), "不在方案里的新帧照旧接在右边")
+	hero, _ := doc.PageByID("hero-2")
+	assert.Equal(t, "src/frames/hero.tsx", hero.Source)
+	require.Len(t, doc.Groups, 1)
+	g := doc.Groups[0]
+	assert.Equal(t, "home", g.ID)
+	assert.Equal(t, "canvas-1", g.Canvas)
+	assert.Equal(t, "首页首屏", g.Name)
+	assert.Nil(t, g.Picked)
+	pages := func(g canvas.Group) [][]string {
+		var out [][]string
+		for _, v := range g.Variants {
+			out = append(out, v.Pages)
+		}
+		return out
+	}
+	assert.Equal(t, [][]string{{"home-a"}, {"home-b", "pricing-b"}, {"home-c", "hero-2"}}, pages(g), "帧 hero 映射到画框 hero-2")
+	assert.Equal(t, "calm", g.Variants[0].Theme)
+
+	// 已有方案里的新帧接在该方案最下面那个画框的下方；改组名
+	all = append(all, frame("home-a2", 400, 500))
+	r = mustCall(t, e.s, c, OpSealDesign, sealParams(t, id, v, sealFiles(src, map[string]string{
+		"src/frames/home-a2.tsx": "a2", "dist/home-a2.html": "<p>a2</p>", "dist/frames.json": framesJSON(all...),
+		"src/variants.json": `{"groups":[{"id":"home","name":"首页","variants":[
+			{"id":"a","name":"冷静","theme":"calm","frames":["home-a","home-a2"]},
+			{"id":"b","name":"暖调","frames":["home-b","pricing-b"]},
+			{"id":"c","name":"杂志","frames":["home-c","hero"]}]}]}`,
+	}), nil))
+	v = sealVersion(t, r)
+	doc = loadDoc(t, e, id, v)
+	assert.Equal(t, [3]any{"canvas-1", 0.0, top + 800 + 48}, pos(doc, "home-a2"))
+	assert.Equal(t, "首页", doc.Groups[0].Name)
+
+	// 用户选定 b；重封存（改了 b 的说明）后 picked 保留
+	r = mustCall(t, e.s, user, OpUpdate, `{"id":"`+id+`","baseVersion":`+fmt.Sprint(v)+`,"canvas":[{"op":"set","id":"home","key":"picked","value":"b"}]}`)
+	a, err := e.s.Get(ctx, id)
+	require.NoError(t, err)
+	v = a.Version
+	require.Equal(t, "b", *loadDoc(t, e, id, v).Groups[0].Picked)
+	r = mustCall(t, e.s, c, OpSealDesign, sealParams(t, id, v, sealFiles(src, map[string]string{
+		"src/variants.json": `{"groups":[{"id":"home","name":"首页","variants":[
+			{"id":"a","name":"冷静","theme":"calm","frames":["home-a","home-a2"]},
+			{"id":"b","name":"暖调","note":"杂志感更强","frames":["home-b","pricing-b"]},
+			{"id":"c","name":"杂志","frames":["home-c","hero"]}]}]}`,
+	}), nil))
+	v = sealVersion(t, r)
+	g = loadDoc(t, e, id, v).Groups[0]
+	require.NotNil(t, g.Picked)
+	assert.Equal(t, "b", *g.Picked)
+	assert.Equal(t, "杂志感更强", g.Variants[1].Note)
+
+	// 选中的方案从清单删掉：picked 置 null，它的画框留在画布上、不再属于方案
+	r = mustCall(t, e.s, c, OpSealDesign, sealParams(t, id, v, sealFiles(src, map[string]string{
+		"src/variants.json": `{"groups":[{"id":"home","name":"首页","variants":[
+			{"id":"a","name":"冷静","theme":"calm","frames":["home-a","home-a2"]},
+			{"id":"c","name":"杂志","frames":["home-c","hero"]}]}]}`,
+	}), nil))
+	v = sealVersion(t, r)
+	doc = loadDoc(t, e, id, v)
+	g = doc.Groups[0]
+	assert.Nil(t, g.Picked)
+	assert.Nil(t, g.PickedBy)
+	assert.Equal(t, [][]string{{"home-a", "home-a2"}, {"home-c", "hero-2"}}, pages(g))
+	_, ok := doc.PageByID("home-b")
+	assert.True(t, ok)
+
+	// 清单不合法：invalid，信息带文件与出错位置，不落版本
+	_, err = agentCall(t, e.s, c, OpSealDesign, sealParams(t, id, v, sealFiles(src, map[string]string{
+		"src/variants.json": `{"groups":[{"id":"home","name":"首页","variants":[
+			{"id":"a","name":"冷静","frames":["nope"]},{"id":"c","name":"杂志","frames":["home-c"]}]}]}`,
+	}), nil))
+	require.Equal(t, CodeInvalid, code(err))
+	assert.Contains(t, err.Error(), "src/variants.json")
+	assert.Contains(t, err.Error(), "groups[0].variants[0].frames[0]")
+	// 组 id 撞上便签 hero
+	_, err = agentCall(t, e.s, c, OpSealDesign, sealParams(t, id, v, sealFiles(src, map[string]string{
+		"src/variants.json": `{"groups":[{"id":"hero","name":"首页","variants":[
+			{"id":"a","name":"冷静","frames":["home-a"]},{"id":"c","name":"杂志","frames":["home-c"]}]}]}`,
+	}), nil))
+	require.Equal(t, CodeInvalid, code(err))
+	assert.Contains(t, err.Error(), "groups[0].id")
+	a, err = e.s.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, v, a.Version)
+
+	// 删掉清单：组跟着删，画框保留
+	r = mustCall(t, e.s, c, OpSealDesign, sealParams(t, id, v, sealFiles(src, map[string]string{"src/variants.json": ""}), nil))
+	doc = loadDoc(t, e, id, sealVersion(t, r))
+	assert.Empty(t, doc.Groups)
+	assert.Len(t, doc.Pages, 8)
+}

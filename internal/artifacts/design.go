@@ -148,9 +148,10 @@ type sealFrame struct {
 }
 
 // agentSealDesign 是 seal_design：src/**、dist/** 按 baseVersion 做文件级冲突检查（base 与最新版之间这两个前缀下
-// 任何文件变过都算冲突），canvas.json 由服务端合并、不参与；按 dist/frames.json 用 canvas.ApplySeal 对齐画框
-// （新帧 add 并自动排位，name / width / height / device 只在新增时取用；消失的帧 remove），整体经 writeCanvas
-// 写成调用方回合下的一个版本。给了 check 时写进新版本的 check_json（fingerprint = 新版本 src/ 的 SourceHash）。
+// 任何文件变过都算冲突），canvas.json 由服务端合并、不参与；按 dist/frames.json 与 src/variants.json 用
+// canvas.ApplySeal 对齐画框与方案组（见 sealOps：新帧 add 并排位，name / width / height / device 只在新增时取用；
+// 消失的帧 remove；方案组按清单 add、set、remove），整体经 writeCanvas 写成调用方回合下的一个版本。给了 check 时
+// 写进新版本的 check_json（fingerprint = 新版本 src/ 的 SourceHash）。
 func (s *Service) agentSealDesign(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
 	var p sealArgs
 	if err := decodeParams(params, &p); err != nil {
@@ -193,6 +194,10 @@ func (s *Service) agentSealDesign(ctx context.Context, c Caller, params json.Raw
 	if err != nil {
 		return Result{}, err
 	}
+	variantsRaw, err := s.sealVariantsJSON(ctx, c, a.ID, ps)
+	if err != nil {
+		return Result{}, err
+	}
 
 	unlock := s.live.locks.lock(a.ID)
 	defer unlock()
@@ -212,10 +217,22 @@ func (s *Service) agentSealDesign(ctx context.Context, c Caller, params json.Raw
 	if err := s.sealConflicts(ctx, a.ID, p.BaseVersion, head.Version, ps); err != nil {
 		return Result{}, err
 	}
-	if err := s.sealMissing(ctx, a.ID, ps, frames); err != nil {
+	has, err := s.sealPaths(ctx, a.ID, ps)
+	if err != nil {
 		return Result{}, err
 	}
-	if err := canvas.ApplySeal(&doc, sealOps(doc, frames)); err != nil {
+	if err := sealMissing(has, frames); err != nil {
+		return Result{}, err
+	}
+	vs, err := parseSealVariants(variantsRaw, frames, has)
+	if err != nil {
+		return Result{}, err
+	}
+	ops, err := sealOps(doc, frames, vs)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := canvas.ApplySeal(&doc, ops); err != nil {
 		return Result{}, canvasOpsErr(err)
 	}
 	files, closeAll := changes(ctx, c, ps, a.Type)
@@ -324,11 +341,11 @@ func (s *Service) sealConflicts(ctx context.Context, id string, base, head int, 
 	return checkBase(ctx, s.st.Q, id, base, int64(head), paths)
 }
 
-// sealMissing 检查每一帧的产物 dist/<id>.html 在封存后的版本里都在（否则 writeCanvas 会拿空白页顶上）。
-func (s *Service) sealMissing(ctx context.Context, id string, ps []*pending, frames []sealFrame) error {
+// sealPaths 返回封存后版本里的路径：最新版本的文件叠加本次的写（true）与删（false）。
+func (s *Service) sealPaths(ctx context.Context, id string, ps []*pending) (map[string]bool, error) {
 	files, err := s.Files(ctx, id, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	has := make(map[string]bool, len(files)+len(ps))
 	for _, f := range files {
@@ -337,6 +354,11 @@ func (s *Service) sealMissing(ctx context.Context, id string, ps []*pending, fra
 	for _, p := range ps {
 		has[p.path] = !p.remove
 	}
+	return has, nil
+}
+
+// sealMissing 检查每一帧的产物 dist/<id>.html 在封存后的版本里都在（否则 writeCanvas 会拿空白页顶上）。
+func sealMissing(has map[string]bool, frames []sealFrame) error {
 	var missing []string
 	for _, f := range frames {
 		if file := canvas.FrameFile(frameSource(f.ID)); !has[file] {
@@ -349,43 +371,131 @@ func (s *Service) sealMissing(ctx context.Context, id string, ps []*pending, fra
 	return nil
 }
 
+// sealVariantsJSON 取本次封存后的 src/variants.json：本次写了的取新内容（source 读进内存），没写的取最新版本里的；
+// 本次删了或哪个版本都没有时返回 nil（空清单）。
+func (s *Service) sealVariantsJSON(ctx context.Context, c Caller, id string, ps []*pending) ([]byte, error) {
+	for _, p := range ps {
+		if p.path != design.VariantsFile {
+			continue
+		}
+		if p.remove {
+			return nil, nil
+		}
+		if p.source != "" {
+			b, err := fetchAll(ctx, c, p.source)
+			if err != nil {
+				return nil, err
+			}
+			p.data, p.source = b, ""
+		}
+		return nonNil(p.data), nil
+	}
+	b, _, err := s.ReadFile(ctx, id, 0, design.VariantsFile)
+	if oe, ok := AsOpError(err); ok && oe.Code == CodeNotFound {
+		return nil, nil
+	}
+	return nonNil(b), err
+}
+
+// nonNil 把 nil 换成空切片：sealVariantsJSON 用 nil 表示文件不存在，空文件要照常交给解析报错。
+func nonNil(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
+}
+
+// parseSealVariants 按封存后的帧（dist/frames.json）与主题文件（src/themes/<名>.css）校验方案清单；raw 为 nil 是空清单。
+func parseSealVariants(raw []byte, frames []sealFrame, has map[string]bool) (design.Variants, error) {
+	if raw == nil {
+		return design.Variants{}, nil
+	}
+	ids := make([]string, len(frames))
+	for i, f := range frames {
+		ids[i] = f.ID
+	}
+	var themes []string
+	for p, ok := range has {
+		name, under := strings.CutPrefix(p, "src/themes/")
+		if name, css := strings.CutSuffix(name, ".css"); ok && under && css && !strings.Contains(name, "/") {
+			themes = append(themes, name)
+		}
+	}
+	vs, err := design.ParseVariants(raw, ids, themes)
+	if err != nil {
+		return design.Variants{}, opErr(CodeInvalid, "%s 不合法，%v。", design.VariantsFile, err)
+	}
+	return vs, nil
+}
+
 func frameSource(id string) string { return "src/frames/" + id + ".tsx" }
 
-// sealOps 返回把 doc 的设计画框对齐到 frames 的操作：带 source 的画框里不在 frames 的 remove；frames 里还没有画框的
-// add 到第一个画布页（不给位置，自动排位），name / width / height / device 取自帧声明。
-func sealOps(doc canvas.Doc, frames []sealFrame) []canvas.Op {
+// sealOps 返回把 doc 对齐到本次封存的操作（frames 是 dist/frames.json，vs 是 src/variants.json），按顺序：
+//  1. 带 source 的画框里不在 frames 的 remove（删除时级联把它们移出方案）；
+//  2. frames 里还没有画框的 add，name / width / height / device 取自帧声明。属于方案的先加，位置由 placeVariants
+//     给出；其余的后加，不给位置，接在第一个画布页现有画框的右边自动排位；
+//  3. 方案组按清单同步（M34 C2，见 groupOps），引用的画框此时都已存在。
+//
+// 组 id 撞上画布页、标注或留下的画框时回 invalid；新画框的 id 避开所有组 id（组与画框共用 id 命名空间）。
+func sealOps(doc canvas.Doc, frames []sealFrame, vs design.Variants) ([]canvas.Op, error) {
 	want := make(map[string]bool, len(frames))
 	for _, f := range frames {
 		want[frameSource(f.ID)] = true
 	}
-	have := map[string]bool{}
-	taken := map[string]bool{}
+	taken := map[string]string{} // id → 对象类型
 	for _, c := range doc.Canvases {
-		taken[c.ID] = true
+		taken[c.ID] = "画布页"
 	}
 	for _, n := range doc.Notes {
-		taken[n.ID] = true
+		taken[n.ID] = "标注"
 	}
 	var ops []canvas.Op
+	gone := map[string]bool{}
+	pageOf := map[string]string{} // source → 画框 id（留下的与新加的）
+	var layout []canvas.Page      // 留下的画框
 	for _, p := range doc.Pages {
 		if p.Source != "" && !want[p.Source] {
 			ops = append(ops, canvas.Op{Op: canvas.OpRemove, ID: p.ID})
+			gone[p.ID] = true
 			continue
 		}
-		taken[p.ID] = true
-		have[p.Source] = true
+		taken[p.ID] = "画框"
+		layout = append(layout, p)
+		if p.Source != "" {
+			pageOf[p.Source] = p.ID
+		}
 	}
+	for i, g := range vs.Groups {
+		if kind := taken[g.ID]; kind != "" {
+			return nil, opErr(CodeInvalid, "%s 不合法，groups[%d].id：方案组 id「%s」与画布上已有的%s同名，换一个。", design.VariantsFile, i, g.ID, kind)
+		}
+	}
+	inVariant := map[string]bool{}
+	for _, g := range doc.Groups {
+		taken[g.ID] = "方案组"
+	}
+	for _, g := range vs.Groups {
+		taken[g.ID] = "方案组"
+		for _, v := range g.Variants {
+			for _, f := range v.Frames {
+				inVariant[f] = true
+			}
+		}
+	}
+	adds := map[string]map[string]any{} // 帧 id → 新画框的 add 对象
+	var added []string                  // 新帧，按 frames 的顺序
 	for _, f := range frames {
 		src := frameSource(f.ID)
-		if have[src] {
+		if _, ok := pageOf[src]; ok {
 			continue
 		}
 		id := f.ID
-		for n := 2; taken[id]; n++ {
+		for n := 2; taken[id] != ""; n++ {
 			suffix := "-" + strconv.Itoa(n)
 			id = f.ID[:min(len(f.ID), 64-len(suffix))] + suffix
 		}
-		taken[id] = true
+		taken[id] = "画框"
+		pageOf[src] = id
 		obj := map[string]any{
 			"type": canvas.TypePage, "id": id, "canvas": doc.Canvases[0].ID, "name": frameName(f),
 			"source": src, "width": frameSize(f.Width, canvas.DefaultPageWidth), "height": frameSize(f.Height, canvas.DefaultPageHeight),
@@ -393,9 +503,173 @@ func sealOps(doc canvas.Doc, frames []sealFrame) []canvas.Op {
 		if f.Device != "" && f.Device != canvas.DeviceNone && slices.Contains(canvas.Devices, f.Device) {
 			obj["device"] = f.Device
 		}
-		ops = append(ops, canvas.Op{Op: canvas.OpAdd, Object: obj})
+		adds[f.ID] = obj
+		added = append(added, f.ID)
+	}
+	placeVariants(doc, layout, vs, pageOf, adds, gone)
+	var rest []canvas.Op
+	for _, f := range added {
+		op := canvas.Op{Op: canvas.OpAdd, Object: adds[f]}
+		if inVariant[f] {
+			ops = append(ops, op)
+		} else {
+			rest = append(rest, op)
+		}
+	}
+	ops = append(ops, rest...)
+	return append(ops, groupOps(doc, vs, pageOf, gone)...), nil
+}
+
+// placeVariants 给新加进方案的帧排位（M34 C2），把 canvas、x、y 写进 adds 里对应的 add 对象：
+//   - 方案里已有画框的，新帧接在该方案最下面那个画框的下方：同一画布页、左边对齐，间距 PageGap；
+//   - 方案里全是新帧的，每个方案占一列：列宽取该方案最宽的帧，列间距 PageGap*2，列内按清单顺序从上往下、间距
+//     PageGap。这些列接在组已有画框的右边（间距 PageGap*2，与其顶边对齐）；组在它的画布页上还没有画框时（新组），
+//     放在该页现有画框的下方：左边缘与它们对齐，上边缘 = 最大下边缘 + PageGap*4（页上没有画框时从 0, 0 开始）。
+//
+// 组的画布页：还留在画布上的组取它的 canvas，其余取第一个画布页。layout 是留下的画框，排好的新帧依次加进去，
+// 后面的组排在前面的组下方。
+func placeVariants(doc canvas.Doc, layout []canvas.Page, vs design.Variants, pageOf map[string]string, adds map[string]map[string]any, gone map[string]bool) {
+	at := make(map[string]canvas.Page, len(layout)) // 画框 id → 已有位置
+	for _, p := range layout {
+		at[p.ID] = p
+	}
+	put := func(frame, cv string, x, y float64) canvas.Page {
+		obj := adds[frame]
+		obj["canvas"], obj["x"], obj["y"] = cv, x, y
+		p := canvas.Page{ID: obj["id"].(string), Canvas: cv, X: x, Y: y, Width: obj["width"].(float64), Height: obj["height"].(float64)}
+		layout = append(layout, p)
+		at[p.ID] = p
+		return p
+	}
+	for _, g := range vs.Groups {
+		cv := doc.Canvases[0].ID
+		if i := slices.IndexFunc(doc.Groups, func(o canvas.Group) bool { return o.ID == g.ID }); i >= 0 && groupLeft(doc.Groups[i], gone) {
+			cv = doc.Groups[i].Canvas
+		}
+		var cols [][]string
+		for _, v := range g.Variants {
+			var news []string
+			var low *canvas.Page
+			for _, f := range v.Frames {
+				if _, ok := adds[f]; ok {
+					news = append(news, f)
+				} else if p := at[pageOf[frameSource(f)]]; low == nil || p.Y+p.Height > low.Y+low.Height {
+					low = &p
+				}
+			}
+			switch {
+			case len(news) == 0:
+			case low == nil:
+				cols = append(cols, news)
+			default:
+				y := low.Y + low.Height
+				for _, f := range news {
+					y = put(f, low.Canvas, low.X, y+canvas.PageGap).Y + adds[f]["height"].(float64)
+				}
+			}
+		}
+		if len(cols) == 0 {
+			continue
+		}
+		var x, y float64
+		n := 0
+		for _, v := range g.Variants {
+			for _, f := range v.Frames {
+				p, ok := at[pageOf[frameSource(f)]]
+				if !ok || p.Canvas != cv {
+					continue
+				}
+				if n == 0 || p.X+p.Width+canvas.PageGap*2 > x {
+					x = p.X + p.Width + canvas.PageGap*2
+				}
+				if n == 0 || p.Y < y {
+					y = p.Y
+				}
+				n++
+			}
+		}
+		if n == 0 {
+			for _, p := range layout {
+				if p.Canvas != cv {
+					continue
+				}
+				if n == 0 || p.X < x {
+					x = p.X
+				}
+				if n == 0 || p.Y+p.Height+canvas.PageGap*4 > y {
+					y = p.Y + p.Height + canvas.PageGap*4
+				}
+				n++
+			}
+		}
+		for _, col := range cols {
+			width, cy := 0.0, y
+			for _, f := range col {
+				p := put(f, cv, x, cy)
+				width = max(width, p.Width)
+				cy = p.Y + p.Height + canvas.PageGap
+			}
+			x += width + canvas.PageGap*2
+		}
+	}
+}
+
+// groupOps 是 sealOps 的第 3 步：清单里没有的组 remove；还在的组 set name 与 variants（canvas.ApplySeal 在 picked
+// 指向的方案还在时保留 picked / pickedBy，否则两者置 null）；新的组 add 到第一个画布页。画框被删光、删除时已被级联
+// 删掉的组按新组 add。picked 指向的方案还在清单里、却因画框被删光经级联丢了选定时，补回 picked 与 pickedBy。
+// gone 是本次删掉的画框。
+func groupOps(doc canvas.Doc, vs design.Variants, pageOf map[string]string, gone map[string]bool) []canvas.Op {
+	var ops []canvas.Op
+	for _, g := range doc.Groups {
+		if !slices.ContainsFunc(vs.Groups, func(o design.VariantGroup) bool { return o.ID == g.ID }) {
+			ops = append(ops, canvas.Op{Op: canvas.OpRemove, ID: g.ID})
+		}
+	}
+	for _, g := range vs.Groups {
+		variants := make([]any, len(g.Variants))
+		for i, v := range g.Variants {
+			pages := make([]any, len(v.Frames))
+			for j, f := range v.Frames {
+				pages[j] = pageOf[frameSource(f)]
+			}
+			variants[i] = map[string]any{"id": v.ID, "name": v.Name, "note": v.Note, "theme": v.Theme, "pages": pages}
+		}
+		i := slices.IndexFunc(doc.Groups, func(o canvas.Group) bool { return o.ID == g.ID })
+		live := i >= 0 && groupLeft(doc.Groups[i], gone)
+		if live {
+			ops = append(ops,
+				canvas.Op{Op: canvas.OpSet, ID: g.ID, Key: "name", Value: g.Name},
+				canvas.Op{Op: canvas.OpSet, ID: g.ID, Key: "variants", Value: variants})
+		} else {
+			ops = append(ops, canvas.Op{Op: canvas.OpAdd, Object: map[string]any{
+				"type": canvas.TypeGroup, "id": g.ID, "canvas": doc.Canvases[0].ID, "name": g.Name, "variants": variants,
+			}})
+		}
+		if i < 0 || doc.Groups[i].Picked == nil {
+			continue
+		}
+		old, picked := doc.Groups[i], *doc.Groups[i].Picked
+		if !slices.ContainsFunc(g.Variants, func(v design.Variant) bool { return v.ID == picked }) {
+			continue
+		}
+		if live && slices.ContainsFunc(old.Variants, func(v canvas.Variant) bool { return v.ID == picked && pagesLeft(v, gone) }) {
+			continue
+		}
+		ops = append(ops, canvas.Op{Op: canvas.OpSet, ID: g.ID, Key: "picked", Value: picked})
+		if old.PickedBy != nil {
+			ops = append(ops, canvas.Op{Op: canvas.OpSet, ID: g.ID, Key: "pickedBy", Value: *old.PickedBy})
+		}
 	}
 	return ops
+}
+
+// groupLeft 报告删掉 gone 里的画框之后组还在不在（级联：方案的画框删光就删方案，方案删光就删组）。
+func groupLeft(g canvas.Group, gone map[string]bool) bool {
+	return slices.ContainsFunc(g.Variants, func(v canvas.Variant) bool { return pagesLeft(v, gone) })
+}
+
+func pagesLeft(v canvas.Variant, gone map[string]bool) bool {
+	return slices.ContainsFunc(v.Pages, func(p string) bool { return !gone[p] })
 }
 
 func frameName(f sealFrame) string {
