@@ -504,7 +504,7 @@ jobs:
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
-      # 硬门禁：debug 包的 ORYN_HEADER_DEMO 钩子在连接页摆出原生页头（hidden / bar）并打开菜单（title / title:env / trail），
+      # 硬门禁：debug 包的 ORYN_HEADER_DEMO 钩子在连接页摆出原生页头（hidden / bar）并打开标题菜单（title / title:env），
       # 逐区域比像素 + headerProbe 触摸归属探测（菜单没开时屏幕中心不被原生截住），结果写进 Step Summary。
       - name: 模拟器：原生页头与菜单
         timeout-minutes: 15

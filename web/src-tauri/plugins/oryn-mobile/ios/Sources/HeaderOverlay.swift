@@ -1,5 +1,6 @@
 // 线程页与首页的原生页头（侧栏钮 / 标题胶囊 / 视图钮与两个菜单；首页只有侧栏钮）：一张与 WKWebView 等大的透明宿主视图叠在它上面。
-// 平时只截落在现有控件矩形里的触摸，其余全部放行给网页；菜单开着时整屏接管（关闭区 + 面板）。
+// 平时只截落在现有控件矩形里的触摸，其余全部放行给网页；标题菜单开着时整屏接管（关闭区 + 面板）。
+// 视图菜单是系统菜单，由 UIKit 画在窗口最上层并自己处理点外收起，这里不接管。
 // 放行不靠 SwiftUI 的命中结果：控件矩形是网页给的，这里直接比（判断错了整屏都点不动，所以要确定性的）。
 // 原生页头跟着下沉卡片走：卡片开合是 WKWebView 根滚动视图的横向滚动，SinkFollow 观察 contentOffset 并在同一次回调里
 // 调 follow(dx:) 平移整层（同进程同帧，不需要对时）；卡片离开关闭位时只显示不接触摸。网页只管透明度（show）。
@@ -10,7 +11,7 @@ import WebKit
 final class HeaderHostView: UIView {
   /// 现有控件（侧栏钮，有的话再加标题胶囊、视图钮）在本视图坐标里的矩形（= 网页布局视口坐标）。
   var controlFrames: [CGRect] = []
-  /// 菜单开着：整屏接管。
+  /// 标题菜单开着：整屏接管。
   var modal = false
   /// 只显示不接触摸。
   var passive = false
@@ -147,7 +148,7 @@ final class HeaderOverlay {
     next.startAnimation()
   }
 
-  /// 网页 / 调试钩子要求打开或收起菜单：不产生 menu 事件。
+  /// 网页 / 调试钩子要求打开或收起菜单：不产生 menu 事件。系统视图菜单只能收起（没有程序化打开）。
   func menu(open: String?, page: String?) {
     // 不可见时不开（alpha 0 的页头上挂出菜单会整屏挡住网页）
     guard open == nil || host.shown else { return }

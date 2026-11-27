@@ -237,7 +237,7 @@ describe("CompactThreadHeader iOS 原生页头", () => {
 		const title = part("title");
 		expect(title.key).toBe(A);
 		expect(title.text).toBe("线程 A");
-		expect(title.menu.dim).toBe(true);
+		expect(title.menu.dim).toBe(false);
 		expect(title.menu.quick.map((i) => i.id)).toEqual([
 			"archive",
 			"share",

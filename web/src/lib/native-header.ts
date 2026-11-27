@@ -47,11 +47,14 @@ export const NATIVE_HEADER = true;
 export const HEADER_FADE_MS = 120;
 /** 交接余量（毫秒）：原生淡入完、再过这么久网页三件才隐藏，抵消桥的送达延迟。 */
 export const HEADER_HANDOFF_MS = 34;
-/** 遮罩不透明度（= `--scrim` 的 alpha）与面板底色着色强度。 */
+/**
+ * 遮罩不透明度（= `--scrim` 的 alpha）与面板底色着色强度。着色只留一层薄白 / 薄黑：
+ * 再厚就盖住 Liquid Glass 的折射与高光，面板看起来是一块磨砂白板。
+ */
 export const HEADER_TUNE = {
 	scrimLight: 0.35,
 	scrimDark: 0.6,
-	tint: 0.55,
+	tint: 0.1,
 } as const;
 /**
  * 与壳 `mobile_logic::valid_header` 的上限一致：超出的在这里截断，不让整份 spec 被拒。

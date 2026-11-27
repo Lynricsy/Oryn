@@ -442,7 +442,8 @@ export function CompactThreadHeader({
 			label: [title, ...nativeMeta.map((s) => s.text)].join(", "),
 			menu: {
 				label: t("titleMenu.label", { title }),
-				dim: true,
+				// 不压暗：压暗后玻璃折射的只是一片灰，看不出 Liquid Glass（系统菜单同样不压暗）
+				dim: false,
 				quick: nativeItems(quick),
 				status: nativeItems(status),
 				groups: groups.filter((g) => g.length > 0).map((g) => nativeItems(g)),

@@ -14,6 +14,8 @@
 //   h-dialog   点「改名」：脚本确认 header.event（select / title / rename）；网页打开改名对话框（无障碍树里有输入框），
 //              遮挡探测让原生页头让位（header.show alpha 0，原生按钮消失）
 //   h-return   点对话框上方的遮罩关掉它：原生页头回来
+//   h-views    点原生视图钮：系统菜单（UIMenu）展开（出现「对话」行），脚本确认 header.event（menu = trail）
+//   h-view-pick 点当前视图「对话」：系统菜单收起，脚本确认 header.event（select / trail / agent）
 //   h-sidebar  点原生侧栏钮：脚本确认 header.event（lead）与原生推进的开合（sink.show）；原生页头不让位、随卡片右移侧栏宽
 //              （原生侧栏钮左缘 = 关闭位 + 侧栏宽 ±1pt，原矩形里没有别的原生按钮，其余两件大部分在屏外）
 //   h-closed   点露出的卡片条关侧栏：原生页头随卡片回到原位
@@ -31,6 +33,8 @@ final class HeaderE2ETests: E2ECase {
   private let color = ["Color", "颜色"]
   /// 子页返回行的读屏文字是「<common.back>, <父项名>」
   private let back = ["Back, ", "返回, "]
+  /// 视图菜单（系统菜单）里的当前视图
+  private let agent = ["Agent", "对话"]
 
   @MainActor
   func testNativeHeaderEndToEnd() throws {
@@ -106,18 +110,29 @@ final class HeaderE2ETests: E2ECase {
     try expectHeader(app, slots, native: true, "对话框关掉后")
     _ = try checkpoint("h-return")
 
-    // 7. 点原生侧栏钮：网页打开侧栏（原生推进根滚动），原生页头不让位，随卡片右移侧栏宽
+    // 7. 点原生视图钮：系统菜单展开；点当前视图「对话」：菜单收起，网页收到 select（视图不变）
+    guard let trail = rect(loaded["trail"]) else {
+      throw E2EFailure("脚本没有回传视图钮矩形：\(loaded)")
+    }
+    point(app, trail.midX, trail.midY).tap()
+    try until("点视图钮后系统菜单没有展开（没有「对话」行）") { try self.native(app, self.agent) != nil }
+    _ = try checkpoint("h-views")
+    try tap(app, agent, "「对话」行")
+    try until("选中「对话」后系统菜单没有收起") { try self.native(app, self.agent) == nil }
+    _ = try checkpoint("h-view-pick")
+
+    // 8. 点原生侧栏钮：网页打开侧栏（原生推进根滚动），原生页头不让位，随卡片右移侧栏宽
     point(app, lead.midX, lead.midY).tap()
     try expectLead(app, slots, base, by: sinkW, "打开侧栏后")
     _ = try checkpoint("h-sidebar")
 
-    // 8. 点露出的卡片条关侧栏：原生页头随卡片回到原位
+    // 9. 点露出的卡片条关侧栏：原生页头随卡片回到原位
     point(app, screen.width - 16, screen.height / 2).tap()
     try expectHeader(app, slots, native: true, "关侧栏后")
     try expectLead(app, slots, base, by: 0, "关侧栏后")
     _ = try checkpoint("h-closed")
 
-    // 9. 在卡片左缘内（x = 8：转录的消息与代码块都有左右内边距，起手点落在纵向滚动的转录上，横拖沿滚动链交给根）
+    // 10. 在卡片左缘内（x = 8：转录的消息与代码块都有左右内边距，起手点落在纵向滚动的转录上，横拖沿滚动链交给根）
     //    起手拖到 0.7 × 侧栏宽并按住 40 × waitScale 秒：按住期间本测试阻塞在手势里，原生侧栏钮的位置只能由脚本连拍截图判定
     //    （页头行与卡片内容各自搜出的平移量一致）。没赶上时脚本回 retry，最多 3 次（同底栏测试）。
     //    过半松手：系统吸附到打开，原生侧栏钮右移侧栏宽；再点卡片条关上，回到原位。0.7 给起拖滞后留余量（见底栏测试）
@@ -140,7 +155,7 @@ final class HeaderE2ETests: E2ECase {
     }
     _ = try checkpoint("h-end")
 
-    // 10. 点输入框弹出软键盘：iOS 会平移视觉视口把整页推上去，网页（lib/viewport.ts 的 settleViewport）应把它拉回，
+    // 11. 点输入框弹出软键盘：iOS 会平移视觉视口把整页推上去，网页（lib/viewport.ts 的 settleViewport）应把它拉回，
     //     只让输入区按 --kb-inset 让出键盘。断言在脚本里（网页探针的视口采样），这里只确认键盘真的出来了
     let composer = app.webViews.textViews.firstMatch
     guard composer.waitForExistence(timeout: 10 * waitScale) else {

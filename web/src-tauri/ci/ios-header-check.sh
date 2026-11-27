@@ -7,7 +7,7 @@
 #   bar        三件都看得到；页头下方没有多出东西；菜单没开时屏幕中心的触摸不被原生层截住、三件上的被截住
 #   title      标题菜单：胶囊下方出现面板；此时整屏的触摸都归原生层
 #   title:env  运行环境子页：面板内容与主页不同
-#   trail      视图菜单：视图钮下方出现面板；同样整屏接管
+# 视图菜单是系统菜单（没有程序化打开），在 ios-e2e-check.sh 里由 XCUITest 真实点开。
 # 触摸归属看探测结果（确定性的），外观逐区域比像素（同 ios-region-diff.swift）。全部结果打印并写进 Step Summary，任一不符则退出码 1；
 # 跑完全部断言且通过时才写 <输出目录>/.complete（工作流据此判定）。就绪一律靠事件日志判断，不靠固定 sleep。
 # 用法：ios-header-check.sh <Oryn.app> <输出目录>
@@ -24,7 +24,7 @@ sim_setup "$1" "$2" "iOS 原生页头（模拟器）"
 demo_line() { grep -F '"event":"header.demo"' "$out/$1.jsonl" | tail -1; }
 
 run h-base launcher.ready
-for mode in hidden bar title title:env trail; do
+for mode in hidden bar title title:env; do
   name="h-${mode/:/-}"
   run "$name" header.demo "SIMCTL_CHILD_ORYN_HEADER_DEMO=${mode}"
   line=$(demo_line "$name")
@@ -82,7 +82,6 @@ probe() {
 probe "bar：只有三件控件接触摸" h-bar '.center == false and .lead and .title and .trail'
 probe "hidden：不接任何触摸" h-hidden '(.center or .lead or .title or .trail) | not'
 probe "title：菜单开着时整屏接管" h-title '.center and .title'
-probe "trail：菜单开着时整屏接管" h-trail '.center and .trail'
 
 # 基线兜底：卡顿的 CI 机器上 launcher.ready 之后连接页可能还要好几秒才画出来，基线会截成稳定的白屏。
 # hidden 模式什么都不画，页头下方那块与基线必须一致；不一致就是基线没画完，重截（最多两次）
@@ -104,7 +103,6 @@ expect "bar：视图钮" "$(diff_ratio h-base h-bar "$rx" "$ry" "$rw" "$rh")" sh
 expect "bar：页头下方没有东西" "$(diff_ratio h-base h-bar "$tx" "$(calc "$ty + $th + 40")" "$tw" 120)" hidden
 expect "title：面板" "$(diff_ratio h-base h-title "$(calc "$tx + 8")" "$py" "$(calc "$tw - 16")" 200)" shown 0.05
 expect "title:env：子页与主页不同" "$(diff_ratio h-title h-title-env "$(calc "$tx + 8")" "$py" "$(calc "$tw - 16")" 200)" shown
-expect "trail：面板" "$(diff_ratio h-base h-trail "$(calc "$rx + $rw - 200")" "$(calc "$ry + $rh + 12")" 192 100)" shown 0.05
 # 走到这里才写完成标记：工作流据此确认脚本跑完了全部断言，防止中途异常退出却返回 0
 if ((failed == 0)); then : >"$out/.complete"; fi
 exit "$failed"

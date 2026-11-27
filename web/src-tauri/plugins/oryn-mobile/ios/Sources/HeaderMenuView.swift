@@ -1,6 +1,6 @@
-// 自绘菜单面板，版式照搬网页（CompactThreadHeader 的 TitleMenu 与共享 Menu），材质换成 Liquid Glass。
-// wide = 标题菜单（圆角 22、内边距 6、三宫格 + 状态块 + 分组）；否则是视图菜单（圆角 18、内边距 4、单列）。
-// 子页在面板里原地换页：顶部一行「← 父项名」，下面是子项；内容比上限高时滚动。
+// 标题菜单的自绘面板，版式照搬网页（CompactThreadHeader 的 TitleMenu）：圆角 22、内边距 6、三宫格 + 状态块 + 分组。
+// 材质是 Liquid Glass，与标题胶囊同在一个玻璃容器（HeaderRootView），出现时从胶囊里形变长出来。
+// 子页在面板里原地换页：顶部一行「← 父项名」，下面是子项；内容比上限高时滚动。视图菜单是系统菜单（HeaderSystemMenu.swift）。
 import SwiftUI
 import UIKit
 
@@ -8,10 +8,11 @@ import UIKit
 struct MenuPanel: View {
   @ObservedObject var model: HeaderModel
   let menu: HeaderMenuSpec
-  let wide: Bool
   let spec: HeaderSpec
   let palette: HeaderPalette
   let maxHeight: CGFloat
+  let glass: Namespace.ID
+  let reduce: Bool
 
   var body: some View {
     // 内容放得下就不滚动、面板贴合内容高度；放不下才套 ScrollView，面板停在上限。
@@ -24,15 +25,18 @@ struct MenuPanel: View {
     }
     .glassEffect(
       .regular.tint(Color(uiColor: .systemBackground).opacity(spec.tune.tint)),
-      in: RoundedRectangle(cornerRadius: wide ? 22 : 18, style: .continuous)
+      in: RoundedRectangle(cornerRadius: 22, style: .continuous)
     )
+    // 出现 / 消失时从胶囊形变；减弱动态效果时原地显现
+    .glassEffectID("titleMenu", in: glass)
+    .glassEffectTransition(reduce ? .materialize : .matchedGeometry)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(Text(menu.label))
   }
 
-  /// 主页的分组前是否要一条细线：标题菜单在宫格 / 状态块之后才要（第一组之前）。
+  /// 主页的分组前是否要一条细线：宫格 / 状态块之后才要（第一组之前）。
   private var ruleBeforeFirstGroup: Bool {
-    wide && (!(menu.quick ?? []).isEmpty || !(menu.status ?? []).isEmpty)
+    !(menu.quick ?? []).isEmpty || !(menu.status ?? []).isEmpty
   }
 
   private var content: some View {
@@ -74,7 +78,7 @@ struct MenuPanel: View {
         }
       }
     }
-    .padding(wide ? 6 : 4)
+    .padding(6)
     .id(model.page ?? "")
     .transition(.opacity)
   }
@@ -119,12 +123,12 @@ struct MenuPanel: View {
     return Button {
       model.choose(item)
     } label: {
-      HStack(spacing: wide ? 10 : 8) {
-        // 标题菜单的图标占 16pt 一格（没有图标也留着，各行文字对齐）；视图菜单 14pt、没有就不占
+      HStack(spacing: 10) {
+        // 图标占 16pt 一格（没有图标也留着，各行文字对齐）
         if let icon = item.icon {
-          HeaderIconView(icon: icon, box: wide ? 16 : 14, palette: palette)
+          HeaderIconView(icon: icon, box: 16, palette: palette)
             .foregroundStyle(item.danger == true ? palette.err : Color.secondary)
-        } else if wide {
+        } else {
           Color.clear.frame(width: 16, height: 16)
         }
         VStack(alignment: .leading, spacing: 0) {
@@ -149,14 +153,15 @@ struct MenuPanel: View {
         }
         if checked {
           Image(systemName: "checkmark")
-            .font(.system(size: wide ? 14 : 13, weight: .bold))
+            .font(.system(size: 14, weight: .bold))
             .foregroundStyle(palette.accent)
         }
       }
       .foregroundStyle(tint(item))
-      .padding(.horizontal, wide ? 10 : 8)
+      .padding(.horizontal, 10)
       .padding(.vertical, 6)
-      .frame(minHeight: wide ? 40 : 32)
+      // 与系统菜单同为 44pt 的最小行高（触控目标下限）
+      .frame(minHeight: 44)
     }
     .buttonStyle(MenuRowStyle(radius: 12))
     .disabled(item.disabled == true)

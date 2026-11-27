@@ -203,7 +203,7 @@ describe("buildHeaderSpec 与 nativeItems", () => {
 			trail: null,
 		});
 		expect(spec?.trail).toBeNull();
-		expect(spec?.tune).toEqual({ scrim: 0.6, tint: 0.55 });
+		expect(spec?.tune).toEqual({ scrim: 0.6, tint: 0.1 });
 	});
 
 	it("只有侧栏钮（首页）：lead 带页名 key → title / trail 为 null，与契约夹具 header-lead.json 逐字相等", () => {

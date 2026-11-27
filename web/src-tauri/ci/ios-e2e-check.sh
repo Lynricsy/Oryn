@@ -35,6 +35,8 @@
 #   h-back    点返回行回主页，截图
 #   h-dialog  点「改名」：等 header.event（select / title / rename），网页打开对话框、遮挡探测让原生让位（header.show alpha 0），截图
 #   h-return  点遮罩关掉对话框：等 header.show（alpha 1），截图；从这里起数 header.show
+#   h-views   点原生视图钮：系统菜单（UIMenu）展开，等 header.event（menu = trail），截图
+#   h-view-pick 点系统菜单里当前视图「对话」：等 header.event（select / trail / agent），菜单收起
 #   h-sidebar 点原生侧栏钮：等 header.event（lead）与 sink.show（open）；原生页头的位移由原生从根滚动算，没有新的 header.show，截图
 #   h-closed  点卡片条关侧栏：sink.show（关），仍没有新的 header.show，截图
 #   h-drag    卡片左缘内起手按住拖到 0.7 × 侧栏宽：页头行连拍两张一致、与关闭态不同、又不是打开态；松手后确认实际平移过半；
@@ -586,6 +588,21 @@ sleep 0.7
 shot h-return
 ok h-return
 
+# 视图钮是系统菜单：开合经 UIContextMenuInteraction 的回调上报
+wait_req h-views 60
+until_ok h-views 15 "header.event（menu = trail）" last_is header.event '.op == "menu" and .menu == "trail" and .key == $k'
+sleep 0.7
+shot h-views
+ok h-views
+
+# 选中后的 select 与系统收起菜单的 menu = null 先后不定：只要求有这条 select
+view_picked() {
+  ev header.event | jq -se --arg k "$thread" 'any(.op == "select" and .menu == "trail" and .id == "agent" and .key == $k)'
+}
+wait_req h-view-pick 60
+until_ok h-view-pick 15 "header.event（select / trail / agent）" view_picked
+ok h-view-pick
+
 # fresh <步骤>：自 h-return 起没有新的 header.show（R2：开合期间网页不发页头的位移，也不让位）
 fresh() {
   [[ $(count header.show) == "$shows" ]] ||
@@ -681,6 +698,7 @@ hcheck "页头：点胶囊后面板展开" h-menu h-native "$pnx" "$pny" "$pnw" 
 hcheck "页头：子页与主页不同" h-sub h-menu "$pnx" "$pny" "$pnw" 200 shown
 hcheck "页头：返回后回到主页" h-back h-menu "$pnx" "$pny" "$pnw" 200 same
 hcheck "页头：对话框关掉后原生页头原样回来" h-return h-native "$rowx" "$ty" "$roww" "$th" same
+hcheck "页头：点视图钮后系统菜单展开" h-views h-return "$(calc "$rx + $rw - 200")" "$(calc "$ty + $th + 12")" 192 100 shown
 hcheck "页头：关侧栏后原生页头原样回来" h-closed h-native "$rowx" "$ty" "$roww" "$th" same
 hcheck "页头：拖动开合后原生页头原样回来" h-end h-native "$rowx" "$ty" "$roww" "$th" same
 # 按住拖动（R1）：揭示边左侧是不动的侧栏（与打开态一致，区域取法同底栏的拖动）；揭示边右侧的页头横条与卡片内容

@@ -9,7 +9,7 @@
 		"good": "#5cc98a",
 		"frost": "#8fb8e0"
 	},
-	"tune": { "scrim": 0.6, "tint": 0.55 },
+	"tune": { "scrim": 0.6, "tint": 0.1 },
 	"text": { "back": "返回", "close": "关闭" },
 	"lead": {
 		"frame": { "x": 12, "y": 68, "width": 44, "height": 44 },

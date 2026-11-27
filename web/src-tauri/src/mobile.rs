@@ -604,8 +604,9 @@ mod ios {
         });
     }
 
-    /// CI 用（仅 debug 构建）：环境变量 `ORYN_HEADER_DEMO` = `hidden` / `bar` / `title` / `title:<子页 id>` / `trail` 时，
+    /// CI 用（仅 debug 构建）：环境变量 `ORYN_HEADER_DEMO` = `hidden` / `bar` / `title` / `title:<子页 id>` 时，
     /// 在连接页上按夹具摆出页头（`hidden` 之外都显示），按模式打开菜单，再取触摸探测结果，记到事件日志 `header.demo`。
+    /// 视图菜单是系统菜单、没有程序化打开，由端到端测试（ios-e2e-check.sh）真实点开。
     /// 经与页面相同的 Rust → Swift 路径。
     #[cfg(debug_assertions)]
     pub async fn header_demo(app: &AppHandle) {
@@ -633,7 +634,6 @@ mod ios {
         let (open, page) = match mode.split_once(':') {
             Some(("title", page)) => (Some(HeaderMenuKind::Title), Some(page.to_string())),
             None if mode == "title" => (Some(HeaderMenuKind::Title), None),
-            None if mode == "trail" => (Some(HeaderMenuKind::Trail), None),
             None if mode == "bar" || mode == "hidden" => (None, None),
             _ => return fail(format!("unknown mode {mode}")),
         };
