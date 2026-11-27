@@ -208,6 +208,8 @@ Team ID（`XDPWT9ABRD`）写在 `tauri.conf.json` 的 `bundle.iOS.developmentTea
 
 首次上传后，App Store Connect 的 TestFlight 页会要求回答出口合规问题（构建显示「缺少合规证明」）。iOS 包里的 Rust 网络栈用 rustls 自带的 TLS 实现，不只是系统加密，所以 `ITSAppUsesNonExemptEncryption` 没有预先写死，由发布者按实际情况作答。
 
+提交 App Store 审核所需的审核备注模板、「App 隐私」问卷答案、出口合规作答依据、隐私政策与支持地址，以及提交前检查见 [app-store.md](app-store.md)。
+
 iOS 专用的 Info.plist 键写在 `web/src-tauri/Info.ios.plist`，`tauri ios build` 会合并进生成的 Info.plist。目前含 `NSCameraUsageDescription`（连接页扫配对二维码、输入区拍照附件；缺了它 App Store Connect 会以 ITMS-90683 退回构建）与 `NSUserActivityTypes`（`INSendMessageIntent`，配合 `ci/ios-entitlements.sh` 合并的 `com.apple.developer.usernotifications.communication = true` 启用通信通知）。`ios-check` 与 `ios-release` 都会断言这些 Info.plist 键在、且 `CFBundleShortVersionString` 等于 Cargo.toml 的版本；`ios-release` 另用 `codesign -d --entitlements - --xml` 断言通信通知权限已签入 IPA。以后用到其它受保护能力（麦克风、定位、相册写入等）时，同样把用途说明加在这个文件里。
 
 iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与页头（线程页三件；新建线程页只有左上角的侧栏钮，spec 的 `title`、`trail` 为 null、key 为 `home`），协议是壳 bridge 8（`web/src/lib/host.ts` 与 `web/src-tauri/src/host.rs` 的 `BRIDGE`；设计与探针结论见 `docs/plan-m20.md`）：

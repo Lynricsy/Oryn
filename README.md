@@ -483,6 +483,7 @@ oryn sandbox ls && oryn sandbox rm $id                       # 列出本机的�
 | [`docs/deploy.md`](docs/deploy.md) | 生产部署：反代、Portal 证书、网络隔离、协调沙箱、快照与预热池、Sysbox、Runner、Firecracker、Hindsight、SSH 网关；[第 16 节](docs/deploy.md#16-developserverus-本机生产实例)是本机生产实例的入口与维护方式 |
 | [`docs/desktop.md`](docs/desktop.md) | 桌面客户端：安装、配对、窗口与标题栏、托盘、快捷键、自动更新、App 图标；服务端、桌面与移动 App 的统一发版（`v*`） |
 | [`docs/mobile.md`](docs/mobile.md) | 移动客户端：Android 双包、扫码配对、推送与省电、发版；[附录 A](docs/mobile.md#附录-aios) 是 iOS |
+| [`docs/app-store.md`](docs/app-store.md) | App Store 提交：审核备注模板与演示服务器、「App 隐私」问卷答案、出口合规、隐私政策与支持地址、提交前检查 |
 | [`docs/protocol.md`](docs/protocol.md) | 以 [`schema/openapi.yaml`](schema/openapi.yaml) 为唯一源的协议索引与状态机 |
 | [`docs/development.md`](docs/development.md) | 代码生成、构建目标、测试约定、验收脚本、截图、UI 排版审计与 ARM64 交叉构建 |
 | [`docs/design/`](docs/design/) | 界面设计说明与前端开发守则 |
