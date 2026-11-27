@@ -238,7 +238,7 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 // （index.html、main.tsx、vite.config.ts、server.mjs、.oryn/box.yaml、README.md 等）、合并后的 package.json
 // 与严格对应的 package-lock.json（box 构建用 npm ci）。锁的来源依次是：版本里封存时生成的 dist/_project/package-lock.json
 // （根依赖须与当前 src/package.json 合并的结果一致）；没有额外设计依赖时由引擎锁现场改写；都不行回 invalid，不降级成 npm install。
-// 方案组里的落选帧、只被落选方案用到的主题不打包，src/variants.json 去掉落选方案（见 deliveryScope，M34 C6）。
+// 方案组里的落选帧、只被落选方案用到的主题不打包，src/variants.json 去掉已选定的组（见 deliveryScope，M34 C6）。
 func (s *Service) exportProject(ctx context.Context, a Artifact, v Version, files []File, base string) (Export, error) {
 	if a.Kind != KindCanvas {
 		return Export{}, opErr(CodeInvalid, "artifact %s 不是设计画布，不能导出为工程。", a.ID)
@@ -343,8 +343,8 @@ func (s *Service) exportProject(ctx context.Context, a Artifact, v Version, file
 }
 
 // projectScope 是导出工程的交付范围（M34 C6）：drop 是不打包的版本文件（落选帧的 src/frames/<id>.tsx、只被落选方案
-// 引用的 src/themes/<名>.css、被改写的 src/variants.json），theme 是保留下来的帧的方案主题（帧 id → 主题名），
-// variants 是去掉落选方案后的 src/variants.json（nil = 没有清单或不用改写）。
+// 引用的 src/themes/<名>.css、被改写或去掉的 src/variants.json），theme 是保留下来的帧的方案主题（帧 id → 主题名），
+// variants 是去掉已选定的组后的 src/variants.json（nil = 原样打包、没有清单，或 drop 里有它时整份不打包）。
 type projectScope struct {
 	drop     map[string]bool
 	theme    map[string]string
@@ -358,7 +358,8 @@ func frameID(source string) string {
 
 // deliveryScope 由 canvas.json 的方案组算出导出工程的交付范围：落选画框（Doc.Archived）经 source 得到落选帧；
 // 主题只在落选方案里用到时不打包，被保留的方案用到或没有方案用到的照常打包。raw 是版本里 src/variants.json 的原文
-// （空 = 没有清单）：已选定的组只留选中方案，未选定的组原样保留。
+// （空 = 没有清单）：已选定的组整组去掉（选中方案的帧成了普通帧，主题经 oryn-frames.json 的 theme 带过去），
+// 未选定的组原样保留；一个组都不剩时不打包清单。改写后的清单仍能通过 design.ParseVariants。
 func deliveryScope(doc canvas.Doc, raw []byte) (projectScope, error) {
 	sc := projectScope{drop: map[string]bool{}, theme: map[string]string{}}
 	archived := doc.Archived()
@@ -375,11 +376,11 @@ func deliveryScope(doc canvas.Doc, raw []byte) (projectScope, error) {
 			sc.drop[pg.Source] = true
 		}
 	}
-	picked := map[string]string{}
+	picked := map[string]bool{}
 	lostTheme, keptTheme := map[string]bool{}, map[string]bool{}
 	for _, g := range doc.Groups {
 		if g.Picked != nil {
-			picked[g.ID] = *g.Picked
+			picked[g.ID] = true
 		}
 		for _, v := range g.Variants {
 			if v.Theme == "" {
@@ -406,46 +407,33 @@ func deliveryScope(doc canvas.Doc, raw []byte) (projectScope, error) {
 		return sc, nil
 	}
 
-	// 方案逐条保留原文，只按 id 去掉落选的
+	// 未选定的组逐个保留原文，只按 id 去掉已选定的组
 	var file struct {
-		Groups []struct {
-			ID       string            `json:"id"`
-			Name     string            `json:"name"`
-			Variants []json.RawMessage `json:"variants"`
-		} `json:"groups"`
+		Groups []json.RawMessage `json:"groups"`
 	}
 	if err := json.Unmarshal(raw, &file); err != nil {
 		return projectScope{}, err
 	}
-	changed := false
-	for i, g := range file.Groups {
-		want, ok := picked[g.ID]
-		if !ok {
-			continue
+	kept := make([]json.RawMessage, 0, len(file.Groups))
+	for _, rg := range file.Groups {
+		var g struct {
+			ID string `json:"id"`
 		}
-		var kept []json.RawMessage
-		for _, rv := range g.Variants {
-			var v struct {
-				ID string `json:"id"`
-			}
-			if err := json.Unmarshal(rv, &v); err != nil {
-				return projectScope{}, err
-			}
-			if v.ID == want {
-				kept = append(kept, rv)
-			}
+		if err := json.Unmarshal(rg, &g); err != nil {
+			return projectScope{}, err
 		}
-		if len(kept) == 0 {
-			return projectScope{}, fmt.Errorf("方案组「%s」里没有画布上选中的方案「%s」", g.ID, want)
-		}
-		if len(kept) != len(g.Variants) {
-			file.Groups[i].Variants = kept
-			changed = true
+		if !picked[g.ID] {
+			kept = append(kept, rg)
 		}
 	}
-	if !changed {
+	if len(kept) == len(file.Groups) {
 		return sc, nil
 	}
+	sc.drop[design.VariantsFile] = true
+	if len(kept) == 0 {
+		return sc, nil
+	}
+	file.Groups = kept
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
 	enc.SetEscapeHTML(false)
@@ -453,7 +441,6 @@ func deliveryScope(doc canvas.Doc, raw []byte) (projectScope, error) {
 	if err := enc.Encode(file); err != nil {
 		return projectScope{}, err
 	}
-	sc.drop[design.VariantsFile] = true
 	sc.variants = out.Bytes()
 	return sc, nil
 }

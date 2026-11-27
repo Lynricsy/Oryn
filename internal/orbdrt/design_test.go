@@ -1303,7 +1303,8 @@ export default function Home() { return <main>Hello Box</main>; }`)
 }
 
 // M34 S8：用户选定方案后 design.eject 出的工程只含保留下来的帧——落选帧的 src/frames/<id>.tsx 与只被落选方案用到的
-// 主题不导出，src/variants.json 只剩选中方案，oryn-frames.json 的帧带 theme，styles.css 只引入打包进来的主题。
+// 主题不导出，已选定的组从 src/variants.json 去掉（未选定的组保留，清单仍能通过 ParseVariants），oryn-frames.json
+// 的帧带 theme，styles.css 只引入打包进来的主题。
 // 设了 ORYN_TEST_EJECT_BUILD=1（需要 npm 与 registry）时再在 eject 目录 npm ci && npm run build，产物里没有落选帧。
 func TestDesignEjectVariants(t *testing.T) {
 	e := newDesignEnv(t)
@@ -1318,8 +1319,11 @@ func TestDesignEjectVariants(t *testing.T) {
 	writeSrc(t, opened.Dir, "src/frames/about.tsx", frame("关于"))
 	writeSrc(t, opened.Dir, "src/frames/home-a.tsx", frame("LOSER-HOME-A"))
 	writeSrc(t, opened.Dir, "src/frames/home-b.tsx", frame("WINNER-HOME-B"))
+	writeSrc(t, opened.Dir, "src/frames/cta-a.tsx", frame("CTA-A"))
+	writeSrc(t, opened.Dir, "src/frames/cta-b.tsx", frame("CTA-B"))
 	writeSrc(t, opened.Dir, "src/variants.json", `{"groups":[{"id":"home","name":"首页","variants":[`+
-		`{"id":"a","name":"冷静","theme":"calm","frames":["home-a"]},{"id":"b","name":"暖调","theme":"warm","frames":["home-b"]}]}]}`)
+		`{"id":"a","name":"冷静","theme":"calm","frames":["home-a"]},{"id":"b","name":"暖调","theme":"warm","frames":["home-b"]}]},`+
+		`{"id":"cta","name":"行动区","variants":[{"id":"a","name":"按钮","frames":["cta-a"]},{"id":"b","name":"表单","frames":["cta-b"]}]}]}`)
 	_, err := e.seal("turn-variants")
 	require.NoError(t, err)
 
@@ -1347,10 +1351,19 @@ func TestDesignEjectVariants(t *testing.T) {
 		require.NoError(t, err)
 		return string(b)
 	}
-	variants := read("src/variants.json")
-	assert.Contains(t, variants, `"home-b"`)
-	assert.NotContains(t, variants, `"home-a"`)
-	assert.NotContains(t, variants, `"calm"`)
+	var frames, themeNames []string
+	for dir, out := range map[string]*[]string{"src/frames": &frames, "src/themes": &themeNames} {
+		ents, err := os.ReadDir(filepath.Join(outDir, filepath.FromSlash(dir)))
+		require.NoError(t, err)
+		for _, ent := range ents {
+			*out = append(*out, strings.TrimSuffix(strings.TrimSuffix(ent.Name(), ".tsx"), ".css"))
+		}
+	}
+	vf, err := design.ParseVariants([]byte(read("src/variants.json")), frames, themeNames)
+	require.NoError(t, err, "导出的 variants.json 用打包进来的帧与主题能解析")
+	require.Len(t, vf.Groups, 1, "已选定的 home 组整组去掉")
+	assert.Equal(t, "cta", vf.Groups[0].ID)
+	assert.Len(t, vf.Groups[0].Variants, 2)
 	var meta struct {
 		Frames []designengine.ProjectFrame `json:"frames"`
 	}
@@ -1359,7 +1372,7 @@ func TestDesignEjectVariants(t *testing.T) {
 	for _, f := range meta.Frames {
 		themes[f.ID] = f.Theme
 	}
-	assert.Equal(t, map[string]string{"about": "", "home-b": "warm"}, themes, "oryn-frames.json 不列落选帧 home-a")
+	assert.Equal(t, map[string]string{"about": "", "home-b": "warm", "cta-a": "", "cta-b": ""}, themes, "oryn-frames.json 不列落选帧 home-a")
 	styles := read("styles.css")
 	assert.Contains(t, styles, "@import \"./src/theme.css\";\n@import \"./src/themes/warm.css\";\n")
 	assert.NotContains(t, styles, "calm")

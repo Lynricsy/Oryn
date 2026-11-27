@@ -30,5 +30,5 @@ oryn boxes deploy --on <box> --name <app>
 
 - 不带画布的元素定位标记（`data-oryn-loc`）、页面运行时与设计检查探针；
 - `oryn-frames.json` 记录导出时的帧顺序、名字与起始帧，之后新增的帧排在后面，名字取帧文件里 `export const frame` 的 `name`。
-- 方案组里落选方案的帧与只被它们用到的主题不导出，`src/variants.json` 只保留选中的方案；想交付落选方案，先在画布上改选它。
+- 方案组里落选方案的帧与只被它们用到的主题不导出；已选定的组从 `src/variants.json` 里去掉，选中方案的帧成了普通帧，主题记在 `oryn-frames.json` 的 `theme`。想交付落选方案，先在画布上改选它。
 <!-- oryn:conflicts -->

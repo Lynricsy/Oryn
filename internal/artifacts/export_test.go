@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/artifacts/design"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
 	"github.com/Lynricsy/Oryn/internal/boxcfg"
 	"github.com/Lynricsy/Oryn/internal/designengine"
@@ -481,37 +482,28 @@ func TestExportProjectVariants(t *testing.T) {
 	}, srcFiles, "落选帧 home-a、home-c 与只被落选方案用到的 calm 不打包；bold 还被未选定组用、spare 没人用，照常打包")
 	assert.Equal(t, extra["src/themes/warm.css"], got["src/themes/warm.css"])
 
-	// variants.json：home 只剩选中的 b（原样保留 note、theme），hero 未选定原样保留
-	var vf struct {
-		Groups []struct {
-			ID       string `json:"id"`
-			Name     string `json:"name"`
-			Variants []struct {
-				ID     string   `json:"id"`
-				Name   string   `json:"name"`
-				Note   string   `json:"note"`
-				Theme  string   `json:"theme"`
-				Frames []string `json:"frames"`
-			} `json:"variants"`
-		} `json:"groups"`
+	// variants.json：已选定的 home 整组去掉，未选定的 hero 原样保留；用打包进来的帧与主题解析能通过
+	parsePacked := func(got map[string]string) (design.Variants, error) {
+		var frames, themes []string
+		for p := range got {
+			if id, ok := strings.CutPrefix(p, "src/frames/"); ok && !strings.HasPrefix(id, "_") {
+				frames = append(frames, strings.TrimSuffix(id, ".tsx"))
+			}
+			if name, ok := strings.CutPrefix(p, "src/themes/"); ok {
+				themes = append(themes, strings.TrimSuffix(name, ".css"))
+			}
+		}
+		return design.ParseVariants([]byte(got[design.VariantsFile]), frames, themes)
 	}
-	dec := json.NewDecoder(strings.NewReader(got["src/variants.json"]))
-	dec.DisallowUnknownFields()
-	require.NoError(t, dec.Decode(&vf), got["src/variants.json"])
-	require.Len(t, vf.Groups, 2)
-	assert.Equal(t, "home", vf.Groups[0].ID)
-	assert.Equal(t, "首页首屏", vf.Groups[0].Name)
-	require.Len(t, vf.Groups[0].Variants, 1)
-	assert.Equal(t, "b", vf.Groups[0].Variants[0].ID)
-	assert.Equal(t, "杂志感", vf.Groups[0].Variants[0].Note)
-	assert.Equal(t, "warm", vf.Groups[0].Variants[0].Theme)
-	assert.Equal(t, []string{"home-b"}, vf.Groups[0].Variants[0].Frames)
-	assert.Equal(t, "hero", vf.Groups[1].ID)
-	require.Len(t, vf.Groups[1].Variants, 2)
-	assert.Equal(t, []string{"hero-x"}, vf.Groups[1].Variants[0].Frames)
-	assert.Equal(t, []string{"hero-y"}, vf.Groups[1].Variants[1].Frames)
-	for _, f := range []string{"home-a", "home-c", "calm"} {
-		assert.NotContains(t, got["src/variants.json"], `"`+f+`"`)
+	vf, err := parsePacked(got)
+	require.NoError(t, err, got[design.VariantsFile])
+	assert.Equal(t, []design.VariantGroup{{ID: "hero", Name: "主视觉", Variants: []design.Variant{
+		{ID: "x", Name: "X", Theme: "bold", Frames: []string{"hero-x"}},
+		{ID: "y", Name: "Y", Frames: []string{"hero-y"}},
+	}}}, vf.Groups)
+	assert.Equal(t, map[string]string{"hero-x": "bold"}, vf.FrameTheme)
+	for _, f := range []string{"home", "home-a", "home-b", "home-c", "calm", "warm"} {
+		assert.NotContains(t, got[design.VariantsFile], `"`+f+`"`)
 	}
 
 	// oryn-frames.json：按画布顺序、去掉落选帧，带主题；起始帧指向落选画框时退回第一帧
@@ -549,4 +541,21 @@ func TestExportProjectVariants(t *testing.T) {
 	assert.Equal(t, "home-a", meta.Start)
 	assert.Len(t, meta.Frames, 6)
 	assert.Equal(t, designengine.ProjectFrame{ID: "home-a", Name: "首页 A", Theme: "calm"}, meta.Frames[1])
+
+	// 两个组都选定了：清单里一个组都不剩，不打包 src/variants.json；选中方案的主题仍由 oryn-frames.json 带过去
+	allPicked := maps.Clone(extra)
+	allPicked[EntryCanvas] = strings.Replace(variantsCanvas, `"picked":null`, `"picked":"x"`, 1)
+	full := mkDesignCanvas(t, e, "全选定", allPicked)
+	x, err = e.s.Export(ctx, full.ID, 0, ExportProject)
+	require.NoError(t, err)
+	got = unzip(t, exportBytes(t, x))
+	assert.NotContains(t, got, design.VariantsFile)
+	assert.NotContains(t, got, "src/frames/hero-y.tsx")
+	assert.Contains(t, got, "src/themes/bold.css", "bold 还被选中的 x 用")
+	require.NoError(t, json.Unmarshal([]byte(got["oryn-frames.json"]), &meta))
+	assert.Equal(t, []designengine.ProjectFrame{
+		{ID: "login", Name: "登录页"},
+		{ID: "home-b", Name: "首页 B", Theme: "warm"},
+		{ID: "hero-x", Name: "主视觉 X", Theme: "bold"},
+	}, meta.Frames)
 }
