@@ -45,8 +45,9 @@ func TestLinkViaVsockLoopback(t *testing.T) {
 	defer cancel()
 	c, err := dialVia(ctx, "vsock:"+strconv.FormatUint(uint64(port), 10))
 	if err != nil {
+		// ETIMEDOUT：本机有 vsock 但 CID 2 不是自己（如 GitHub runner 的 VM），连接无人应答
 		if errors.Is(err, unix.ENODEV) || errors.Is(err, unix.EHOSTUNREACH) || errors.Is(err, unix.ECONNRESET) ||
-			errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EAFNOSUPPORT) {
+			errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EAFNOSUPPORT) || errors.Is(err, unix.ETIMEDOUT) {
 			t.Skipf("CID 2 is not this host: %v", err)
 		}
 		require.NoError(t, err)
