@@ -204,6 +204,8 @@ func TestE2EM5Share(t *testing.T) {
 	code, hdr, _ = s.anonGet("/s/" + snap.Slug)
 	assert.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "noindex, nofollow", hdr.Get("X-Robots-Tag"))
+	// 未启用 portal：分享页的 HTML 视图帧在主域 /_af/ 回退路径，frame-src 放行 'self'（M33）
+	assert.Contains(t, hdr.Get("Content-Security-Policy"), "frame-src 'self';")
 	code, hdr, body = s.anonGet("/s/" + snap.Slug + ".md")
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "text/markdown; charset=utf-8", hdr.Get("Content-Type"))

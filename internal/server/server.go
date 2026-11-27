@@ -556,7 +556,12 @@ func (s *Server) init(ctx context.Context) error {
 	mounts := map[string]http.Handler{"/orb/v1/link": s.Orbs.LinkHandler(), "/orb/v1/whoami": s.Orbs.WhoamiHandler(), api.WSPath: s.Hub}
 	// 公开面（M5）：匿名 WS、分享页与 .md 导出、公开文件；均不经 /api/v1 的鉴权组
 	mounts["/api/v1/public/shares/{slug}/ws"] = s.Share.WSHandler()
-	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(base.FrameSrc(), ""))
+	// 分享页内嵌 HTML 视图帧（M33）：未启用 portal 时帧在主域的 /_af/<令牌>/ 回退路径，frame-src 要放行 'self'
+	shareFrameSrc := base.FrameSrc()
+	if !base.Enabled() {
+		shareFrameSrc = "'self'"
+	}
+	mounts["/s/*"] = s.Share.PageHandler(webui.Handler(shareFrameSrc, ""))
 	// WOPI 端点（M32）：引擎凭访问令牌回调，不经 /api/v1 的鉴权组
 	mounts[artifacts.WOPIPathPrefix+"*"] = s.Artifacts.WOPIHandler()
 	mounts["/f/*"] = s.Share.FileHandler()
