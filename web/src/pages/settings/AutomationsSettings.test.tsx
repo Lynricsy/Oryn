@@ -81,6 +81,7 @@ describe("设置 → 自动化：定时任务", () => {
 				M9_IDS.projectSchedule,
 				M9_IDS.spaceSchedule,
 				M9_IDS.failingSchedule,
+				M9_IDS.webhookSchedule,
 			]),
 		);
 		const threadSec = screen.getByTestId("automation-thread-schedules");
@@ -120,8 +121,21 @@ describe("设置 → 自动化：定时任务", () => {
 		mount(<AutomationsSettings />, `/settings/automations?project=${core?.id}`);
 		const projectSec = screen.getByTestId("automation-project-schedules");
 		await waitFor(() =>
-			expect(rowNames(projectSec)).toEqual([M9_IDS.failingSchedule]),
+			expect(rowNames(projectSec)).toEqual([
+				M9_IDS.failingSchedule,
+				M9_IDS.webhookSchedule,
+			]),
 		);
+		// M31：只由手动或 Webhook 触发的定时不显示「已暂停」，带 Webhook 标记
+		const triage = rowOf(
+			projectSec,
+			`[data-schedule="${M9_IDS.webhookSchedule}"]`,
+		);
+		expect(triage).toHaveTextContent("手动 / Webhook 触发");
+		expect(
+			within(triage).getByTestId("schedule-webhook-summary"),
+		).toHaveTextContent("Webhook");
+		expect(triage).not.toHaveTextContent("已暂停");
 		expect(screen.queryByTestId("automation-thread-schedules")).toBeNull();
 		expect(await screen.findByText(`只看项目「${core?.name}」`)).toBeVisible();
 	});

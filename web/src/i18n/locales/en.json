@@ -5659,7 +5659,8 @@
 		"kind": {
 			"cron": "Calendar",
 			"every": "Interval",
-			"once": "Once"
+			"once": "Once",
+			"manual": "Manual / webhook"
 		},
 		"preset": {
 			"daily9": "Daily at 9:00",
@@ -5712,6 +5713,52 @@
 		"handToAssistant": "Hand to the assistant",
 		"handToAssistantHint": "Each run's result goes to the global assistant, which decides in the main conversation whether to tell you; no separate notification when a run completes.",
 		"silentHint": "In automated runs, an agent whose last reply is [SILENT] ends quietly: no unread mark, no completion notification, nothing handed to the assistant.",
+		"manualHint": "No time trigger: runs only when you click Run now or the incoming webhook is called.",
+		"webhook": {
+			"title": "Incoming webhook",
+			"intro": "Turning it on gives you a dedicated URL; an external system (GitHub, CI…) POSTs to it to trigger a run, and the request is appended to the prompt for the new thread.",
+			"saveFirst": "Save first to turn on an incoming webhook here.",
+			"enable": "Turn on webhook",
+			"immediate": "Webhook changes take effect immediately; no need to click Save.",
+			"badge": "Webhook",
+			"signed": "Signature required",
+			"unsigned": "No signature: anyone with the URL can trigger it",
+			"signedHint": "Callers must send an X-Oryn-Signature-256 or X-Hub-Signature-256 header: sha256=<hex HMAC-SHA256 of the raw body, keyed with the signing secret>.",
+			"createdAt": "Created {{when}}",
+			"rotatedAt": "URL generated {{when}}",
+			"lastCalledAt": "Last called {{when}}",
+			"neverCalled": "Never called yet",
+			"rotate": "New URL",
+			"rotateConfirm": "Generate a new URL?",
+			"rotateConfirmBody": "The old URL stops working immediately; callers must switch to the new one.",
+			"setSecret": "Set signing secret",
+			"changeSecret": "Change signing secret",
+			"removeSecret": "Remove signature",
+			"removeSecretConfirm": "Remove the signing secret?",
+			"removeSecretConfirmBody": "Signatures will no longer be checked; anyone with the URL can trigger this schedule.",
+			"removeSecretAction": "Remove",
+			"secretLabel": "Signing secret",
+			"secretHint": "Up to 256 characters; not shown again after saving.",
+			"secretSave": "Save secret",
+			"disable": "Turn off",
+			"disableConfirm": "Turn off this webhook?",
+			"disableConfirmBody": "The URL stops working immediately; turning it on again generates a new URL.",
+			"urlTitle": "Shown only once",
+			"urlHint": "This is the full URL. It can't be shown again after you close this; if you lose it, generate a new one.",
+			"urlLabel": "URL",
+			"usage": "Call it with POST; the body is UTF-8 text (such as JSON) up to 64 KiB.",
+			"trust": "Webhook-triggered runs are treated as untrusted input: the new thread runs fully automated, GitHub uses only the Agent account (the run fails if it's unavailable, never falling back to yours), and SSH only reaches hosts allowed for fully automated threads. With Hand to the assistant on, the result goes to a restricted single turn of the main conversation. Scheduled and manual runs are unaffected."
+		},
+		"payload": {
+			"show": "Show received request",
+			"hide": "Hide request",
+			"untrusted": "External content, not verified",
+			"contentType": "Content type",
+			"headers": "Headers",
+			"query": "Query",
+			"body": "Body",
+			"empty": "(empty)"
+		},
 		"gate": {
 			"label": "Pre-run gate",
 			"hint": "Before each run, a command runs first (no model call). If its last output line is {\"wakeAgent\": false}, the run is skipped; otherwise it runs as usual with the command's output prepended to the prompt.",
@@ -5768,12 +5815,14 @@
 			"skipped": "Skipped"
 		},
 		"runError": {
-			"gate": "Gate: nothing to do"
+			"gate": "Gate: nothing to do",
+			"githubAgentRequired": "GitHub Agent account unavailable: webhook-triggered runs use only the Agent account and never fall back to yours. Connect the Agent account and try again."
 		},
 		"trigger": {
 			"schedule": "On time",
 			"catchup": "Catch-up",
-			"manual": "Manual"
+			"manual": "Manual",
+			"webhook": "Webhook"
 		},
 		"describe": {
 			"everyMinutes": "Every {{n}} min",
@@ -5782,7 +5831,8 @@
 			"everyDays": "Every {{n}} d",
 			"everySeconds": "Every {{n}} s",
 			"once": "Once at {{time}}",
-			"onceUnset": "Once (no time set)"
+			"onceUnset": "Once (no time set)",
+			"manual": "Manual or webhook"
 		}
 	},
 	"space": {

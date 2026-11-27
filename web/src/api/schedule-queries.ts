@@ -178,6 +178,38 @@ export function useRunSchedule() {
 	});
 }
 
+/**
+ * 开启或修改入站 Webhook（M31）：没有时新建；`rotateKey` 换新地址；`secret` 省略 = 保留、空串 = 去掉签名。
+ * 响应里的一次性地址 `url` 只在生成了新密钥时出现，由调用方放在组件状态里显示（不进查询缓存）。
+ */
+export function usePutScheduleWebhook(id: string) {
+	const invalidate = useInvalidateSchedules();
+	return useMutation({
+		mutationFn: (body: Schemas["ScheduleWebhookInput"]) =>
+			unwrap(
+				api.PUT("/api/v1/schedules/{id}/webhook", {
+					params: { path: { id } },
+					body,
+				}),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
+/** 关闭入站 Webhook（幂等，地址立即失效）。 */
+export function useDeleteScheduleWebhook(id: string) {
+	const invalidate = useInvalidateSchedules();
+	return useMutation({
+		mutationFn: () =>
+			unwrap(
+				api.DELETE("/api/v1/schedules/{id}/webhook", {
+					params: { path: { id } },
+				}),
+			),
+		onSuccess: () => invalidate(),
+	});
+}
+
 /** 预览接下来至多 5 次触发时间（只看时间字段）。 */
 export function previewSchedule(
 	body: ScheduleInput,

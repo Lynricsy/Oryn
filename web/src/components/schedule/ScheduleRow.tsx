@@ -1,7 +1,8 @@
 /**
  * 定时列表的一行（设置 → 自动化、项目设置里的「定时任务」、Space 页的「定时」小节共用），D 的 `GroupRow`，放在 `GroupList` 里：
  * 标题 = 名称或线程标题（点击 = 编辑，对话框由调用方渲染）与 `由 agent 创建` 徽标；
- * 说明 = 可选的目标（项目徽标 / 线程链接）、表达式摘要、下次运行、运行前闸门摘要（主机 + 命令首行）；
+ * 说明 = 可选的目标（项目徽标 / 线程链接）、表达式摘要、下次运行（「手动 / Webhook」启用时不显示）、入站 Webhook 标记、
+ * 运行前闸门摘要（主机 + 命令首行）；
  * 行尾 = 最近一次状态（定宽状态列）· ⋯（编辑 / 立即运行 / 运行记录 / 删除）· 启停开关。出错原文在行下方。
  */
 import type { ReactNode } from "react";
@@ -115,13 +116,25 @@ export function ScheduleRow({
 							)
 						))}
 					<span>{describeSchedule(s, t)}</span>
-					<span>
-						{s.nextRunAt !== undefined
-							? t("automation.nextRun", { when: formatRelative(s.nextRunAt) })
-							: s.pausedReason
-								? t(`schedule.pausedReason.${s.pausedReason}`)
-								: t("schedule.paused")}
-					</span>
+					{/* 「手动 / Webhook」没有下次运行：启用时摘要已说明，不再显示「已暂停」 */}
+					{!(s.kind === "manual" && s.enabled) && (
+						<span>
+							{s.nextRunAt !== undefined
+								? t("automation.nextRun", { when: formatRelative(s.nextRunAt) })
+								: s.pausedReason
+									? t(`schedule.pausedReason.${s.pausedReason}`)
+									: t("schedule.paused")}
+						</span>
+					)}
+					{s.webhook && (
+						<span
+							data-testid="schedule-webhook-summary"
+							className="inline-flex min-w-0 items-center gap-1"
+						>
+							<Icon name="webhook" size={12} aria-hidden />
+							{t("schedule.webhook.badge")}
+						</span>
+					)}
 					{s.gate && (
 						<span
 							data-testid="schedule-gate-summary"

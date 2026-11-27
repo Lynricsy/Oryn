@@ -103,10 +103,11 @@ function describeEvery(seconds: number, t: TFunction): string {
 }
 
 /**
- * 表达式摘要：`every` →「每 30 分钟」；`once` → 本地化时间；`cron` 命中四个预设时给短语
+ * 表达式摘要：`every` →「每 30 分钟」；`once` → 本地化时间；`manual` →「手动 / Webhook 触发」；`cron` 命中四个预设时给短语
  * （时区与浏览器不同时补上时区），否则原样显示表达式 + 时区。
  */
 export function describeSchedule(s: ScheduleLike, t: TFunction): string {
+	if (s.kind === "manual") return t("schedule.describe.manual");
 	if (s.kind === "every") {
 		const sec = parseGoDuration(s.every);
 		return sec === null ? (s.every ?? "") : describeEvery(sec, t);

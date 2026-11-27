@@ -5659,7 +5659,8 @@
 		"kind": {
 			"cron": "按日程",
 			"every": "每隔",
-			"once": "一次"
+			"once": "一次",
+			"manual": "手动 / Webhook"
 		},
 		"preset": {
 			"daily9": "每天 9:00",
@@ -5712,6 +5713,52 @@
 		"handToAssistant": "交给助手",
 		"handToAssistantHint": "每次运行的结果交给全局助手，由它在主线里决定要不要告诉你；运行完成时不再单独通知。",
 		"silentHint": "自动化运行里，agent 最后回复 [SILENT] 即安静结束：不置未读、不发完成通知、不交给助手。",
+		"manualHint": "没有时间触发：只在你点「立即运行」或入站 Webhook 被调用时运行。",
+		"webhook": {
+			"title": "入站 Webhook",
+			"intro": "开启后得到一个专用地址，外部系统（如 GitHub、CI）向它 POST 即触发一次运行；请求内容附在提示词之后交给新线程。",
+			"saveFirst": "保存后可在这里开启入站 Webhook。",
+			"enable": "开启 Webhook",
+			"immediate": "Webhook 的修改立即生效，不需要点「保存」。",
+			"badge": "Webhook",
+			"signed": "要求签名",
+			"unsigned": "不要求签名：拿到地址的人都能触发",
+			"signedHint": "调用须带 X-Oryn-Signature-256 或 X-Hub-Signature-256 请求头：sha256=<用签名密钥对原始请求体做 HMAC-SHA256 的十六进制>。",
+			"createdAt": "创建于 {{when}}",
+			"rotatedAt": "地址生成于 {{when}}",
+			"lastCalledAt": "上次调用 {{when}}",
+			"neverCalled": "还没有被调用过",
+			"rotate": "换新地址",
+			"rotateConfirm": "换一个新地址？",
+			"rotateConfirmBody": "旧地址立即失效，调用方须改用新地址。",
+			"setSecret": "设置签名密钥",
+			"changeSecret": "更换签名密钥",
+			"removeSecret": "去掉签名",
+			"removeSecretConfirm": "去掉签名密钥？",
+			"removeSecretConfirmBody": "之后不再校验签名，拿到地址的人都能触发这个定时。",
+			"removeSecretAction": "去掉",
+			"secretLabel": "签名密钥",
+			"secretHint": "至多 256 个字符；保存后不再显示。",
+			"secretSave": "保存密钥",
+			"disable": "关闭",
+			"disableConfirm": "关闭这个 Webhook？",
+			"disableConfirmBody": "地址立即失效；再次开启会生成新地址。",
+			"urlTitle": "只显示这一次",
+			"urlHint": "这是完整的调用地址，关闭后无法再次查看，丢失只能换新。",
+			"urlLabel": "调用地址",
+			"usage": "用 POST 调用，请求体是至多 64 KiB 的 UTF-8 文本（如 JSON）。",
+			"trust": "Webhook 触发的运行按不可信输入处理：新线程全自动运行，GitHub 只用 Agent 账号（不可用时运行失败，不会改用你的账号），SSH 只能用允许全自动线程的主机；开着「交给助手」时，结果只交给受限的主线一轮。按时与手动触发的运行不受影响。"
+		},
+		"payload": {
+			"show": "查看收到的请求",
+			"hide": "收起请求",
+			"untrusted": "外部发来的内容，未经验证",
+			"contentType": "内容类型",
+			"headers": "请求头",
+			"query": "查询参数",
+			"body": "请求体",
+			"empty": "（空）"
+		},
 		"gate": {
 			"label": "运行前闸门",
 			"hint": "每次运行前先执行一条命令（不调用模型）。最后一行输出是 {\"wakeAgent\": false} 时跳过本次运行；其余情况照常运行，并把命令输出附在提示词前面。",
@@ -5768,12 +5815,14 @@
 			"skipped": "已跳过"
 		},
 		"runError": {
-			"gate": "闸门判定无需运行"
+			"gate": "闸门判定无需运行",
+			"githubAgentRequired": "GitHub Agent 账号不可用：Webhook 触发的运行只用 Agent 账号，不会改用你的账号。连接好 Agent 账号后再试。"
 		},
 		"trigger": {
 			"schedule": "按时",
 			"catchup": "补跑",
-			"manual": "手动"
+			"manual": "手动",
+			"webhook": "Webhook"
 		},
 		"describe": {
 			"everyMinutes": "每 {{n}} 分钟",
@@ -5782,7 +5831,8 @@
 			"everyDays": "每 {{n}} 天",
 			"everySeconds": "每 {{n}} 秒",
 			"once": "{{time}} 运行一次",
-			"onceUnset": "一次（未设时间）"
+			"onceUnset": "一次（未设时间）",
+			"manual": "手动 / Webhook 触发"
 		}
 	},
 	"space": {

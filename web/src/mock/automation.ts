@@ -1,6 +1,6 @@
 /**
  * mock 后端的 M9 部分：Space、全局助手对话（含 M19 的主线 `GET assistant/main`）、定时（线程内 / 每次新建线程）及其运行记录、
- * 操作记录、协调宿主状态，
+ * 定时的入站 Webhook（M31：开启 / 换新地址 / 签名密钥 / 关闭；不模拟公开的接收端）、操作记录、协调宿主状态，
  * 格式与 orynd 一致。`MockServer.handleFetch` 开头先调 `handle`，不归这里的请求返回 null。
  * 协调宿主默认可用；`localStorage["oryn.mock.coordinator"] = "down"` 时模拟不可用（版本钉不符），新建 Space 与助手对话回 409。
  * 预览只认 cron 的数字 / `*` / 区间 / 列表 / 步长（够 mock 用），时区按浏览器本地时间算。
@@ -180,7 +180,15 @@ function nextRuns(b: ScheduleInput, n = 5): number[] | string {
 			return (e as Error).message;
 		}
 	}
-	return "kind 须为 cron / every / once";
+	// manual：没有时间触发（只由手动或入站 Webhook 触发），不带任何时间字段
+	if (b.kind === "manual")
+		return b.cron !== undefined ||
+			b.every !== undefined ||
+			b.at !== undefined ||
+			b.endsAt !== undefined
+			? "manual 不得带 cron / every / at / endsAt"
+			: [];
+	return "kind 须为 cron / every / once / manual";
 }
 
 // ---------------------------------------------------------------- 状态
@@ -281,6 +289,8 @@ export class MockAutomation {
 				"invalid_schedule",
 				"handToAssistant 只用于 new_thread 模式",
 			);
+		if (mode === "thread" && b.kind === "manual")
+			return error(400, "invalid_schedule", "manual 只用于 new_thread 模式");
 		if (mode === "new_thread" && b.role?.trim() && b.model)
 			return error(400, "invalid_schedule", "role 与 model 只能给一个");
 		if (!b.prompt?.trim())
@@ -382,6 +392,8 @@ export class MockAutomation {
 			createdAt: existing?.createdAt ?? now,
 			updatedAt: now,
 			...(existing?.lastRun ? { lastRun: existing.lastRun } : {}),
+			// 入站 Webhook 单独管理（`PUT/DELETE schedules/{id}/webhook`），替换定义时保留
+			...(existing?.webhook ? { webhook: existing.webhook } : {}),
 			openRuns: existing?.openRuns ?? 0,
 			rev: existing ? existing.rev + 1 : 1,
 		};
@@ -402,6 +414,44 @@ export class MockAutomation {
 		this.runs.delete(s.id);
 		if (s.mode === "thread" && s.threadId) this.setThreadSummary(s.threadId);
 		this.deps.schedulesChanged(s.id);
+	}
+
+	/**
+	 * 入站 Webhook（M31）：`PUT` 没有时新建、`rotateKey` 换新密钥（都回一次性的完整地址 `url`），`secret` 省略 = 保留、
+	 * 空串 = 去掉签名；`DELETE` 幂等关闭。只用于 `new_thread`。Webhook 单独存放，不改定义版本 `rev`（同 orynd）。
+	 */
+	private webhook(s: Schedule, m: string, url: URL, b: Json): Response {
+		if (m === "DELETE") {
+			if (s.webhook) {
+				const { webhook: _, ...rest } = s;
+				this.save(rest);
+			}
+			return new Response(null, { status: 204 });
+		}
+		if (m !== "PUT") return error(405, "method_not_allowed", m);
+		if (s.mode !== "new_thread")
+			return error(400, "invalid_schedule", "Webhook 只用于 new_thread 定时");
+		const secret = typeof b.secret === "string" ? b.secret : undefined;
+		if (secret !== undefined && secret.length > 256)
+			return error(400, "invalid_request", "secret 至多 256 个字符");
+		const now = Date.now();
+		const cur = s.webhook;
+		const rotate = !cur || b.rotateKey === true;
+		const webhook: Schemas["ScheduleWebhook"] = {
+			hasSecret:
+				secret === undefined ? (cur?.hasSecret ?? false) : secret !== "",
+			createdAt: cur?.createdAt ?? now,
+			rotatedAt: rotate ? now : (cur?.rotatedAt ?? now),
+			...(cur?.lastCalledAt !== undefined
+				? { lastCalledAt: cur.lastCalledAt }
+				: {}),
+		};
+		this.save({ ...s, webhook });
+		const key = `owh_${crypto.randomUUID().replaceAll("-", "")}`;
+		return json({
+			webhook,
+			...(rotate ? { url: `${url.origin}/api/v1/public/hooks/${key}` } : {}),
+		});
 	}
 
 	/** 立即运行：`new_thread` 建一个运行线程（带 `scheduleRun`），`thread` 只记一条运行。 */
@@ -663,7 +713,8 @@ export class MockAutomation {
 			}
 			return json(cur);
 		}
-		const one = /^schedules\/([^/]+)(?:\/(pause|resume|run|runs))?$/.exec(p);
+		const one =
+			/^schedules\/([^/]+)(?:\/(pause|resume|run|runs|webhook))?$/.exec(p);
 		if (one) {
 			const cur = this.schedules.find((s) => s.id === one[1]);
 			if (!cur) return error(404, "schedule_not_found", "schedule");
@@ -673,6 +724,7 @@ export class MockAutomation {
 				return json({ runs: (this.runs.get(cur.id) ?? []).slice(0, limit) });
 			}
 			if (action === "run") return this.runNow(cur);
+			if (action === "webhook") return this.webhook(cur, m, url, await body());
 			if (action === "pause") {
 				const { nextRunAt: _, ...rest } = cur;
 				const next: Schedule = {
@@ -687,14 +739,18 @@ export class MockAutomation {
 			}
 			if (action === "resume") {
 				const at = nextRuns({ ...cur, prompt: cur.prompt });
-				if (typeof at === "string" || at.length === 0)
+				// manual 没有下次运行，恢复后照样只等手动或 Webhook 触发
+				if (
+					typeof at === "string" ||
+					(at.length === 0 && cur.kind !== "manual")
+				)
 					return error(400, "invalid_schedule", "已结束的定时不能恢复");
 				const { pausedReason: _, ...rest } = cur;
 				const next: Schedule = {
 					...rest,
 					enabled: true,
 					failures: 0,
-					nextRunAt: at[0],
+					...(at[0] !== undefined ? { nextRunAt: at[0] } : {}),
 					updatedAt: Date.now(),
 					rev: cur.rev + 1,
 				};

@@ -4,6 +4,7 @@
  * M9 审查修复：版本条件与冲突条（W1）、读取失败不落到新建表单（W2）、秒级间隔无损往返（W3）、
  * 能力未知时保留思考级别（W4）、绝对时间按浏览器本地时间标注（W5）。
  * 运行前闸门：编辑时带回并原样提交、关掉后不带 `gate`（PUT 整份替换）、新建时的主机下拉与必填。
+ * M31：「手动 / Webhook」触发方式、入站 Webhook 小节（一次性地址、换新地址、签名密钥、关闭）、Webhook 运行的请求展开。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -17,6 +18,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Schemas } from "../../api/client";
 import { scheduleKeys } from "../../api/schedule-queries";
+import { confirmStore, settleConfirm } from "../../lib/confirm";
 import {
 	threads as fixtureThreads,
 	M9_IDS,
@@ -802,5 +804,134 @@ describe("ScheduleDialog：运行前闸门", () => {
 		expect(
 			server.automation.schedules.find((s) => s.name === "local-gate")?.gate,
 		).toEqual({ command: "./check.sh", timeoutSeconds: 60 });
+	});
+});
+
+/** 等确认对话框弹出后确认。 */
+async function confirm() {
+	await waitFor(() => expect(confirmStore.getState().pending).not.toBeNull());
+	settleConfirm(true);
+}
+
+describe("ScheduleDialog：手动 / Webhook（M31）", () => {
+	it("线程内定时没有「手动 / Webhook」", async () => {
+		mount({ mode: "thread", threadId: M9_IDS.spaceIdle });
+		await ready();
+		expect(
+			within(dialog()).queryByRole("radio", { name: "手动 / Webhook" }),
+		).toBeNull();
+	});
+
+	it("新建 manual：隐藏时间字段与预览，请求体不带 cron / every / at / endsAt", async () => {
+		const core = projects[1]?.id ?? "";
+		const onClose = mount({ mode: "new_thread", projectId: core });
+		await ready();
+		fireEvent.click(
+			within(dialog()).getByRole("radio", { name: "手动 / Webhook" }),
+		);
+		expect(within(dialog()).getByTestId("schedule-manual-hint")).toBeVisible();
+		expect(within(dialog()).queryByTestId("schedule-preview")).toBeNull();
+		expect(within(dialog()).queryByLabelText(/截止时间/)).toBeNull();
+		expect(
+			within(dialog()).getByText("保存后可在这里开启入站 Webhook。"),
+		).toBeVisible();
+		fireEvent.change(field("名称"), { target: { value: "hook" } });
+		fireEvent.change(field("提示词"), { target: { value: "处理事件" } });
+		fireEvent.click(save());
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		const [post] = writes();
+		expect(post).toMatchObject({
+			method: "POST",
+			path: "/api/v1/schedules",
+			body: { mode: "new_thread", name: "hook", kind: "manual" },
+		});
+		for (const k of ["cron", "every", "at", "endsAt"])
+			expect(post?.body).not.toHaveProperty(k);
+		expect(
+			server.automation.schedules.find((s) => s.name === "hook"),
+		).toMatchObject({ kind: "manual", enabled: true });
+	});
+
+	it("开启后一次性显示完整地址；换新地址、设签名密钥、关闭都立即生效", async () => {
+		const id = M9_IDS.projectSchedule;
+		mount({ mode: "new_thread" }, id);
+		await ready();
+		const section = await within(dialog()).findByTestId("schedule-webhook");
+		fireEvent.click(
+			within(section).getByRole("button", { name: "开启 Webhook" }),
+		);
+		const box = await within(section).findByTestId("schedule-webhook-url");
+		expect(box).toHaveTextContent("/api/v1/public/hooks/owh_");
+		expect(box).toHaveTextContent("关闭后无法再次查看，丢失只能换新");
+		expect(within(box).getByTestId("schedule-webhook-copy")).toBeVisible();
+		const first = box.querySelector("code")?.textContent;
+		expect(writes().at(-1)).toMatchObject({
+			method: "PUT",
+			path: `/api/v1/schedules/${id}/webhook`,
+			body: {},
+		});
+		await waitFor(() => expect(section).toHaveTextContent("不要求签名"));
+		// 不随表单保存：定义版本不变
+		expect(stored(id).rev).toBe(1);
+
+		fireEvent.click(within(section).getByRole("button", { name: "换新地址" }));
+		await confirm();
+		await waitFor(() =>
+			expect(
+				within(section)
+					.getByTestId("schedule-webhook-url")
+					.querySelector("code")?.textContent,
+			).not.toBe(first),
+		);
+		expect(writes().at(-1)?.body).toEqual({ rotateKey: true });
+
+		fireEvent.click(
+			within(section).getByRole("button", { name: "设置签名密钥" }),
+		);
+		fireEvent.change(field("签名密钥"), { target: { value: "s3cret" } });
+		fireEvent.click(within(section).getByRole("button", { name: "保存密钥" }));
+		await waitFor(() => expect(section).not.toHaveTextContent("不要求签名"));
+		expect(section).toHaveTextContent("要求签名");
+		expect(
+			within(section).getByRole("button", { name: "去掉签名" }),
+		).toBeVisible();
+		expect(writes().at(-1)?.body).toEqual({ secret: "s3cret" });
+
+		fireEvent.click(within(section).getByRole("button", { name: "关闭" }));
+		await confirm();
+		await waitFor(() =>
+			expect(
+				within(section).getByRole("button", { name: "开启 Webhook" }),
+			).toBeVisible(),
+		);
+		expect(writes().at(-1)).toMatchObject({
+			method: "DELETE",
+			path: `/api/v1/schedules/${id}/webhook`,
+		});
+		expect(within(section).queryByTestId("schedule-webhook-url")).toBeNull();
+		expect(stored(id).webhook).toBeUndefined();
+	});
+
+	it("Webhook 运行：触发标签、github_agent_required 的人话、请求按纯文本展开", async () => {
+		mount({ mode: "new_thread" }, M9_IDS.webhookSchedule);
+		await ready();
+		const runs = await within(dialog()).findByTestId("schedule-runs");
+		expect(within(runs).getAllByText("Webhook")).toHaveLength(2);
+		expect(within(runs).getAllByText(/GitHub Agent 账号不可用/)).toHaveLength(
+			2,
+		);
+		expect(runs).not.toHaveTextContent("github_agent_required");
+		fireEvent.click(
+			within(runs).getAllByRole("button", {
+				name: "查看收到的请求",
+			})[0] as HTMLElement,
+		);
+		const payload = within(runs).getByTestId("schedule-run-payload");
+		expect(payload).toHaveTextContent("X-GitHub-Event: issues");
+		expect(payload).toHaveTextContent("source: github");
+		// JSON 缩进美化；HTML 原样显示为文本，不渲染、不生成链接
+		expect(payload.textContent).toContain('"action": "opened"');
+		expect(payload).toHaveTextContent("<script>alert(1)</script>");
+		expect(payload.querySelector("script, a")).toBeNull();
 	});
 });

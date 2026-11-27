@@ -5,6 +5,8 @@
  * - `new_thread` 专有：名称（必填）、项目（含「无项目」；`lockProject` 或编辑时只读——目标不可改）、对话对象（与首页同一个
  *   role 胶囊：cycleOrder 里的 role 或指定模型，以及思考级别）、orb 类型（不含 `@host`）、重叠策略、保留数（1–50）、
  *   「交给助手」（M19：运行结果进主线，完成时不单独通知）。
+ * - M31：`new_thread` 多一种触发方式「手动 / Webhook」（`kind = manual`：没有时间字段、不预览）；已保存的 `new_thread`
+ *   定时带入站 Webhook 小节（`ScheduleWebhook.tsx`，修改立即生效）；运行记录里 Webhook 运行可展开查看收到的请求。
  * - 运行前闸门（两种模式共用）：每次运行前执行一条命令，最后一行输出 `{"wakeAgent": false}` 时跳过本次运行。
  *   执行位置二选一：控制面本机的沙箱（缺省，不带 `host`）或 SSH 主机（带 `host`）。
  *   `PUT` 是整份替换：编辑时把现有闸门带回表单、保存时原样提交；关掉闸门则不带 `gate`（即去掉）。
@@ -89,6 +91,7 @@ import {
 	Toggle,
 	tabClass,
 } from "../ui/primitives";
+import { ScheduleWebhookSection, WebhookPayload } from "./ScheduleWebhook";
 
 export type ScheduleTarget =
 	| { mode: "thread"; threadId: string }
@@ -102,6 +105,8 @@ export type ScheduleTarget =
 	  };
 
 const KINDS: Schemas["ScheduleKind"][] = ["cron", "every", "once"];
+/** 「每次新建线程」多一种只由手动或入站 Webhook 触发的方式 */
+const NEW_THREAD_KINDS: Schemas["ScheduleKind"][] = [...KINDS, "manual"];
 const EVERY_UNITS: EveryUnit[] = ["s", "m", "h", "d"];
 const UNIT_LABEL = {
 	s: "schedule.unit.seconds",
@@ -239,7 +244,9 @@ function timing(s: FormState): ScheduleInput {
 			: {}),
 		...(s.kind === "once" ? { at: fromLocalInput(s.at) } : {}),
 		timezone: s.kind === "once" ? browserZone() : s.timezone,
-		...(endsAt !== undefined && s.kind !== "once" ? { endsAt } : {}),
+		...(endsAt !== undefined && s.kind !== "once" && s.kind !== "manual"
+			? { endsAt }
+			: {}),
 		prompt: "",
 	};
 }
@@ -368,6 +375,11 @@ const RUN_REASON = new Map<string, "schedule.runError.gate">([
 	["gate", "schedule.runError.gate"],
 ]);
 
+/** 有专门文案的失败（固定码）：标红显示人话，不显示码本身。同上用 Map。 */
+const RUN_FAILURE = new Map<string, "schedule.runError.githubAgentRequired">([
+	["github_agent_required", "schedule.runError.githubAgentRequired"],
+]);
+
 function RunRow({
 	run,
 	newThread,
@@ -383,6 +395,7 @@ function RunRow({
 		? parseTitleCard(thread.title).text || t("thread.untitled")
 		: run.threadId;
 	const reason = run.error ? RUN_REASON.get(run.error) : undefined;
+	const failure = run.error ? RUN_FAILURE.get(run.error) : undefined;
 	return (
 		<li
 			data-run={run.id}
@@ -415,9 +428,12 @@ function RunRow({
 			)}
 			{reason ? (
 				<span className="text-faint">{t(reason)}</span>
+			) : failure ? (
+				<span className="text-err">{t(failure)}</span>
 			) : (
 				run.error && <span className="break-words text-err">{run.error}</span>
 			)}
+			{run.payload && <WebhookPayload payload={run.payload} />}
 		</li>
 	);
 }
@@ -663,7 +679,8 @@ function ScheduleForm({
 		(target.mode === "new_thread" && target.lockProject);
 	const zone = browserZone();
 
-	// 防抖预览：只看时间字段，变化后 400ms 才请求，前一个在途请求作废
+	// 防抖预览：只看时间字段，变化后 400ms 才请求，前一个在途请求作废；「手动 / Webhook」没有时间触发，不预览
+	const manual = s.kind === "manual";
 	const timingKey = JSON.stringify(timing(s));
 	const [preview, setPreview] = useState<
 		{ next: number[] } | { error: unknown } | null
@@ -671,6 +688,7 @@ function ScheduleForm({
 	const seq = useRef(0);
 	useEffect(() => {
 		const id = ++seq.current;
+		if (manual) return;
 		const ctrl = new AbortController();
 		const timer = setTimeout(() => {
 			previewSchedule(JSON.parse(timingKey) as ScheduleInput, ctrl.signal).then(
@@ -687,7 +705,7 @@ function ScheduleForm({
 			clearTimeout(timer);
 			ctrl.abort();
 		};
-	}, [timingKey]);
+	}, [timingKey, manual]);
 
 	const executors = useMemo(() => {
 		const list = (providers.data?.providers ?? [])
@@ -916,7 +934,7 @@ function ScheduleForm({
 					aria-label={t("schedule.kindLabel")}
 					className="flex gap-1 self-start rounded-full bg-inset p-0.5"
 				>
-					{KINDS.map((k) => (
+					{(newThread ? NEW_THREAD_KINDS : KINDS).map((k) => (
 						// biome-ignore lint/a11y/useSemanticElements: 分段按钮（WAI-ARIA radio），原生 radio 画不出这种外观
 						<button
 							key={k}
@@ -988,7 +1006,12 @@ function ScheduleForm({
 						/>
 					</Field>
 				)}
-				{s.kind !== "once" && (
+				{manual && (
+					<p data-testid="schedule-manual-hint" className="text-faint text-xs">
+						{t("schedule.manualHint")}
+					</p>
+				)}
+				{s.kind !== "once" && !manual && (
 					// 「一次」是绝对时间，时区不参与解释，不给选择
 					<div className="grid gap-3 sm:grid-cols-2">
 						<Field label={t("schedule.timezone")}>
@@ -1013,30 +1036,32 @@ function ScheduleForm({
 						</Field>
 					</div>
 				)}
-				<div
-					data-testid="schedule-preview"
-					className="rounded-md bg-inset px-3 py-2 text-xs"
-				>
-					<div className="mb-1 font-medium text-muted">
-						{t("schedule.preview")}
-						<span className="font-normal text-faint">
-							{t("schedule.localTime", { zone })}
-						</span>
+				{!manual && (
+					<div
+						data-testid="schedule-preview"
+						className="rounded-md bg-inset px-3 py-2 text-xs"
+					>
+						<div className="mb-1 font-medium text-muted">
+							{t("schedule.preview")}
+							<span className="font-normal text-faint">
+								{t("schedule.localTime", { zone })}
+							</span>
+						</div>
+						{preview === null ? (
+							<Spinner size={12} />
+						) : "error" in preview ? (
+							<ErrorText error={preview.error} />
+						) : preview.next.length === 0 ? (
+							<span className="text-faint">{t("schedule.previewNone")}</span>
+						) : (
+							<ol className="flex flex-col gap-0.5 text-fg tabular-nums">
+								{preview.next.map((ms) => (
+									<li key={ms}>{formatDateTime(ms)}</li>
+								))}
+							</ol>
+						)}
 					</div>
-					{preview === null ? (
-						<Spinner size={12} />
-					) : "error" in preview ? (
-						<ErrorText error={preview.error} />
-					) : preview.next.length === 0 ? (
-						<span className="text-faint">{t("schedule.previewNone")}</span>
-					) : (
-						<ol className="flex flex-col gap-0.5 text-fg tabular-nums">
-							{preview.next.map((ms) => (
-								<li key={ms}>{formatDateTime(ms)}</li>
-							))}
-						</ol>
-					)}
-				</div>
+				)}
 				<Field
 					label={t("schedule.prompt")}
 					hint={
@@ -1227,6 +1252,14 @@ function ScheduleForm({
 						</div>
 					</>
 				)}
+				{newThread &&
+					(existing ? (
+						<ScheduleWebhookSection schedule={existing} />
+					) : (
+						<p className="text-faint text-xs">
+							{t("schedule.webhook.saveFirst")}
+						</p>
+					))}
 				{!nameTaken && !conflictError && <ErrorText error={saveError} />}
 				<ErrorText error={runNow.error ?? del.error} />
 				{existing && (

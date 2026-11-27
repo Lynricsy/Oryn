@@ -196,6 +196,8 @@ export const M9_IDS = {
 	failingSchedule: "sch_01JD0000000000000000SCH004",
 	/** 主线上的提醒（M19，主线可有多条，按名字区分） */
 	mainReminder: "sch_01JD0000000000000000SCH005",
+	/** 只由手动或入站 Webhook 触发的项目定时（M31，带 Webhook 与两次 Webhook 运行） */
+	webhookSchedule: "sch_01JD0000000000000000SCH006",
 } as const;
 
 /**
@@ -1199,6 +1201,49 @@ export const scheduleRuns: Record<string, Schemas["ScheduleRun"][]> = {
 			error: 'create thread: provider "nope" not found',
 		}),
 	),
+	// M31：Agent 账号没连上，Webhook 触发的运行一律失败（不回退到主人账号）
+	[M9_IDS.webhookSchedule]: [
+		run(M9_IDS.webhookSchedule, 2, {
+			scheduledFor: NOW - 25 * MIN,
+			trigger: "webhook",
+			status: "failed",
+			deliveredAt: undefined,
+			finishedAt: NOW - 25 * MIN + 900,
+			error: "github_agent_required",
+			payload: {
+				contentType: "application/json",
+				headers: {
+					"User-Agent": "GitHub-Hookshot/7d4f2c1",
+					"X-GitHub-Delivery": "5f1e9a20-cb3d-11ef-8a4e-3c2b9e0d4a17",
+					"X-GitHub-Event": "issues",
+				},
+				query: { source: "github" },
+				body: JSON.stringify({
+					action: "opened",
+					issue: {
+						number: 412,
+						title: "定时任务在夏令时切换当天触发两次",
+						body: "复现：把时区设成 America/New_York，cron 写 30 1 * * *。<script>alert(1)</script> 详见 https://example.com/log",
+						user: { login: "someone" },
+					},
+					repository: { full_name: "oryn/oryn-core" },
+				}),
+			},
+		}),
+		run(M9_IDS.webhookSchedule, 1, {
+			scheduledFor: NOW - 2 * HOUR,
+			trigger: "webhook",
+			status: "failed",
+			deliveredAt: undefined,
+			finishedAt: NOW - 2 * HOUR + 700,
+			error: "github_agent_required",
+			payload: {
+				contentType: "text/plain; charset=utf-8",
+				headers: { "User-Agent": "curl/8.11.1" },
+				body: "nightly build #2291 failed on linux-arm64",
+			},
+		}),
+	],
 };
 
 function schedule(
@@ -1289,6 +1334,23 @@ export const schedules: Schemas["Schedule"][] = [
 		enabled: false,
 		pausedReason: "failures",
 		failures: 3,
+	}),
+	schedule({
+		id: M9_IDS.webhookSchedule,
+		mode: "new_thread",
+		name: "issue-triage",
+		projectId: projects[1]?.id,
+		kind: "manual",
+		prompt:
+			"按收到的事件分诊：判断类别与优先级，需要澄清时在 issue 下提问，不要改代码。",
+		handToAssistant: true,
+		failures: 2,
+		webhook: {
+			hasSecret: true,
+			createdAt: NOW - 3 * 24 * HOUR,
+			rotatedAt: NOW - 3 * 24 * HOUR,
+			lastCalledAt: NOW - 25 * MIN,
+		},
 	}),
 	schedule({
 		id: M9_IDS.mainReminder,
