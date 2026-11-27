@@ -20,6 +20,7 @@ vi.mock("./realtime/socket", () => ({
 		onArtifactsChanged: vi.fn(() => () => undefined),
 		onArtifactConsent: vi.fn(() => () => undefined),
 		onArtifactWatchesChanged: vi.fn(() => () => undefined),
+		onSandboxesChanged: vi.fn(() => () => undefined),
 	},
 }));
 

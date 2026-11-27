@@ -49,7 +49,10 @@ describe("转为 artifact", () => {
 				const url = new URL(req.url);
 				if (url.pathname === "/f/report.xlsx") {
 					seen.push({ url });
-					return new Response("PK");
+					// Node 的 Response.blob() 返回 Node 的 Blob，jsdom 的 FormData 不认；换成 jsdom 的 Blob
+					const res = new Response("PK");
+					res.blob = async () => new Blob(["PK"]);
+					return res;
 				}
 				seen.push({ url, body: await req.text() });
 				return Response.json({ id: "art_X", title: "report" }, { status: 201 });
