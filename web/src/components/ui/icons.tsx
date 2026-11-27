@@ -178,6 +178,8 @@ import { Timer } from "@phosphor-icons/react/dist/csr/Timer";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 import { Tray } from "@phosphor-icons/react/dist/csr/Tray";
 import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
+import { TrendDown } from "@phosphor-icons/react/dist/csr/TrendDown";
+import { TrendUp } from "@phosphor-icons/react/dist/csr/TrendUp";
 import { UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
 import { User } from "@phosphor-icons/react/dist/csr/User";
 import { Vibrate } from "@phosphor-icons/react/dist/csr/Vibrate";
@@ -427,6 +429,9 @@ const ICONS = {
 	rotateCw: ArrowClockwise,
 	flipH: FlipHorizontal,
 	checkerboard: Checkerboard,
+	/** 视图读数块的趋势：上升、下降 */
+	trendUp: TrendUp,
+	trendDown: TrendDown,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

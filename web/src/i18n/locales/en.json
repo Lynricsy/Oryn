@@ -3751,6 +3751,11 @@
 		"reportIssue": {
 			"title": "Tool issue report"
 		},
+		"renderUi": {
+			"title": "View",
+			"invalid": "View not shown: its parameters failed validation",
+			"empty": "This view has nothing to show"
+		},
 		"memory": {
 			"score": "relevance {{n}}",
 			"noHits": "no hits",
@@ -7248,5 +7253,35 @@
 		"moveUp": "Move up",
 		"moveDown": "Move down",
 		"more": "More actions"
+	},
+	"view": {
+		"block": {
+			"chart": "Chart",
+			"chartFailed": "The chart couldn't load. Reload the page to retry.",
+			"svg": "Illustration",
+			"svgInvalid": "This SVG can't be shown safely",
+			"tableEmpty": "No data",
+			"progress": "Progress",
+			"yes": "Yes",
+			"no": "No",
+			"trend": {
+				"up": "Up",
+				"down": "Down",
+				"flat": "Flat"
+			}
+		},
+		"form": {
+			"submit": "Submit",
+			"submitting": "Submitting…",
+			"submitted": "Submitted",
+			"failed": "Couldn't submit: {{error}}",
+			"chosen": "Chose “{{label}}”",
+			"choose": "Choose…",
+			"required": "Required",
+			"errRequired": "This field is required",
+			"errNumber": "Enter a number",
+			"errMin": "Must be at least {{min}}",
+			"errMax": "Must be at most {{max}}"
+		}
 	}
 }

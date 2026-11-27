@@ -3751,6 +3751,11 @@
 		"reportIssue": {
 			"title": "工具问题报告"
 		},
+		"renderUi": {
+			"title": "视图",
+			"invalid": "视图没有显示：参数没有通过校验",
+			"empty": "视图里没有可显示的内容"
+		},
 		"memory": {
 			"score": "相关度 {{n}}",
 			"noHits": "无命中",
@@ -7248,5 +7253,35 @@
 		"moveUp": "上移",
 		"moveDown": "下移",
 		"more": "更多操作"
+	},
+	"view": {
+		"block": {
+			"chart": "图表",
+			"chartFailed": "图表没能加载，刷新页面后重试",
+			"svg": "插图",
+			"svgInvalid": "这段 SVG 无法安全显示",
+			"tableEmpty": "没有数据",
+			"progress": "进度",
+			"yes": "是",
+			"no": "否",
+			"trend": {
+				"up": "上升",
+				"down": "下降",
+				"flat": "持平"
+			}
+		},
+		"form": {
+			"submit": "提交",
+			"submitting": "正在提交…",
+			"submitted": "已提交",
+			"failed": "没有提交成功：{{error}}",
+			"chosen": "已选择「{{label}}」",
+			"choose": "请选择",
+			"required": "必填",
+			"errRequired": "请填写这一项",
+			"errNumber": "请输入数字",
+			"errMin": "不能小于 {{min}}",
+			"errMax": "不能大于 {{max}}"
+		}
 	}
 }

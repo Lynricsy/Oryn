@@ -7,7 +7,6 @@
  * - 独立可滚动内容区 + 固定底栏（进度读数、快捷键提交、清晰主次按钮）。
  */
 import {
-	type CSSProperties,
 	Fragment,
 	type ReactNode,
 	useEffect,
@@ -41,6 +40,7 @@ import {
 import { orbFileSource } from "../../lib/file-source";
 import { rasterMime } from "../../lib/image-src";
 import { keyed } from "../../lib/keys";
+import { SVG_THEME_VARS } from "../../lib/svg-theme";
 import type {
 	ExtensionUiRequestOf,
 	ExtensionUiResponse,
@@ -51,24 +51,6 @@ import { Icon } from "../ui/icons";
 import { Button, Select, TextArea, TextInput } from "../ui/primitives";
 
 type Answer = (response: ExtensionUiResponse) => void;
-
-/** 将 omp SVG 规范约定的主题变量映射到 Oryn 当前明暗/主题色令牌。 */
-const SVG_THEME_VARS = {
-	"--fg": "var(--text)",
-	"--muted": "var(--text-muted)",
-	"--border": "var(--line)",
-	"--surface": "var(--panel)",
-	"--accent": "var(--brand)",
-	"--success": "var(--good)",
-	"--warning": "var(--caution)",
-	"--error": "var(--bad)",
-	"--c1": "var(--viz-1)",
-	"--c2": "var(--viz-2)",
-	"--c3": "var(--viz-3)",
-	"--c4": "var(--viz-4)",
-	"--c5": "var(--viz-5)",
-	"--c6": "var(--viz-6)",
-} as CSSProperties;
 
 function getThreadOrbInfo(
 	threadId: string,
