@@ -9,7 +9,8 @@
  * 「完成」：文档加载过就先发 `Action_Save`（不结束编辑、未修改不保存、要回执），最多等 `OFFICE_SAVE_WAIT_MS`
  * 的 `Action_Save_Resp`：明确 `success: true` 才关闭会话（`DELETE`）、让 artifact 查询失效并回到查看器；
  * 回执是失败（含缺字段）时不关闭，编辑器留着并提示原因，「完成」可再试；等不到回执照常关闭并提示保存未确认。
- * 卸载时同样先发 `Action_Save` 后立即关闭：iframe 随之移除，引擎做一次退出保存，服务端在关闭宽限期内仍接受它。
+ * 卸载时同样先发 `Action_Save`，在下一个宏任务里关闭（StrictMode 的模拟卸载随即重新挂载，关闭被取消，会话照用）：
+ * iframe 随之移除，引擎做一次退出保存，服务端在关闭宽限期内仍接受它。
  * 自动保存只更新工作副本；显式保存、退出保存与会话过期时才由服务端落用户版本。
  */
 import { useQueryClient } from "@tanstack/react-query";
@@ -240,6 +241,10 @@ function LiveEditor({
 	const loadedRef = useRef(false);
 	// 会话已关闭（「完成」或卸载，只做一次）
 	const closedRef = useRef(false);
+	// 卸载清理排下的关闭：同一轮里又挂载回来（StrictMode 的模拟卸载）就取消，会话照用
+	const pendingCloseRef = useRef<number | null>(null);
+	// 表单只提交一次（StrictMode 下 effect 会重跑）
+	const submittedRef = useRef(false);
 	// 正在等 Action_Save_Resp：调用即结束等待
 	const saveWaitRef = useRef<((outcome: SaveOutcome) => void) | null>(null);
 	const frameName = `oryn-office-${session.sessionId}`;
@@ -287,11 +292,18 @@ function LiveEditor({
 
 	// 表单 POST 到引擎帧（令牌不进地址栏）
 	useEffect(() => {
+		if (submittedRef.current) return;
+		submittedRef.current = true;
 		formRef.current?.submit();
 	}, []);
 
-	// 布局阶段的清理在 iframe 移除之前运行：卸载时还能把 Action_Save 发进去
+	// 布局阶段的清理在 iframe 移除之前运行：卸载时还能把 Action_Save 发进去。
+	// 关闭会话推到下一个宏任务：StrictMode 的模拟卸载会在同一轮里重新挂载并取消它
 	useLayoutEffect(() => {
+		if (pendingCloseRef.current !== null) {
+			clearTimeout(pendingCloseRef.current);
+			pendingCloseRef.current = null;
+		}
 		const frame = frameRef.current;
 		const onMessage = (e: MessageEvent) => {
 			if (e.origin !== origin || !frame || e.source !== frame.contentWindow)
@@ -334,14 +346,19 @@ function LiveEditor({
 		return () => {
 			window.removeEventListener("message", onMessage);
 			clearInterval(beat);
-			saveWaitRef.current?.({ kind: "gone" });
 			if (closedRef.current) return;
-			closedRef.current = true;
 			if (loadedRef.current)
 				postToEngine(frame, origin, "Action_Save", SAVE_VALUES);
-			void closeArtifactOfficeSession(sessionId).then(() =>
-				qc.invalidateQueries({ queryKey: artifactQk.all }),
-			);
+			pendingCloseRef.current = window.setTimeout(() => {
+				pendingCloseRef.current = null;
+				// 真的卸载了：结束「完成」的等待，由这里关闭
+				saveWaitRef.current?.({ kind: "gone" });
+				if (closedRef.current) return;
+				closedRef.current = true;
+				void closeArtifactOfficeSession(sessionId).then(() =>
+					qc.invalidateQueries({ queryKey: artifactQk.all }),
+				);
+			}, 0);
 		};
 	}, [sessionId, origin, qc]);
 

@@ -1,7 +1,7 @@
 /**
  * OfficeEditor：建会话后把令牌以表单 POST 到引擎帧；只接受引擎源且发自编辑帧的消息；`Frame_Ready` 后回
  * `Host_PostmessageReady`；「完成」先发 `Action_Save` 再关闭会话（回执超时也关闭）；每 60 秒心跳；卸载时保存并关闭；
- * 打不开时显示错误并可返回。
+ * StrictMode 的模拟卸载不关闭正在用的会话；打不开时显示错误并可返回。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -11,6 +11,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../../i18n";
 import { dismissToast, toastsStore } from "../../state/toasts";
@@ -32,12 +33,15 @@ const TTL = 1_900_000_000_000;
 let log: string[];
 let openFails: boolean;
 let submits: HTMLFormElement[];
+// 建会话的次数：第一次回 SID，之后回 `${SID}<n>`
+let opens: number;
 
 beforeEach(() => {
 	vi.useFakeTimers({ shouldAdvanceTime: true });
 	log = [];
 	openFails = false;
 	submits = [];
+	opens = 0;
 	vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(function (
 		this: HTMLFormElement,
 	) {
@@ -58,9 +62,10 @@ beforeEach(() => {
 						{ code: "invalid", message: "这个类型不能编辑" },
 						{ status: 400 },
 					);
+				opens += 1;
 				return Response.json(
 					{
-						sessionId: SID,
+						sessionId: opens === 1 ? SID : `${SID}${opens}`,
 						actionUrl: ACTION,
 						accessToken: TOKEN,
 						accessTokenTtl: TTL,
@@ -334,6 +339,42 @@ describe("OfficeEditor", () => {
 		);
 		await act(() => vi.advanceTimersByTimeAsync(OFFICE_BEAT_MS * 2));
 		expect(log).toHaveLength(2);
+	});
+
+	it("StrictMode：模拟卸载不关闭正在用的会话，表单只提交一次，完成照常关闭", async () => {
+		const onClose = vi.fn();
+		const qc = new QueryClient();
+		render(
+			<StrictMode>
+				<QueryClientProvider client={qc}>
+					<OfficeEditor artifactId={ID} title="季度报告" onClose={onClose} />
+				</QueryClientProvider>
+			</StrictMode>,
+		);
+		const frame = (await screen.findByTestId(
+			"office-editor-frame",
+		)) as HTMLIFrameElement;
+		await act(() => vi.advanceTimersByTimeAsync(50));
+		// 建会话的 effect 跑了两次：第一次的会话作废关闭，编辑器用第二次的
+		const live = `${SID}2`;
+		const deletes = (sid: string) =>
+			log.filter((l) => l === `DELETE /api/v1/artifact-office-sessions/${sid}`)
+				.length;
+		expect(deletes(SID)).toBe(1);
+		expect(deletes(live)).toBe(0);
+		expect(submits).toHaveLength(1);
+
+		const win = frame.contentWindow as Window;
+		vi.spyOn(win, "postMessage").mockImplementation(() => undefined);
+		loadDocument(frame);
+		await act(() => vi.advanceTimersByTimeAsync(OFFICE_BEAT_MS));
+		expect(log).toContain(`POST /api/v1/artifact-office-sessions/${live}/beat`);
+		expect(deletes(live)).toBe(0);
+
+		fireEvent.click(screen.getByTestId("office-editor-done"));
+		fromEngine(frame.contentWindow, "Action_Save_Resp", { success: true });
+		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		expect(deletes(live)).toBe(1);
 	});
 
 	it("UI_Close 等同完成", async () => {
