@@ -6,6 +6,7 @@ import {
 	fitsViewMessage,
 	MAX_VIEW_PROMPT_CHARS,
 	parseViewParentMessage,
+	VIEW_FILL_HEIGHT,
 	VIEW_PROTOCOL_VERSION,
 	VIEW_THEME_VARS,
 	type ViewPageBody,
@@ -21,6 +22,11 @@ export interface ViewApi {
 }
 
 const PALETTE_VARS = ["--c1", "--c2", "--c3", "--c4", "--c5", "--c6"];
+
+/** 连续这么多次「内容随帧高等量变高」才认定为视口耦合（偶然的同步变高，如图片恰好在帧变高后加载完，不会连着出现）。 */
+const COUPLED_STEPS = 3;
+/** 认定耦合后，内容比视口高出这么多（px）才算真的多出了内容（容下 body 的内边距与小数取整）。 */
+const COUPLED_SLACK = 16;
 
 interface ChartLike {
 	defaults: {
@@ -166,11 +172,35 @@ export function install(win: Window, parent: Window, css: string): void {
 				(Number.parseFloat(cs.marginBottom) || 0),
 		);
 	};
+	// 视口耦合：页面用 100vh、height: 100% 之类布局时，内容高度跟着帧高走——按内容定高，帧每长一点内容又长一点，一路撑高。
+	// 连续 COUPLED_STEPS 次「帧变高多少、内容就跟着变高多少」认定为耦合：报一次 VIEW_FILL_HEIGHT（父页面按最小高度取大），
+	// 之后只在内容明显超出视口（不随视口变化的那部分内容变多了）时才继续上报。
+	let viewport = win.innerHeight;
+	let coupledSteps = 0;
+	let coupled = false;
 	let scheduled = false;
 	const report = () => {
 		scheduled = false;
+		if (channel === null) return;
 		const h = measure();
-		if (h === lastHeight || channel === null) return;
+		const v = win.innerHeight;
+		const grew = v - viewport;
+		viewport = v;
+		if (h === lastHeight) return;
+		if (coupled) {
+			// hello 之后（lastHeight 置 -1）照常报一次，父页面才有高度
+			if (lastHeight >= 0 && h <= v + COUPLED_SLACK) return;
+		} else if (lastHeight >= 0 && grew > 0 && h - lastHeight >= grew - 1) {
+			coupledSteps++;
+			if (coupledSteps >= COUPLED_STEPS) {
+				coupled = true;
+				lastHeight = Math.max(v, VIEW_FILL_HEIGHT);
+				send({ kind: "resize", height: lastHeight });
+				return;
+			}
+		} else {
+			coupledSteps = 0;
+		}
 		lastHeight = h;
 		send({ kind: "resize", height: h });
 	};
@@ -184,6 +214,7 @@ export function install(win: Window, parent: Window, css: string): void {
 			? new ResizeObserver(scheduleReport)
 			: null;
 	observer?.observe(root);
+	win.addEventListener("resize", scheduleReport);
 
 	// ---- 父页面消息 ----
 	win.addEventListener(

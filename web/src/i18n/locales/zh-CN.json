@@ -7290,7 +7290,6 @@
 	"view": {
 		"html": {
 			"label": "HTML 视图",
-			"loading": "正在准备视图…",
 			"failed": "视图没有加载出来。",
 			"unavailable": "这里无法显示这个视图。",
 			"retry": "重试",
@@ -7302,7 +7301,7 @@
 			"badge": "来自视图"
 		},
 		"state": {
-			"loading": "正在生成视图…",
+			"loading": "正在生成视图",
 			"failed": "视图没有显示：这次调用没有成功",
 			"awaiting": "agent 正在等你在这个视图里操作",
 			"offline": "连接已断开，作答没有发出"

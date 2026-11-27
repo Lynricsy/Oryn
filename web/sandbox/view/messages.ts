@@ -13,9 +13,14 @@ export const VIEW_CHANNEL_PATTERN = /^[0-9a-f]{16}$/;
 /** `prompt.text` 的长度上限（字符）。 */
 export const MAX_VIEW_PROMPT_CHARS = 4000;
 
-/** 帧高度的范围（px）：跟随内容时夹在这之间，超出的在帧内滚动。 */
+/** 帧的最小高度（px）。跟随内容时没有上限：帧一直长到装下全部内容，不在帧内滚动。 */
 export const VIEW_MIN_HEIGHT = 120;
-export const VIEW_MAX_HEIGHT = 1600;
+
+/**
+ * 页面高度随帧高变化（`100vh`、`height: 100%` 一类布局）时运行时给出的高度（px）：按内容定高会一路撑高，
+ * 运行时认出这种耦合后报一次这个高度，之后不再随视口变高（见 runtime.ts）。
+ */
+export const VIEW_FILL_HEIGHT = 480;
 
 /** 主题变量（与 Core 的 SVG 约定、svg-theme.ts 的映射同名）。父页面只发这些，运行时只认这些。 */
 export const VIEW_THEME_VARS = [

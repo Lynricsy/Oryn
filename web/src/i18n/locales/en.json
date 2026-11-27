@@ -7290,7 +7290,6 @@
 	"view": {
 		"html": {
 			"label": "HTML view",
-			"loading": "Preparing the view…",
 			"failed": "The view couldn't load.",
 			"unavailable": "This view can't be shown here.",
 			"retry": "Retry",
@@ -7302,7 +7301,7 @@
 			"badge": "From a view"
 		},
 		"state": {
-			"loading": "Building the view…",
+			"loading": "Building the view",
 			"failed": "The view wasn't shown: this call didn't succeed",
 			"awaiting": "The agent is waiting for your input in this view",
 			"offline": "Disconnected — your answer wasn't sent"

@@ -4,7 +4,8 @@
  * - `mount` 为假（参数流式中、尚未开始执行）时只显示骨架；为真后经 `openFrame` 申请帧（条目可能还没落库，失败时退避重试 3 次）。
  * - 首帧主题走 URL 片段（`#theme=…`），之后的主题变化经 `theme` 消息下发。
  * - 8 秒没收到 `ready` 就以 `fresh` 重新申请一次（orynd 重启或帧被淘汰），再失败显示可重试的错误态。
- * - 高度：`spec.height` 固定；否则跟随页面的 `resize`，夹在 120–1600 px，按 toolCallId 记住上次的高度，重新挂载时不跳动。
+ * - 高度：跟随页面的 `resize`，没有上限（帧长到装下全部内容，不在帧内滚动）；`spec.height` 是最小高度。按 toolCallId 记住上次的
+ *   内容高度，重新挂载时不跳动。页面随帧高变化（100vh 一类）时由运行时认出并停止撑高（见 sandbox/view/runtime.ts）。
  * - 回传：每次调用只收第一条 `prompt`；已作答（含在途）时一律忽略；不可回传期间暂存第一条，可回传时再交付。
  */
 import {
@@ -17,7 +18,6 @@ import {
 import { useTranslation } from "react-i18next";
 import {
 	encodeThemeFragment,
-	VIEW_MAX_HEIGHT,
 	VIEW_MIN_HEIGHT,
 	type ViewTheme,
 	type ViewThemeVar,
@@ -26,6 +26,7 @@ import { HTML_BLOCK, type ViewAnswer } from "../../lib/view/answer";
 import type { HtmlViewSpec } from "../../lib/view/spec";
 import { THEME_EVENT } from "../../state/theme";
 import { Button } from "../ui/primitives";
+import { ViewComposing } from "./ViewComposing";
 import { ViewLink } from "./view-link";
 
 export interface HtmlViewProps {
@@ -101,10 +102,12 @@ export function HtmlView({
 	onAnswer,
 }: HtmlViewProps): ReactNode {
 	const { t } = useTranslation();
-	const fixed = spec.height;
-	const [height, setHeight] = useState(
-		() => fixed ?? lastHeights.get(toolCallId) ?? INITIAL_HEIGHT,
+	const minHeight = spec.height ?? VIEW_MIN_HEIGHT;
+	// 页面上报的内容高度；显示高度再与最小高度取大
+	const [contentHeight, setContentHeight] = useState(
+		() => lastHeights.get(toolCallId) ?? INITIAL_HEIGHT,
 	);
+	const height = Math.max(minHeight, contentHeight);
 	const [src, setSrc] = useState<string | null>(null);
 	const [phase, setPhase] = useState<Phase>("opening");
 	// 每次递增都重新申请帧；fresh 表示这次要关掉旧帧重新申请
@@ -234,12 +237,9 @@ export function HtmlView({
 			navigated: () => setPhase("error"),
 			ready: () => setPhase("ready"),
 			resize: (h) => {
-				if (fixed !== undefined) return;
-				const clamped = Math.round(
-					Math.min(VIEW_MAX_HEIGHT, Math.max(VIEW_MIN_HEIGHT, h)),
-				);
-				lastHeights.set(toolCallId, clamped);
-				setHeight(clamped);
+				const next = Math.round(Math.max(VIEW_MIN_HEIGHT, h));
+				lastHeights.set(toolCallId, next);
+				setContentHeight(next);
 			},
 			prompt: onPrompt,
 		});
@@ -249,11 +249,7 @@ export function HtmlView({
 			window.removeEventListener(THEME_EVENT, onTheme);
 			link.dispose();
 		};
-	}, [src, reloadNonce, fixed, toolCallId, onPrompt]);
-
-	useEffect(() => {
-		if (fixed !== undefined) setHeight(fixed);
-	}, [fixed]);
+	}, [src, reloadNonce, toolCallId, onPrompt]);
 
 	const title = spec.title ? (
 		<h3 className="m-0 text-balance font-semibold text-base text-fg leading-6">
@@ -272,12 +268,8 @@ export function HtmlView({
 				className={shell}
 			>
 				{title}
-				<div
-					data-testid="html-view-skeleton"
-					className="flex animate-pulse items-center justify-center rounded-md bg-inset text-faint text-xs"
-					style={{ height }}
-				>
-					{t("view.html.loading")}
+				<div data-testid="html-view-skeleton">
+					<ViewComposing label={t("view.state.loading")} height={height} />
 				</div>
 			</section>
 		);

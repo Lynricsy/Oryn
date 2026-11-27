@@ -12,6 +12,7 @@ import { type ReactNode, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { HtmlView } from "../../components/view/HtmlView";
 import { UiView } from "../../components/view/UiView";
+import { ViewComposing } from "../../components/view/ViewComposing";
 import {
 	HTML_BLOCK,
 	isAnswerableCallId,
@@ -81,17 +82,23 @@ function ViewFailed({ p }: { p: ToolInlineProps }): ReactNode {
 	);
 }
 
-/** 参数还没流到第一个完整的块。 */
+/** 参数还没流到第一个完整的块：与成品同样的外壳，标题（先流到）照常显示，下面是生成中的占位。 */
 function ViewPending({ p }: { p: ToolInlineProps }): ReactNode {
 	const { t } = useTranslation();
+	const title = str((p.liveArgs ?? p.args).title)?.trim();
 	return (
 		<div
 			ref={p.rootRef}
 			data-testid="view-pending"
 			data-view-call={p.toolCallId}
-			className="h-16 animate-pulse rounded-lg border border-border bg-inset px-3 py-2 text-faint text-xs"
+			className="flex w-full min-w-0 max-w-[40rem] flex-col gap-3 rounded-lg border border-border p-4"
 		>
-			{t("view.state.loading")}
+			{title && (
+				<h3 className="m-0 text-balance font-semibold text-base text-fg leading-6">
+					{title}
+				</h3>
+			)}
+			<ViewComposing label={t("view.state.loading")} />
 		</div>
 	);
 }

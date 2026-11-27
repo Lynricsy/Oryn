@@ -74,7 +74,7 @@ describe("HtmlView", () => {
 		document.documentElement.style.removeProperty("--brand");
 	});
 
-	it("高度跟随 resize，夹在 120–1600；固定高度时不跟随", async () => {
+	it("高度跟随 resize、没有上限；spec.height 是最小高度", async () => {
 		const p = props();
 		const { rerender } = render(<HtmlView {...p} />);
 		const { frame, fromPage } = await frameOf();
@@ -83,11 +83,13 @@ describe("HtmlView", () => {
 		expect(box.style.height).toBe("120px");
 		fromPage({ kind: "resize", height: 480.4 });
 		expect(box.style.height).toBe("480px");
-		fromPage({ kind: "resize", height: 99_999 });
-		expect(box.style.height).toBe("1600px");
+		fromPage({ kind: "resize", height: 4_000 });
+		expect(box.style.height).toBe("4000px");
 		rerender(<HtmlView {...p} spec={{ libs: [], height: 300 }} />);
-		fromPage({ kind: "resize", height: 500 });
+		fromPage({ kind: "resize", height: 200 });
 		expect(box.style.height).toBe("300px");
+		fromPage({ kind: "resize", height: 900 });
+		expect(box.style.height).toBe("900px");
 	});
 
 	it("prompt 每次调用只交付第一条", async () => {

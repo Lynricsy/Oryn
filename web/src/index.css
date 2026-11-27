@@ -1535,6 +1535,39 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 }
 
 /*
+ * 视图生成中的占位（ViewComposing）：一道宽 45% 的主题色微光从容器左外侧扫到右外侧（translate 按自身宽度算，
+ * 终点 = 100% / 0.45）。只动 translate；减少动效时不扫，骨架与文字静止。
+ */
+.view-composing-sweep {
+	position: absolute;
+	inset-block: 0;
+	left: 0;
+	width: 45%;
+	pointer-events: none;
+	background: linear-gradient(
+		100deg,
+		transparent 20%,
+		color-mix(in oklab, var(--accent) 14%, transparent) 50%,
+		transparent 80%
+	);
+	mask-image: linear-gradient(transparent, #000 20%, #000 80%, transparent);
+	animation: view-composing-sweep 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes view-composing-sweep {
+	from {
+		translate: -100% 0;
+	}
+	to {
+		translate: 223% 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.view-composing-sweep {
+		display: none;
+	}
+}
+
+/*
  * 转录入场（谁播放由 components/transcript/entrance.ts 决定）：新到达的行与流式中新出现的块从下方 6px 淡入；
  * 主人的气泡从右下角轻轻放大。用独立的 translate / scale 属性，不碰虚拟行定位用的 transform。
  * 减少动效时由文末的全局规则压成 1ms。
