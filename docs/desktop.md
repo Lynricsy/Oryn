@@ -138,7 +138,7 @@ D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次
 
 ## 发版
 
-服务端、桌面与移动 App 一起发版：一个 tag、一个 Release，同时包含服务端二进制、三平台安装包、Android APK / AAB，并上传 iOS TestFlight。
+服务端、orb 镜像、桌面与移动 App 一起发版：一个 tag、一个 Release，同时包含服务端二进制、GHCR 上的 orb 镜像、三平台安装包、Android APK / AAB，并上传 iOS TestFlight。
 
 1. 修改 `web/src-tauri/Cargo.toml` 的 `version`。这是全产品版本号的唯一来源，`tauri.conf.json` 不写版本，服务端的版本号由 tag 注入。
 2. 提交并推送到 `main`。
@@ -147,12 +147,15 @@ D1（全部安装包）和 D11（两次签名的更新包）用的都是**一次
 `.github/workflows/release.yml` 依次执行：
 
 - 校验 tag，创建草稿 Release（标题 `Oryn <版本>`）。
-- 并行三路：
-  - `server`：在 Linux 上构建 Web UI 并交叉编译（静态链接），上传 `oryn-server_<版本>_linux-{x64,arm64}.tar.gz`（`orynd`、`orbd`、`oryn`、`gemini-rerank`）、`orbd_<版本>_darwin-arm64.tar.gz`（macOS Runner）与 `oryn-server_<版本>_SHA256SUMS`。二进制的版本号就是 tag（`orynd --version` 输出 `v<版本>`）。上传前用临时数据目录启动 linux-x64 的 `orynd`，确认 `/healthz` 的版本、首页与入口脚本来自内嵌的 Web UI（没嵌入前端时 orynd 也能编译，但只返回占位页）。orb 镜像不随版本发布，部署方 checkout 同一 tag 后 `make image`（见 [deploy.md](deploy.md) 第 1 节）。
+- 并行四路：
+  - `server`：在 Linux 上构建 Web UI 并交叉编译（静态链接），上传 `oryn-server_<版本>_linux-{x64,arm64}.tar.gz`（`orynd`、`orbd`、`oryn`、`gemini-rerank`、`oryn-push-gateway`，以及按 `core/source.json` 校验过的 `omp`）、`orbd_<版本>_darwin-arm64.tar.gz`（macOS Runner）与 `oryn-server_<版本>_SHA256SUMS`。二进制的版本号就是 tag（`orynd --version` 输出 `v<版本>`）。上传前用临时数据目录启动 linux-x64 的 `orynd`，确认 `/healthz` 的版本、首页与入口脚本来自内嵌的 Web UI（没嵌入前端时 orynd 也能编译，但只返回占位页），并核对包里 `omp` 的 sha256。
+  - 调用 `orb-image.yml`：amd64 与 arm64 各在原生 runner 上构建 orb 镜像并跑离线冒烟（确认没有内置微软官方 VS Code），推送后合成多架构的 `ghcr.io/<owner>/oryn-orb:<版本>` 与 `:<版本>-<UTC 日期>`。这个工作流每周一还会重建最近一个已发布 Release 的镜像，覆盖 `:<版本>`、另加新的日期标签，也可在 Actions 里手动指定 tag 重建。
   - 调用 `desktop.yml`：分别构建 Linux x64（Ubuntu 22.04）、Windows x64、macOS arm64、macOS x64（独立架构，不打 universal），原生架构跑 `--smoke`，把安装包上传到 Release。
   - 调用 `mobile.yml`：见 [mobile.md](mobile.md)「发版」。
-- 三路全部成功后，生成 `latest.json`（`web/scripts/updater-manifest.ts`），然后发布 Release。任一路失败时 Release 停在草稿，修好后在 Actions 里「Re-run failed jobs」续跑。
+- 四路全部成功后，生成 `latest.json`（`web/scripts/updater-manifest.ts`），然后发布 Release。任一路失败时 Release 停在草稿，修好后在 Actions 里「Re-run failed jobs」续跑。
 - 不是预发布时，用新的 `latest.json` 覆盖 `desktop-updater`，已安装的 App 随后会收到更新。
+
+GHCR 上第一次出现 `oryn-orb` 包时它是私有的，部署方匿名 `docker pull` 会被拒绝：在仓库主页右侧 Packages → `oryn-orb` → Package settings → Change visibility 改为 Public，只需做一次。
 
 PR 只要改动 `web/src-tauri/**`、`web/src/launcher/**`、`web/launcher.html` 或 `desktop.yml` 本身，就会跑一遍三平台构建和冒烟。构建产物作为 workflow artifacts 上传，不发布。
 

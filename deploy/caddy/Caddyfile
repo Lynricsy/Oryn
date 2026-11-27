@@ -1,0 +1,16 @@
+# Oryn 反代配置（Caddy 2）。把 oryn.example.com 换成实际域名，放到 /etc/caddy/Caddyfile 后 `systemctl reload caddy`。
+# Caddy 自动申请并续期证书（HTTP-01 / TLS-ALPN-01，需要公网能访问本机的 80 与 443），并把 80 跳转到 443。
+# 只覆盖主域名；Portal 泛域名（*.orb.example.com）要 DNS-01 通配证书，需带 DNS 插件的 Caddy，见 docs/deploy.md「Portal」。
+#
+# 与 deploy/openresty/oryn.conf 对应的要点：
+# - WebSocket（Web 客户端、orb link）：reverse_proxy 原生支持，不用额外配置。
+# - 不缓冲：flush_interval -1 让流式响应即时下发；请求体默认不缓冲，也没有大小上限（/git/ 推送与 LFS 上传需要）。
+# - 长连接：Caddy 默认没有读写超时，不会掐断长时间的 WebSocket 与长轮询。
+# - X-Real-IP：orynd 按它给公开入口（/api/v1/public/hooks/ 等）限流；Host、X-Forwarded-For / -Proto 由 Caddy 自动传递。
+# - 访问日志：不写 log 指令时 Caddy 不记访问日志，/wopi/ 查询串里的写令牌不会落盘；要开访问日志时排除 /wopi/。
+oryn.example.com {
+	reverse_proxy 127.0.0.1:7600 {
+		header_up X-Real-IP {remote_host}
+		flush_interval -1
+	}
+}

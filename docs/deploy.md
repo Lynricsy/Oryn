@@ -4,25 +4,38 @@
 
 ## 1. 安装二进制与镜像
 
-二进制有两种来源，二选一；orb 镜像不随版本发布，总要在同一版本的源码里构建：
+二进制与 orb 镜像按同一个版本号发布，下文的 `<版本>` 是 tag 去掉 `v` 的部分（如 `0.1.0-rc.12`）。二选一：
 
 ```bash
-git checkout v<版本>
-
-# 来源一：GitHub Release v<版本>（已嵌入 Web UI，静态链接；发版流程见 desktop.md「发版」）
+# 来源一：GitHub Release v<版本> 与 GHCR（二进制已嵌入 Web UI，静态链接；发版流程见 desktop.md「发版」）
 sha256sum -c --ignore-missing oryn-server_<版本>_SHA256SUMS
-tar -xzf oryn-server_<版本>_linux-x64.tar.gz      # 解出 orynd orbd oryn gemini-rerank；ARM64 用 linux-arm64
+tar -xzf oryn-server_<版本>_linux-x64.tar.gz      # 解出 orynd orbd oryn gemini-rerank oryn-push-gateway omp；ARM64 用 linux-arm64
 sudo install -m 0755 oryn-server_<版本>_linux-x64/{orynd,oryn} /usr/local/bin/
+docker pull ghcr.io/lynricsy/oryn-orb:<版本>     # 多架构，与二进制同版本
 
 # 来源二：从源码构建
+git checkout v<版本>
 make web                        # 构建 Web 客户端，复制到 internal/webui/dist 以便嵌入
 make build                      # 产出 bin/orynd bin/orbd bin/oryn（嵌入上一步的前端）
 sudo install -m 0755 bin/orynd bin/oryn /usr/local/bin/
-
-make image                      # 构建 orb 镜像 oryn-orb:dev（需要 build/core/x64/omp，见 scripts/fetch-core.sh）
+scripts/fetch-core.sh           # 按 core/source.json 下载并校验 omp 到 build/core/<架构>/omp
+make image                      # 构建 orb 镜像 oryn-orb:dev
 ```
 
-`oryn-orb:dev` 解压后约 10.2 GB（桌面应用约增加 1.1 GB，主要来自按微软更新 API 的 `sha256` 校验安装的官方 VS Code tarball），Docker 数据盘需预留相应空间；Firecracker 根盘（第 12 节 `make fc-artifacts`）按镜像实际用量自动定大小。镜像内置 `/usr/local/share/oryn/desktop-apps.json` 应用清单与 `desktop-icons/` 图标目录；不含该清单的自定义镜像在桌面任务栏里只有内置的 Chromium。
+GHCR 上的 `oryn-orb:<版本>` 每周重建一次，以跟进 Arch 的安全更新，同一个标签会指向新的构建；`<版本>-<UTC 日期>`（如 `0.1.0-rc.12-20261130`）建好后不再变动，要钉定或回滚时用它。重新 `docker pull` 之后新建的 orb 才用新镜像，provider 上的项目快照随之失效（第 10 节）。下文的配置示例用 `ghcr.io/lynricsy/oryn-orb:<版本>`；从源码构建时换成 `oryn-orb:dev`。
+
+#### 代码编辑器：VSCodium 与官方 VS Code
+
+orb 桌面任务栏里的代码编辑器默认是 [VSCodium](https://vscodium.com/)：VS Code 开源代码的 MIT 许可构建，扩展市场是 Open VSX。微软官方 VS Code 的许可不允许分享或发布，所以不进公开镜像。需要官方版时（例如要用 Pylance、C/C++、Remote 这类只能在官方版里用的微软扩展），在部署机上从仓库构建派生镜像，再把 provider 的 `docker.image` 指向它：
+
+```bash
+git checkout v<版本>
+BASE=ghcr.io/lynricsy/oryn-orb:<版本> make image-vscode   # 产出 oryn-orb:<版本>-vscode；不给 BASE 时取 oryn-orb:dev
+```
+
+派生镜像只换编辑器：`code` 改指 `/opt/vscode`，任务栏显示为 VS Code，VSCodium 仍以 `codium` 保留；构建后重跑同一份离线冒烟。产物只能留在本机，不要推送到任何公开仓库。底镜像更新后（每周重建或升级版本）要重新构建派生镜像。
+
+orb 镜像解压后约 9.9 GB，官方 VS Code 派生镜像在此之上再加约 1.1 GB，Docker 数据盘需预留相应空间；Firecracker 根盘（第 12 节 `make fc-artifacts`）按镜像实际用量自动定大小。镜像内置 `/usr/local/share/oryn/desktop-apps.json` 应用清单与 `desktop-icons/` 图标目录；不含该清单的自定义镜像在桌面任务栏里只有内置的 Chromium。
 
 创建服务用户与目录：
 
@@ -195,7 +208,7 @@ token_file: "/etc/oryn/provider.token"
 orb_url: "http://172.17.0.1:7600"    # 注入 orb 的 ORYN_URL = docker0 地址 + orynd 的第二个 listen
 driver: docker
 docker:
-  image: "oryn-orb:dev"
+  image: "ghcr.io/lynricsy/oryn-orb:<版本>"   # 从源码构建时为 oryn-orb:dev；官方 VS Code 派生镜像为 oryn-orb:<版本>-vscode
   types: { small: {cpus: 2, memory: "4g"}, medium: {cpus: 4, memory: "8g"}, large: {cpus: 8, memory: "16g"} }
   default_type: medium
 ```
@@ -283,9 +296,9 @@ docker 驱动默认给每个 orb 加 `--cap-drop NET_RAW --cap-drop NET_ADMIN`�
 ### 桌面浏览器沙箱（M8）
 
 - docker 驱动给新容器加 `--security-opt seccomp=<orb-seccomp.json>`（`internal/providerrt/orb-seccomp.json`）：moby 默认配置末尾追加一条规则，放行 `clone` / `unshare` 建 user namespace，供 Chromium 自己的沙箱使用（mount、setns、clone3 仍按默认只给有 CAP_SYS_ADMIN 的进程）。`extra_run_args` 里自带 `seccomp` 选项时不追加。代价是 orb 内进程能建 user namespace，内核暴露面略增，与 Chrome 官方推荐的容器配置相同。
-- orbd 启动时探测能否建 user namespace：能则 Chromium 与 VS Code 带沙箱运行；不能（升级前建的旧容器、dispatch 驱动的机器）都退回 `--no-sandbox`（Chromium 保留警告条）。新建的 orb 才有沙箱。
+- orbd 启动时探测能否建 user namespace：能则 Chromium 与代码编辑器带沙箱运行；不能（升级前建的旧容器、dispatch 驱动的机器）都退回 `--no-sandbox`（Chromium 保留警告条）。新建的 orb 才有沙箱。
 - 镜像里的受管策略 `/etc/chromium/policies/managed/oryn.json`（root 所有，不随 Profile 传播）禁止安装扩展、代理固定直连，防止被注入的 agent 往共享 Profile 里植入扩展或代理。
-- Chromium 与 VS Code 随镜像发布，**要定期重建 orb 镜像**（`make image`）以跟进安全更新；已存在的 orb 用的仍是旧镜像。
+- Chromium 与代码编辑器随镜像发布，**要定期更新 orb 镜像**以跟进安全更新：用 GHCR 镜像时定期重新 `docker pull` 同一标签（每周重建），从源码构建时重跑 `make image`，用官方 VS Code 派生镜像时随后重跑 `make image-vscode`。已存在的 orb 用的仍是旧镜像。
 
 ### 网络隔离
 
@@ -399,11 +412,10 @@ Space 协调者与全局助手的 agent 不跑在 orb 里，而是跑在控制�
 
 ### 安装 omp
 
-协调宿主用的 omp 与 orb 镜像是同一份发布产物（`scripts/fetch-core.sh` 按 `core/source.json` 校验后放在 `build/core/<arch>/omp`）：
+协调宿主用的 omp 与 orb 镜像里的是同一份产物，版本钉在 `core/source.json`。Release 的 Linux 包里已附带（第 1 节解出的 `omp`）；从源码构建时用 `scripts/fetch-core.sh` 下载，它按 `core/source.json` 校验后放在 `build/core/<arch>/omp`：
 
 ```bash
-scripts/fetch-core.sh x64
-sudo install -D -m 0755 build/core/x64/omp /usr/local/lib/oryn/omp
+sudo install -D -m 0755 oryn-server_<版本>_linux-x64/omp /usr/local/lib/oryn/omp   # 从源码构建时为 build/core/x64/omp
 ```
 
 不放 `/usr/local/bin`，免得与宿主上你自己用的 `omp` 互相遮蔽。orynd 启动时与每次拉起协调宿主前都会核对它的 sha256 与编进 orynd 的 `core/source.json` 是否一致；不一致时协调功能不可用，原因写在日志与 `GET /api/v1/coordinator` 里（`omp at … does not match core/source.json`），普通线程不受影响。本地改过 Core、确实要用自己的构建时，设 `coordinator.verify_omp: false`。

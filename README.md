@@ -115,7 +115,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
   <img alt="线程右面板的桌面页签：左侧对话里有 desktop_record 开始与停止的工具卡，右侧远程桌面里终端窗口叠在 VS Code 之上，画面下方居中一条任务栏，依次为 Chromium、终端、VS Code、文件管理器、文本编辑器与 LibreOffice。" src="docs/assets/desktop-dock-light.png" width="100%">
 </picture>
 
-画面下方的任务栏内置 Chromium、终端、VS Code、文件管理器、文本编辑器与 LibreOffice；Agent 可直接读取窗口无障碍树、按 `.oryn/desktop/resume` 自启动桌面环境，并用 `desktop_record` 把操作录成视频放进对话。
+画面下方的任务栏内置 Chromium、终端、代码编辑器（VSCodium，部署方可换成官方 VS Code）、文件管理器、文本编辑器与 LibreOffice；Agent 可直接读取窗口无障碍树、按 `.oryn/desktop/resume` 自启动桌面环境，并用 `desktop_record` 把操作录成视频放进对话。
 
 远程桌面的底色与外面的面板同色（浅色 `--panel`），两者只靠一圈细边框分隔；窗口用 orbd 自带的扁平 openbox 主题 Oryn：浅色标题栏与 GTK 应用的菜单栏连成一块，1px 细外框，标题居中，只留最大化与关闭按钮。已有的 orb 需升级并重启 orbd 后才换上新底色与标题栏。
 
@@ -420,6 +420,7 @@ oryn sandbox ls && oryn sandbox rm $id                       # 列出本机的�
 | 文档 | 内容 |
 |---|---|
 | [`docs/features.md`](docs/features.md) | 每项能力的完整行为、边界与约束 |
+| [`docs/deploy-agent.md`](docs/deploy-agent.md) | 给 AI agent 的代部署手册：只问用户必要的信息，其余自行探测、逐步验证，最后交付给用户 |
 | [`docs/deploy.md`](docs/deploy.md) | 生产部署：反代、Portal 证书、网络隔离、协调沙箱、快照与预热池、Sysbox、Runner、Firecracker、Hindsight、SSH 网关；[第 16 节](docs/deploy.md#16-developserverus-本机生产实例)是本机生产实例的入口与维护方式 |
 | [`docs/desktop.md`](docs/desktop.md) | 桌面客户端：安装、配对、窗口与标题栏、托盘、快捷键、自动更新、App 图标；服务端、桌面与移动 App 的统一发版（`v*`） |
 | [`docs/mobile.md`](docs/mobile.md) | 移动客户端：Android 双包、扫码配对、推送与省电、发版；[附录 A](docs/mobile.md#附录-aios) 是 iOS |
