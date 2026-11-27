@@ -172,6 +172,14 @@ func (h *Host) servePublic(w http.ResponseWriter, r *http.Request, slug, root, p
 	}
 	defer rc.Close()
 	w.Header().Set("Content-Type", file.Mime)
+	if wantsDownload(r) {
+		a, err := h.s.Get(ctx, pub.ArtifactID)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		setDownload(w, a, path)
+	}
 	if !IsHTML(path) {
 		http.ServeContent(w, r, "", time.Time{}, rc)
 		return
@@ -189,7 +197,7 @@ func (h *Host) servePublic(w http.ResponseWriter, r *http.Request, slug, root, p
 	}
 }
 
-// publicRoot 返回发布根上生成的页面：类型化 artifact 是查看器页（没有页面运行时，查看器只读显示），
+// publicRoot 返回发布根上生成的页面：类型化 artifact 是查看器页（没有页面运行时，查看器只读显示并提供下载原件），
 // 没有自己的 index.html 的画布是概览页；其余 ok 为假（根照常取 index.html）。
 func (h *Host) publicRoot(r *http.Request, a Artifact, version int, root string) ([]byte, bool, error) {
 	if a.Type != "" {
@@ -197,9 +205,9 @@ func (h *Host) publicRoot(r *http.Request, a Artifact, version int, root string)
 		if err != nil {
 			return nil, false, err
 		}
-		return viewerPage(viewerConfig{
-			Type: a.Type, Format: v.Format, Version: v.Version, Head: v.Version, Entry: a.Entry(), Root: root,
-		}), true, nil
+		c := newViewerConfig(a, v, root)
+		c.Head, c.Standalone = v.Version, true
+		return viewerPage(c), true, nil
 	}
 	return h.s.overviewFor(r.Context(), a, version, "")
 }

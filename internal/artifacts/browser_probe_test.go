@@ -8,6 +8,7 @@ package artifacts
 // 页面自己的地址，Chromium 却放行——服务端单测与 Chromium 冒烟都看不出来，Safari 与 macOS / iOS App 里查看器读不到入口文件。
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -34,6 +35,16 @@ type browserProbeTarget struct {
 	URL   string `json:"url"`
 	Want  string `json:"want"`
 	Image bool   `json:"image"`
+	// Shot 为真时探针脚本把页面截图存到 .dev/m31-office/probe/（人工核对 Office 样本的清单项）。
+	Shot bool `json:"shot,omitempty"`
+}
+
+// officeSamples 是 web/sandbox/viewers/testdata/office/ 下的样本（web/scripts/office-fixtures.py 生成）与它们的类型。
+var officeSamples = []struct{ file, typ string }{
+	{"sample.docx", TypeDocx},
+	{"sample.xlsx", TypeXlsx},
+	{"sample.pptx", TypePptx},
+	{"sample.pdf", TypePDF},
 }
 
 // probePNG 是能真正解码的 1×1 红色 PNG（pngBytes 只有文件头，浏览器解码不出来、naturalWidth 为 0）。
@@ -74,6 +85,25 @@ func TestArtifactBrowserProbeServer(t *testing.T) {
 	pub, err := e.s.Publish(ctx, web.ID, PublishParams{Access: AccessPublic})
 	require.NoError(t, err)
 
+	// Office 查看器：四个样本各开一个帧（zh-CN，渲染完成后页面里出现「已渲染」）；Word 另发布一次，看独占窗口的发布页
+	var office []browserProbeTarget
+	var docxID string
+	for _, s := range officeSamples {
+		data, err := os.ReadFile("../../web/sandbox/viewers/testdata/office/" + s.file)
+		require.NoError(t, err, "先 uv run web/scripts/office-fixtures.py")
+		a, err := e.s.Create(ctx, CreateParams{Title: "样本 " + s.typ, Type: s.typ, Files: []FileChange{{Path: TypeEntry(s.typ), Data: bytes.NewReader(data)}}})
+		require.NoError(t, err)
+		_, u, err := h.OpenFrame(ctx, a.ID, 0, "", "zh-CN")
+		require.NoError(t, err)
+		office = append(office, browserProbeTarget{Name: s.typ + " 查看器（帧）", URL: u, Want: "已渲染", Shot: true})
+		if s.typ == TypeDocx {
+			docxID = a.ID
+		}
+	}
+	docxPub, err := e.s.Publish(ctx, docxID, PublishParams{Access: AccessPublic})
+	require.NoError(t, err)
+	office = append(office, browserProbeTarget{Name: "docx 发布页", URL: base.ArtifactURL('p', docxPub.Slug), Want: "Rendered", Shot: true})
+
 	done := make(chan struct{})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__probe_done", func(w http.ResponseWriter, _ *http.Request) {
@@ -89,11 +119,11 @@ func TestArtifactBrowserProbeServer(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 
 	targets := browserProbeTargets{
-		Targets: []browserProbeTarget{
+		Targets: append([]browserProbeTarget{
 			{Name: "文档查看器（帧）", URL: docURL, Want: "DOC_PROBE_OK", Image: true},
 			{Name: "网页 artifact（帧）", URL: webURL, Want: "PAGE_PROBE_OK", Image: true},
 			{Name: "发布页", URL: base.ArtifactURL('p', pub.Slug), Want: "PAGE_PROBE_OK", Image: true},
-		},
+		}, office...),
 		Done: origin + "/__probe_done",
 	}
 	b, err := json.Marshal(targets)

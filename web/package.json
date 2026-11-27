@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "VITE_MOCK=1 vite",
-    "build": "tsc -b && vite build && vite build -c vite.sandbox.config.ts && vite build -c vite.sandbox.config.ts --mode overview && vite build -c vite.sandbox.config.ts --mode viewer-document && vite build -c vite.sandbox.config.ts --mode viewer-slides && vite build -c vite.sandbox.config.ts --mode beacon && vite build -c vite.sandbox.config.ts --mode probe",
+    "build": "tsc -b && vite build && vite build -c vite.sandbox.config.ts && vite build -c vite.sandbox.config.ts --mode overview && vite build -c vite.sandbox.config.ts --mode viewer-document && vite build -c vite.sandbox.config.ts --mode viewer-slides && vite build -c vite.sandbox.config.ts --mode viewer-docx && vite build -c vite.sandbox.config.ts --mode viewer-xlsx && vite build -c vite.sandbox.config.ts --mode viewer-pptx && vite build -c vite.sandbox.config.ts --mode viewer-pdf && vite build -c vite.sandbox.config.ts --mode beacon && vite build -c vite.sandbox.config.ts --mode probe",
     "build:launcher": "tsc -b && vite build --mode launcher",
     "preview": "vite preview",
     "check": "biome check . && tsc --noEmit",
@@ -61,6 +61,7 @@
     "@lezer/highlight": "^1.2.5",
     "@novnc/novnc": "1.7.0",
     "@phosphor-icons/react": "^2.1.10",
+    "@silurus/ooxml": "0.90.2",
     "@simplewebauthn/browser": "^14.0.0",
     "@tanstack/react-query": "^5.107.1",
     "@tanstack/react-virtual": "^3.14.26",

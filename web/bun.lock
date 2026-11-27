@@ -18,6 +18,7 @@
         "@lezer/highlight": "^1.2.5",
         "@novnc/novnc": "1.7.0",
         "@phosphor-icons/react": "^2.1.10",
+        "@silurus/ooxml": "0.90.2",
         "@simplewebauthn/browser": "^14.0.0",
         "@tanstack/react-query": "^5.107.1",
         "@tanstack/react-virtual": "^3.14.26",
@@ -335,6 +336,8 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.19", "", { "os": "win32", "cpu": "x64" }, "sha512-y/sqRRc6d7hECzOFc5n3LSeqctmIp9mMjY1Kq4s14uLPd/LZ4z7i1zrW6fMtp2mPeuQIC4e6ULMcwQzMomqQag=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.1.0", "", {}, "sha512-K+NU2HDCEem4sClgHH4ZZXwdJeNFkJo+hRk479DIwdIviAPN2hFJH1KHHwg8CxHQXvi0M5XY4deTXINfIiSG6w=="],
+
+    "@silurus/ooxml": ["@silurus/ooxml@0.90.2", "", {}, "sha512-rZL7ilRLRPemzVhKa3wbZN2LcU97/xzroY89EfZKVj0zUlEUPd6DOt6MvzS0Zp7437dii0QAfM8b8dr+VS6klA=="],
 
     "@simplewebauthn/browser": ["@simplewebauthn/browser@14.0.0", "", {}, "sha512-1odWVqeEBTl7lJ9zMKLEsmTlnyrDO5iRcTvfMKKk1WThUnp/i8JJdffdj2icP+tty159s4PgwE3BiMoEW9NFow=="],
 

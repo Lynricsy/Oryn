@@ -119,7 +119,7 @@ func TestHostWildcard(t *testing.T) {
 	assert.Contains(t, body, `var s="<\/script>";`, "运行时里的 </script 被转义")
 	m := configRe.FindStringSubmatch(body)
 	require.NotNil(t, m, body)
-	assert.Regexp(t, `^\{"v":1,"mark":"[a-z0-9]{8}","path":"index.html","root":"/","runtime":true\}$`, m[1])
+	assert.Regexp(t, `^\{"v":1,"mark":"[a-z0-9]{8}","path":"index.html","root":"/","runtime":true,"viewer":false\}$`, m[1])
 	assert.Less(t, strings.Index(body, "<script>"), strings.Index(body, "<title"), "运行时在页面自己的内容之前")
 	assert.Greater(t, strings.Index(body, "<script>"), strings.Index(body, "<head"))
 

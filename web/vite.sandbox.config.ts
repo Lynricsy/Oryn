@@ -27,12 +27,16 @@ const iife: Record<string, { entry: string; name: string; file: string }> = {
 	},
 };
 
-// 类型化 artifact 的查看器：ES module，自带 React，输出 `sandbox/viewers/<名字>.{js,css}`（orynd 只认这四个名字）。
-// 每个查看器单独构建一次（`--mode viewer-document` / `--mode viewer-slides`）：多入口同构建会把 React
-// 拆进带哈希的公共分块，服务端不提供它。
+// 类型化 artifact 的查看器：ES module，自带 React，输出 `sandbox/viewers/<名字>.{js,css}`（orynd 只认 viewerAssets
+// 里的名字）。每个查看器单独构建一次（`--mode viewer-<名字>`）：多入口同构建会把 React 拆进带哈希的公共分块，
+// 服务端不提供它。Office 查看器不打包 `@silurus/ooxml`：运行时从 `_oryn/viewer/ooxml/` 动态 import。
 const viewers: Record<string, string> = {
 	"viewer-document": "document",
 	"viewer-slides": "slides",
+	"viewer-docx": "docx",
+	"viewer-xlsx": "xlsx",
+	"viewer-pptx": "pptx",
+	"viewer-pdf": "pdf",
 };
 
 export default defineConfig(({ mode }) => {

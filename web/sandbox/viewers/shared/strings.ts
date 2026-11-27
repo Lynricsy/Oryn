@@ -1,5 +1,6 @@
 // 查看器界面的两套文案（zh-CN / en）。查看器在沙箱里运行，不走应用的 i18n。
 
+import type { OfficeStrings } from "../../../src/lib/artifacts/office/types";
 import type { DeckIssue, DeckProblem } from "../../../src/lib/artifacts/slides";
 import type { ViewerLocale } from "./config";
 
@@ -26,6 +27,9 @@ export interface ViewerStrings {
 	slideLabel(n: number): string;
 	badDeck: string;
 	problem(p: DeckProblem): string;
+	/** 下载原件（发布页与顶层帧右上角）。 */
+	download: string;
+	office: OfficeStrings;
 }
 
 const ZH_ISSUES: Record<DeckIssue, (limit?: number) => string> = {
@@ -85,6 +89,27 @@ const ZH: ViewerStrings = {
 	slideLabel: (n) => `第 ${n} 张`,
 	badDeck: "这份幻灯片的格式有问题，无法显示：",
 	problem: (p) => `${p.where || "slides.json"}：${ZH_ISSUES[p.issue](p.limit)}`,
+	download: "下载原件",
+	office: {
+		loading: "正在加载…",
+		tooLarge: "文件过大，无法预览",
+		failed: (reason) => `无法显示这个文件：${reason}`,
+		rendered: (n) => `已渲染 ${n} 页`,
+		pageFailed: (n) => `第 ${n} 页无法显示`,
+		tooManyPages: "页数过多，无法打印",
+		sheetNoPrint: "表格不支持打印视图",
+		pageLabel: (n) => `第 ${n} 页`,
+		slideLabel: (n) => `第 ${n} 张`,
+		pageNumber: "页码",
+		zoomIn: "放大",
+		zoomOut: "缩小",
+		fitWidth: "适应宽度",
+		present: "演示",
+		exitHint: "按 Esc 退出",
+		prev: "上一张",
+		next: "下一张",
+		counter: (n, total) => `${n} / ${total}`,
+	},
 };
 
 const EN: ViewerStrings = {
@@ -110,6 +135,27 @@ const EN: ViewerStrings = {
 	slideLabel: (n) => `Slide ${n}`,
 	badDeck: "This deck has format problems and can't be shown:",
 	problem: (p) => `${p.where || "slides.json"}: ${EN_ISSUES[p.issue](p.limit)}`,
+	download: "Download original",
+	office: {
+		loading: "Loading…",
+		tooLarge: "This file is too large to preview",
+		failed: (reason) => `Couldn't display this file: ${reason}`,
+		rendered: (n) => `Rendered ${n} ${n === 1 ? "page" : "pages"}`,
+		pageFailed: (n) => `Page ${n} couldn't be displayed`,
+		tooManyPages: "Too many pages to print",
+		sheetNoPrint: "Spreadsheets have no print view",
+		pageLabel: (n) => `Page ${n}`,
+		slideLabel: (n) => `Slide ${n}`,
+		pageNumber: "Page number",
+		zoomIn: "Zoom in",
+		zoomOut: "Zoom out",
+		fitWidth: "Fit width",
+		present: "Present",
+		exitHint: "Press Esc to exit",
+		prev: "Previous slide",
+		next: "Next slide",
+		counter: (n, total) => `${n} / ${total}`,
+	},
 };
 
 export function viewerStrings(locale: ViewerLocale): ViewerStrings {

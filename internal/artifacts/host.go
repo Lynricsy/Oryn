@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/attachments"
 	"github.com/Lynricsy/Oryn/internal/portalhost"
 	"github.com/Lynricsy/Oryn/internal/webui"
 )
@@ -182,6 +183,9 @@ func (h *Host) serve(w http.ResponseWriter, r *http.Request, token, root, p stri
 	}
 	defer rc.Close()
 	w.Header().Set("Content-Type", file.Mime)
+	if wantsDownload(r) {
+		setDownload(w, a, path)
+	}
 	if !IsHTML(path) {
 		http.ServeContent(w, r, "", time.Time{}, rc)
 		return
@@ -239,19 +243,20 @@ func atFrameRoot(p string) bool {
 	return rel == ""
 }
 
-// serveViewer 提供类型化 artifact 的查看器页（版本 version，当前 head）。非顶层帧注入页面运行时（查看器经它的
-// `oryn.use("content")` 读写入口文件）；顶层帧没有运行时，查看器只读显示。
+// serveViewer 提供类型化 artifact 的查看器页（版本 version，当前 head）。非顶层帧注入页面运行时（文本类型的查看器
+// 经它的 `oryn.use("content")` 读写入口文件，评论模式经它的查看器桥点选与画图钉）；顶层帧没有运行时，查看器只读显示，
+// 并自己提供下载原件。
 func (h *Host) serveViewer(w http.ResponseWriter, r *http.Request, f frame, a Artifact, root string, version, head int) {
 	v, err := h.s.Version(r.Context(), a.ID, version)
 	if err != nil {
 		h.fail(w, err)
 		return
 	}
-	page := viewerPage(viewerConfig{
-		Type: a.Type, Format: v.Format, Version: v.Version, Head: head, Entry: a.Entry(), Locale: f.locale, Root: root,
-	})
+	c := newViewerConfig(a, v, root)
+	c.Head, c.Locale, c.Standalone = head, f.locale, f.topLevel
+	page := viewerPage(c)
 	if !f.topLevel {
-		page = injectRuntime(page, runtimeConfig{V: 1, Path: a.Entry(), Root: root, Runtime: f.runtime}, h.runtimeJS)
+		page = injectRuntime(page, runtimeConfig{V: 1, Path: a.Entry(), Root: root, Runtime: f.runtime, Viewer: true}, h.runtimeJS)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Length", strconv.Itoa(len(page)))
@@ -261,8 +266,25 @@ func (h *Host) serveViewer(w http.ResponseWriter, r *http.Request, f frame, a Ar
 	}
 }
 
-// serveViewerAsset 提供查看器的构建产物（只认 viewerAssets 里的名字；没构建 Web 时 404）。
+// 查看器在运行时按需加载的第三方资源（嵌入的 Web 构建产物里原样发布的文件，见 web/vite.config.ts 的 officeAssets
+// 与 pdfjsAssets）：`_oryn/viewer/ooxml/<路径>` 是 `@silurus/ooxml` 的 ESM 产物、解析器 wasm 与渲染 worker，
+// `_oryn/viewer/pdfjs/<路径>` 是 pdf.js 的 worker、CMap、标准字体等。
+const (
+	viewerOOXMLPrefix = "ooxml/"
+	viewerPDFJSPrefix = "pdfjs/"
+)
+
+// serveViewerAsset 提供查看器的构建产物（viewerAssets 里的名字，以及 ooxml/ 与 pdfjs/ 下的第三方资源；
+// 没构建 Web 时 404）。
 func (h *Host) serveViewerAsset(w http.ResponseWriter, r *http.Request, name string) {
+	if rel, ok := strings.CutPrefix(name, viewerOOXMLPrefix); ok {
+		h.serveVendorAsset(w, r, "office/ooxml/", rel)
+		return
+	}
+	if rel, ok := strings.CutPrefix(name, viewerPDFJSPrefix); ok {
+		h.serveVendorAsset(w, r, "pdfjs/", rel)
+		return
+	}
 	ct, ok := viewerAssets[name]
 	if !ok {
 		frameError(w, http.StatusNotFound, "文件不存在")
@@ -275,6 +297,38 @@ func (h *Host) serveViewerAsset(w http.ResponseWriter, r *http.Request, name str
 	}
 	w.Header().Set("Content-Type", ct)
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
+}
+
+// serveVendorAsset 提供嵌入产物里 dir 目录下的文件 rel（先过 PathProblem，拒绝穿越与保留路径）；
+// Content-Type 按扩展名（.js、.mjs、.wasm 等），不认识的回 application/octet-stream。
+func (h *Host) serveVendorAsset(w http.ResponseWriter, r *http.Request, dir, rel string) {
+	if PathProblem(rel) != "" {
+		frameError(w, http.StatusNotFound, "文件不存在")
+		return
+	}
+	b, ok := h.asset(dir + rel)
+	if !ok {
+		frameError(w, http.StatusNotFound, "查看器资源不存在（Web 没有构建）")
+		return
+	}
+	w.Header().Set("Content-Type", MimeOf(rel))
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
+}
+
+// downloadQuery 是查看器「下载原件」的查询参数：帧与发布页上二进制类型的入口文件带 `?download=1` 时回 attachment。
+// 不透明源里 `<a download>` 不可靠（浏览器可以忽略它，PDF 会直接导航打开），由响应头决定是下载。
+const downloadQuery = "download"
+
+func wantsDownload(r *http.Request) bool { return r.URL.Query().Get(downloadQuery) == "1" }
+
+// setDownload 在 artifact 是二进制类型且 path 是入口文件时设 `Content-Disposition: attachment`，文件名是标题加扩展名
+// （清洗同 REST 导出）。内容照常由 http.ServeContent 从内容存储流式输出（支持 Range）；nosniff 由 setFrameHeaders 设。
+func setDownload(w http.ResponseWriter, a Artifact, path string) {
+	if !IsBinaryType(a.Type) || path != a.Entry() {
+		return
+	}
+	name := strings.ReplaceAll(a.Title, "/", "_") + OfficeExt(a.Type)
+	w.Header().Set("Content-Disposition", attachments.Disposition(attachments.SafeName(name)))
 }
 
 // framePath 把帧根之内的路径解析成 artifact 里的文件路径与版本：以 / 结尾补 index.html；

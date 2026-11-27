@@ -1,0 +1,33 @@
+/* Office 查看器页的外框：普通视图与缩略图铺满窗口，打印视图随内容排开；顶层帧与发布页右上角是下载原件。 */
+
+html,
+body,
+#root {
+	height: 100%;
+}
+
+.oryn-office {
+	position: relative;
+	height: 100%;
+}
+
+html:has(.oryn-office-print),
+html:has(.oryn-office-print) body,
+html:has(.oryn-office-print) #root,
+.oryn-office-print {
+	height: auto;
+}
+
+/* 工具条右侧给下载按钮让位 */
+.oryn-office-standalone .oryn-o-toolbar {
+	padding-right: 150px;
+}
+
+.oryn-office-download {
+	position: absolute;
+	top: 6px;
+	right: 12px;
+	z-index: 10;
+	text-decoration: none;
+	box-shadow: var(--oryn-shadow);
+}

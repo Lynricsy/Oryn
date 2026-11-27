@@ -24,13 +24,15 @@ import (
 const runtimeAsset = "sandbox/runtime.js"
 
 // runtimeConfig 是注入页面的 `__orynStart(<配置>)` 的参数。Root 是帧根（以 / 结尾），运行时端点在
-// `<root>_oryn/v1`。
+// `<root>_oryn/v1`。Viewer 为真表示这是类型化 artifact 的查看器页：运行时不装元素选择，改装查看器桥
+// （`window.__orynViewer`，评论锚点的点选、图钉与定位）。
 type runtimeConfig struct {
 	V       int    `json:"v"`
 	Mark    string `json:"mark"`
 	Path    string `json:"path"`
 	Root    string `json:"root"`
 	Runtime bool   `json:"runtime"`
+	Viewer  bool   `json:"viewer"`
 }
 
 const markAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -85,31 +87,61 @@ func injectRuntime(page []byte, cfg runtimeConfig, runtimeJS []byte) []byte {
 }
 
 // viewerAssets 是类型化 artifact 查看器的构建产物（在嵌入的 Web 构建产物的 sandbox/viewers/ 下），
-// 帧根下经 `_oryn/viewer/<名字>` 提供；值是 Content-Type。
+// 帧根下经 `_oryn/viewer/<名字>` 提供；值是 Content-Type。名字是 TypeSpec.Viewer 加扩展名。
 var viewerAssets = map[string]string{
 	"document.js":  "text/javascript; charset=utf-8",
 	"document.css": "text/css; charset=utf-8",
 	"slides.js":    "text/javascript; charset=utf-8",
 	"slides.css":   "text/css; charset=utf-8",
+	"docx.js":      "text/javascript; charset=utf-8",
+	"docx.css":     "text/css; charset=utf-8",
+	"xlsx.js":      "text/javascript; charset=utf-8",
+	"xlsx.css":     "text/css; charset=utf-8",
+	"pptx.js":      "text/javascript; charset=utf-8",
+	"pptx.css":     "text/css; charset=utf-8",
+	"pdf.js":       "text/javascript; charset=utf-8",
+	"pdf.css":      "text/css; charset=utf-8",
 }
 
 // viewerConfig 是查看器页里 `<script type="application/json" id="oryn-viewer">` 的内容。Entry 是相对路径：
 // 查看器按页面地址解析它与 images/，所以读到的是页面所在的那个版本。Root 是帧根（运行时端点与查看器资源都在它下面）。
+// Viewer 是查看器 bundle 名（TypeSpec.Viewer）；Size 是入口文件的字节数，只对二进制类型给出（版本里只有入口
+// 这一个文件，就是版本大小；文本类型为 0，查看器不用）；Standalone 在顶层帧与发布页为真（查看器独占窗口，
+// 自己提供下载原件），渲染模式与内嵌帧为假。
 type viewerConfig struct {
-	Type    string `json:"type"`
-	Format  int    `json:"format"`
-	Version int    `json:"version"`
-	Head    int    `json:"head"`
-	Entry   string `json:"entry"`
-	Locale  string `json:"locale,omitempty"`
-	Root    string `json:"root"`
+	Type       string `json:"type"`
+	Viewer     string `json:"viewer"`
+	Format     int    `json:"format"`
+	Version    int    `json:"version"`
+	Head       int    `json:"head"`
+	Entry      string `json:"entry"`
+	Size       int64  `json:"size"`
+	Title      string `json:"title"`
+	Standalone bool   `json:"standalone,omitempty"`
+	Locale     string `json:"locale,omitempty"`
+	Root       string `json:"root"`
+}
+
+// newViewerConfig 返回 artifact a 的版本 v 的查看器配置；Head 取 a 的最新版本，Locale 与 Standalone 由调用方填。
+func newViewerConfig(a Artifact, v Version, root string) viewerConfig {
+	c := viewerConfig{
+		Type: a.Type, Viewer: a.Type, Format: v.Format, Version: v.Version, Head: a.Version, Entry: a.Entry(),
+		Title: a.Title, Root: root,
+	}
+	if spec, ok := LookupType(a.Type); ok && spec.Viewer != "" {
+		c.Viewer = spec.Viewer
+	}
+	if IsBinaryType(a.Type) {
+		c.Size = v.Size
+	}
+	return c
 }
 
 // viewerPage 生成类型化 artifact 的查看器页：样式、配置、模块脚本与挂载点 #root。查看器资源从
-// `<root>_oryn/viewer/<type>.{css,js}` 加载；`?view=thumbnail|print` 留在页面地址里由查看器自己读取。
+// `<root>_oryn/viewer/<viewer>.{css,js}` 加载；`?view=thumbnail|print` 留在页面地址里由查看器自己读取。
 func viewerPage(c viewerConfig) []byte {
 	data, _ := json.Marshal(c) // < > & 被转义，配置里不可能出现 </script>
-	asset := html.EscapeString(c.Root + ReservedPrefix + "/viewer/" + c.Type)
+	asset := html.EscapeString(c.Root + ReservedPrefix + "/viewer/" + c.Viewer)
 	var b bytes.Buffer
 	b.WriteString("<!doctype html>\n<html")
 	if c.Locale != "" {
@@ -189,7 +221,7 @@ func (h *Host) ServeRender(w http.ResponseWriter, r *http.Request, t render.Targ
 				h.fail(w, err)
 				return
 			}
-			page := viewerPage(viewerConfig{Type: a.Type, Format: v.Format, Version: v.Version, Head: a.Version, Entry: a.Entry(), Root: t.Self})
+			page := viewerPage(newViewerConfig(a, v, t.Self))
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(page))
 			return

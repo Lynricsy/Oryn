@@ -202,8 +202,13 @@ func thumbJob(a Artifact, version int) render.Job {
 	return j
 }
 
+// previewable 报告某个版本能否预览（出缩略图）：二进制类型超过 MaxPreviewBytes 的不做帧内预览。
+func previewable(typ string, size int64) bool {
+	return !IsBinaryType(typ) || size <= MaxPreviewBytes
+}
+
 // ensureThumb 确保某个版本有缩略图：已有直接返回；同一 files_key 的并发请求合并成一次渲染。
-// 回收站里的 artifact 不渲染。完成后通知列表重取。
+// 回收站里的 artifact 与不能预览的版本（previewable）不渲染。完成后通知列表重取。
 func (s *Service) ensureThumb(ctx context.Context, id string, version int) error {
 	a, err := s.Get(ctx, id)
 	if err != nil {
@@ -215,6 +220,9 @@ func (s *Service) ensureThumb(ctx context.Context, id string, version int) error
 	v, err := s.Version(ctx, id, version)
 	if err != nil {
 		return err
+	}
+	if !previewable(a.Type, v.Size) {
+		return nil
 	}
 	key := v.FilesKey
 	if _, err := os.Stat(s.thumbPath(key)); err == nil {
@@ -341,6 +349,7 @@ func evictThumbs(dir string, limit int) {
 
 // Thumbnail 返回某个版本（0 = 最新）的缩略图文件路径与它实际属于的版本：请求的版本还没有时回最近一个有缩略图的
 // 更早版本（卡片宁可稍旧也不要空），都没有回 no_thumbnail。请求的版本没有缩略图且渲染可用时把它补入队。
+// 请求的版本不能预览（previewable）时直接回 no_thumbnail、不入队：更早版本的图画的是别的内容。
 func (s *Service) Thumbnail(ctx context.Context, id string, version int) (path string, served int, err error) {
 	a, err := s.Get(ctx, id)
 	if err != nil {
@@ -361,6 +370,9 @@ func (s *Service) Thumbnail(ctx context.Context, id string, version int) (path s
 		if v.Version > want {
 			continue
 		}
+		if v.Version == want && !previewable(a.Type, v.Size) {
+			return "", 0, opErr(CodeNoThumbnail, "artifact %s 的版本 %d 超过 %d MiB，不出缩略图。", id, want, MaxPreviewBytes>>20)
+		}
 		p := s.thumbPath(v.FilesKey)
 		if _, err := os.Stat(p); err != nil {
 			continue
@@ -374,8 +386,11 @@ func (s *Service) Thumbnail(ctx context.Context, id string, version int) (path s
 	return "", 0, opErr(CodeNoThumbnail, "artifact %s 的版本 %d 还没有缩略图。", id, want)
 }
 
-// missedThumb 在接口未命中时补入队（渲染不可用或在回收站里时不入队）。
+// missedThumb 在接口未命中时补入队（渲染不可用、在回收站里、或最新版本不能预览而要的正是它时不入队）。
 func (s *Service) missedThumb(a Artifact, version int) {
+	if version == a.Version && !previewable(a.Type, a.Size) {
+		return
+	}
 	if !a.Deleted() && s.renderReady() {
 		s.enqueueThumb(a.ID, version)
 	}

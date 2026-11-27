@@ -74,6 +74,75 @@ function pdfjsAssets(): Plugin {
 	};
 }
 
+// Office 预览（src/lib/artifacts/office/）运行时从 `/office/ooxml/` 动态 import `@silurus/ooxml` 原样的 ESM 产物：
+// 入口、分块、解析器 wasm 与 `assets/` 下的渲染 worker，库里按 `import.meta.url` 解析的相对地址因此都落在同一目录。
+// pdf.js 的 worker 另发到 `/pdfjs/pdf.worker.min.mjs`（预览组件按 OfficeAssets.pdfjs 拼地址）。
+// 同一批文件也嵌进 orynd，供 artifact 帧经 `_oryn/viewer/ooxml/`、`_oryn/viewer/pdfjs/` 取用（internal/artifacts/host.go）。
+const OOXML_ROOT = fileURLToPath(
+	new URL("./node_modules/@silurus/ooxml/dist/", import.meta.url),
+);
+const OOXML_FILE = /^(?:assets\/)?[A-Za-z0-9_][A-Za-z0-9._-]*\.(?:m?js|wasm)$/;
+const PDFJS_WORKER = fileURLToPath(
+	new URL(
+		"./node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+		import.meta.url,
+	),
+);
+
+/** 要发布的 `@silurus/ooxml` 文件（相对 dist/ 的路径）。 */
+function ooxmlFiles(): string[] {
+	const files: string[] = [];
+	for (const dir of ["", "assets/"]) {
+		if (!existsSync(`${OOXML_ROOT}${dir}`)) continue;
+		for (const name of readdirSync(`${OOXML_ROOT}${dir}`)) {
+			const rel = `${dir}${name}`;
+			if (OOXML_FILE.test(rel) && statSync(`${OOXML_ROOT}${rel}`).isFile())
+				files.push(rel);
+		}
+	}
+	return files;
+}
+
+function officeAssets(): Plugin {
+	return {
+		name: "oryn-office-assets",
+		configureServer(server) {
+			server.middlewares.use((req, res, next) => {
+				const url = (req.url ?? "").replace(/[?#].*$/, "");
+				let full: string | null = null;
+				if (url === "/pdfjs/pdf.worker.min.mjs") full = PDFJS_WORKER;
+				else if (url.startsWith("/office/ooxml/")) {
+					const rel = url.slice("/office/ooxml/".length);
+					// 只认单层文件名与 assets/ 下的文件名，拒绝 `..` 与编码过的分隔符（防目录穿越）
+					if (OOXML_FILE.test(rel)) full = `${OOXML_ROOT}${rel}`;
+				}
+				if (!full || !existsSync(full) || !statSync(full).isFile())
+					return next();
+				res.setHeader(
+					"Content-Type",
+					full.endsWith(".wasm")
+						? "application/wasm"
+						: "text/javascript; charset=utf-8",
+				);
+				res.end(readFileSync(full));
+			});
+		},
+		generateBundle() {
+			for (const rel of ooxmlFiles())
+				this.emitFile({
+					type: "asset",
+					fileName: `office/ooxml/${rel}`,
+					source: readFileSync(`${OOXML_ROOT}${rel}`),
+				});
+			this.emitFile({
+				type: "asset",
+				fileName: "pdfjs/pdf.worker.min.mjs",
+				source: readFileSync(PDFJS_WORKER),
+			});
+		},
+	};
+}
+
 // 开发时把 API、健康检查、portal 授权端点（`/portal/auth`）、公开文件（`/f/…`）与分享的 Markdown 导出（`/s/<slug>.md`）
 // 转发到本机 orynd（dev/orynd.yaml 监听 127.0.0.1:7600）；分享页 `/s/<slug>` 本身由 vite 提供
 const orynd = "http://127.0.0.1:7600";
@@ -83,8 +152,8 @@ export default defineConfig(({ mode }) => ({
 	plugins: [
 		react(),
 		tailwindcss(),
-		// 桌面壳连接页不含文件预览，不带 pdf.js 资源
-		...(mode === "launcher" ? [] : [pdfjsAssets()]),
+		// 桌面壳连接页不含文件预览，不带 pdf.js 与 Office 预览资源
+		...(mode === "launcher" ? [] : [pdfjsAssets(), officeAssets()]),
 	],
 	build:
 		mode === "launcher"

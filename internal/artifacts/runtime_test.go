@@ -68,12 +68,12 @@ func TestHostViewerPage(t *testing.T) {
 	assert.Contains(t, body, `<script type="module" src="/_oryn/viewer/document.js"></script>`)
 	assert.Contains(t, body, `<div id="root"></div>`)
 	assert.Equal(t, map[string]any{
-		"type": "document", "format": float64(1), "version": float64(1), "head": float64(1),
-		"entry": "document.md", "locale": "zh-CN", "root": "/",
+		"type": "document", "viewer": "document", "format": float64(1), "version": float64(1), "head": float64(1),
+		"entry": "document.md", "size": float64(0), "title": "文档", "locale": "zh-CN", "root": "/",
 	}, viewerConfigOf(t, body))
 	m := configRe.FindStringSubmatch(body)
 	require.NotNil(t, m, "查看器页注入运行时")
-	assert.Contains(t, m[1], `"root":"/","runtime":true`)
+	assert.Contains(t, m[1], `"root":"/","runtime":true,"viewer":true`)
 	assert.Less(t, strings.Index(body, "__orynStart"), strings.Index(body, `type="module"`))
 
 	// 入口文件与图片照常从同一版本取
