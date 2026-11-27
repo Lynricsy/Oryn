@@ -19,7 +19,10 @@
 //     在连接建立时按实际连接的 IP 只放行公网地址（AllowHosts 例外）；没有 Web 时一律 403；
 //   - MCP 路由（/mcp/<key>/…，M19）转发到主人配置的 MCP 服务器：丢掉入站的 Authorization 后注入路由的请求头，
 //     凭据类请求头的值从响应里抹掉；持后台研究凭据（M26）的请求只能到达开放给研究的路由，且 JSON-RPC 请求逐个
-//     经工具白名单过滤（web.go 的 mcpResearchFilter）。
+//     经工具白名单过滤（web.go 的 mcpResearchFilter）；
+//   - AI 数据同意（App Store 5.1.2(i)，internal/aiconsent）：模型路由的上游与正向代理的公网目标是第三方 AI 接收方，
+//     转发之前经 Resolver.AIConsent 现查主人的同意，没有同意回 403 `ai_consent_required`，一个字节也不发往上游；
+//     上游在本机或内网（aiconsent.IsLocalHost）的不需要同意。
 package egress
 
 import (
@@ -40,6 +43,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/lfs"
 	"github.com/Lynricsy/Oryn/internal/memory"
 )
@@ -47,6 +51,9 @@ import (
 // Route 是一条模型路由：上游前缀与允许在该路由上使用的密钥 id。
 type Route struct {
 	Origin string `json:"origin"`
+	// Provider 是路由所属的 models.yml provider 键（模型条目自带 baseUrl 的路由键是 `<key>.m<i>`，provider 仍是 key）；
+	// 与上游主机一起决定 AI 数据同意的接收方 id（aiconsent.ModelRecipient）。为空时按路由键算。
+	Provider string `json:"provider,omitempty"`
 	// SecretIDs 是路由所属 provider 自己的 apiKey 密钥：hosts 为空时不限主机（只绑定在它自己的路由上），
 	// 非空时须与上游主机匹配。
 	SecretIDs []string `json:"secretIds"`
@@ -150,6 +157,15 @@ type Resolver interface {
 	MemoryLookup
 	// HostedGitLookup 是托管仓库通道（M24 阶段 ③）。
 	HostedGitLookup
+	// ConsentLookup 是 AI 数据同意（App Store 5.1.2(i)）。
+	ConsentLookup
+}
+
+// ConsentLookup 判定主人是否已同意把数据发给第三方 AI 接收方。
+type ConsentLookup interface {
+	// AIConsent 返回 nil 表示放行；否则是拒绝原因（*aiconsent.DeniedError），请求不转发。recipient 是 aiconsent 的接收方 id
+	// （模型路由为 aiconsent.ModelRecipient，正向代理为 aiconsent.WebRecipientID）。
+	AIConsent(recipient string) error
 }
 
 // MemoryLookup 提供 `/memory/t/<threadId>/…` 的处理器与可信调用方身份（M16）。
@@ -192,6 +208,8 @@ type Handler struct {
 	lfsTickets map[string]lfsTicket
 	// now 为 nil 时用 time.Now（只有测试赋值）。
 	now func() time.Time
+	// transport 为 nil 时用 http.DefaultTransport（只有测试赋值：把非本机主机名的上游拨到测试服务器）。
+	transport http.RoundTripper
 }
 
 // NewHandler 构造代理。
@@ -237,6 +255,8 @@ type target struct {
 	// hostedProject 非空时是托管仓库请求（M24 阶段 ③）：不转发，交给 Resolver.HostedGit 在本地服务；hostedEndpoint 是
 	// 相对 <repo>.git/ 的端点。
 	hostedProject, hostedEndpoint string
+	// consent 非空时是被 AI 数据同意拒绝的接收方 id（resolve 回 403）。
+	consent string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +279,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	t, status := h.resolve(r)
 	if status != http.StatusOK {
+		if t.consent != "" {
+			writeConsentDenied(w, t.consent)
+			return
+		}
 		msg := "oryn egress: 未知或不允许的路由"
 		switch {
 		case t.deny != "":
@@ -300,6 +324,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		secretsUsed = append(secretsUsed, [2]string{v, "oryn-redacted"})
 	}
 	p := &httputil.ReverseProxy{
+		Transport:     h.transport,
 		FlushInterval: -1, // SSE 逐块立即 flush
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = t.url.Scheme
@@ -445,6 +470,12 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		if err != nil || u.Host == "" {
 			return target{}, http.StatusNotFound
 		}
+		// AI 数据同意：在占位符替换与转发之前判定，拒绝时一个字节也不发往上游
+		if id, third := aiconsent.ModelRecipient(cmp.Or(rt.Provider, parts[1]), u.Hostname()); third {
+			if err := h.R.AIConsent(id); err != nil {
+				return target{consent: id}, http.StatusForbidden
+			}
+		}
 		u.Path = rest
 		return target{url: u, own: rt.SecretIDs, hostBound: rt.HostBoundIDs}, http.StatusOK
 	case "git":
@@ -523,6 +554,22 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 		}, http.StatusOK
 	}
 	return target{}, http.StatusNotFound
+}
+
+// writeConsentDenied 回模型路由的同意拒绝：403 JSON，同时带 Anthropic（type / error.type）与 OpenAI（error.code）
+// 认得的字段，omp 与 Hindsight 的 SDK 都能把 message 原样显示给主人或 agent。
+func writeConsentDenied(w http.ResponseWriter, recipient string) {
+	body, _ := json.Marshal(map[string]any{
+		"type": "error",
+		"error": map[string]string{
+			"type": aiconsent.Code, "code": aiconsent.Code, "recipient": recipient,
+			"message": (&aiconsent.DeniedError{Recipient: recipient}).Error(),
+		},
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write(body)
 }
 
 // denyProxyNotGit 是代理形式请求不是 git 端点、也没有有效门票时的拒绝原因。

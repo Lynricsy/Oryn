@@ -9,15 +9,18 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 )
 
 const (
 	recallTokens = 8192
-	// partialNote、noDirectNote、unrankedNote 是结果里的标注。
+	// partialNote、noDirectNote、unrankedNote、unconsentedNote 是结果里的标注。
 	partialNote  = "部分相关，可能是旧状态或属于别的对象"
 	noDirectNote = "记忆里没有能直接回答的条目。"
 	unrankedNote = "判断模型不可用，以下按召回顺序给出，未经重排。"
+	// unconsentedNote：主人还没同意把数据发给判断模型（AI 数据同意），没有发出重排请求。
+	unconsentedNote = "主人尚未同意把数据发给判断模型（" + aiconsent.Code + "，" + aiconsent.Hint + "），以下按召回顺序给出，未经重排。"
 )
 
 // RecallHit 是 recall_memory 的一条结果。
@@ -58,6 +61,8 @@ func (s *Service) Recall(ctx context.Context, query string) (RecallResult, error
 	ranked := s.rerank(ctx, query, resp.Results)
 	out := RecallResult{Results: []RecallHit{}}
 	switch {
+	case !ranked.Reranked && aiconsent.IsDenied(ranked.Err):
+		out.Note = unconsentedNote
 	case !ranked.Reranked:
 		out.Note = unrankedNote
 	case ranked.NoDirect:

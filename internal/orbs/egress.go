@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/memory"
@@ -143,6 +144,14 @@ func (r egressResolver) GitHubWriteEnd(w egress.GitHubWrite, status int, respKey
 
 // SetMemory 设置记忆网关（M16）；须在服务对外可用之前调用。
 func (s *Service) SetMemory(g *memory.Gateway) { s.memory = g }
+
+// SetAIConsent 设置 AI 数据同意（App Store 5.1.2(i)）；须在服务对外可用之前调用。nil = 出站代理一律拒绝第三方 AI 上游。
+func (s *Service) SetAIConsent(c aiconsent.Checker) { s.aiConsent = c }
+
+// AIConsent 实现 egress.ConsentLookup：模型路由与协调宿主的正向代理发往第三方之前现查主人的同意。
+func (r egressResolver) AIConsent(recipient string) error {
+	return aiconsent.Check(context.Background(), r.s.aiConsent, recipient)
+}
 
 // Memory 实现 egress.MemoryLookup：返回记忆网关；没有设置时为 nil（/memory/ 一律 403）。
 func (r egressResolver) Memory() http.Handler {

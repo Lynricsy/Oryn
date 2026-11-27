@@ -15,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 )
 
 // echoServer 在 127.0.0.1 上起一个回显 TCP 服务，返回 host:port。
@@ -137,7 +139,8 @@ func TestWebConnect(t *testing.T) {
 	_, port, _ := net.SplitHostPort(echo)
 
 	// 回环地址不是公网：403，正文是固定文案
-	deny := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, Web: &WebPolicy{}}}))
+	// 已同意联网（同意判定见 consent_test.go），这里只测公网判定
+	deny := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, Web: &WebPolicy{}}, consent: newConsent(aiconsent.WebRecipientID)}))
 	defer deny.Close()
 	code, br, _ := rawProxy(t, deny.URL, fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echo, echo))
 	assert.Equal(t, http.StatusForbidden, code)
@@ -209,7 +212,7 @@ func TestWebForward(t *testing.T) {
 
 	// 没有放行回环：403
 	gotURI = ""
-	deny := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, Web: &WebPolicy{}}}))
+	deny := httptest.NewServer(NewHandler("orb-x", fakeR{pol: Policy{NoGit: true, Web: &WebPolicy{}}, consent: newConsent(aiconsent.WebRecipientID)}))
 	defer deny.Close()
 	code, body = req(deny.URL, up.URL+"/a")
 	assert.Equal(t, http.StatusForbidden, code)

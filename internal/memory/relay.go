@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -323,6 +324,17 @@ func (h *relay) endpoint(w http.ResponseWriter, r *http.Request, kind apigen.Mem
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		WriteError(w, http.StatusBadGateway, "upstream_unavailable", "接口地址无效")
 		return
+	}
+	// AI 数据同意：第三方接口须主人已同意，拒绝时不发出请求（本机的 gemini-rerank 适配器按 Google 判定）
+	prefix := aiconsent.PrefixMemoryEmbed
+	if kind == apigen.MemoryEndpointRerank {
+		prefix = aiconsent.PrefixMemoryRerank
+	}
+	if id, third := aiconsent.EndpointRecipient(prefix, ep.BaseUrl, ep.Model); third {
+		if err := aiconsent.Check(ctx, h.s.cfg.AIConsent, id); err != nil {
+			WriteError(w, http.StatusForbidden, aiconsent.Code, err.Error())
+			return
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 	if err != nil {

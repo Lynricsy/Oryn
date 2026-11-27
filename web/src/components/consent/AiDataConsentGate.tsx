@@ -3,7 +3,7 @@
  * 或点遮罩关闭。按用途列出每个接收方（名称 + 主机），说明发送什么、为什么，数据从主人的 Oryn 服务器直接发给它们、
  * Oryn 的开发者收不到，并链接隐私政策。「同意」以当前全部接收方 id 记录同意；「不同意」说明 AI 功能用不了，
  * 给出更换服务器（两种壳）或退出登录（浏览器），下次加载再问。新接收方出现时 `required` 重新变真，随即再问。
- * 挂在 AppShell 上（两种布局各一处）。
+ * 查不到同意状态（请求失败）时同样整页拦住并给出重试，不当作「不需要同意」放行；服务端在同意之前本来就拒绝发往第三方。
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
@@ -100,8 +100,56 @@ export function AiDataConsentGate(): ReactNode {
 	const agree = useAsync();
 	const logout = useAsync();
 	const data = consent.data;
-	if (data?.required !== true || data.recipients.length === 0) return null;
 	const changeServer = changeServerFn();
+	// 不同意 / 查不到同意状态时的出路：两种壳里更换服务器，浏览器里退出登录
+	const leave = changeServer ? (
+		<Button variant="danger" onClick={() => changeServer()}>
+			{t("account.changeServer")}
+		</Button>
+	) : (
+		<Button
+			variant="danger"
+			disabled={logout.busy}
+			onClick={() =>
+				void logout
+					.run(() => unwrap(api.POST("/api/v1/auth/logout")))
+					.then((ok) => {
+						if (ok) navigate("/login");
+					})
+			}
+		>
+			{t("account.logout")}
+		</Button>
+	);
+
+	// 查询失败（还没有拿到过同意状态）：不能当作「不需要同意」放行，整页拦住并给出重试。加载中不渲染，免得闪一下。
+	if (!data) {
+		if (!consent.isError) return null;
+		return (
+			<Dialog
+				open
+				wrapTitle
+				title={t("aiConsent.loadErrorTitle")}
+				footer={
+					<>
+						{leave}
+						<Button
+							variant="primary"
+							disabled={consent.isFetching}
+							onClick={() => void consent.refetch()}
+						>
+							{t("aiConsent.retry")}
+						</Button>
+					</>
+				}
+			>
+				<p className="text-muted text-sm">{t("aiConsent.loadErrorBody")}</p>
+				<ErrorText error={consent.error} />
+				<ErrorText error={logout.error} />
+			</Dialog>
+		);
+	}
+	if (data.required !== true || data.recipients.length === 0) return null;
 
 	if (declined)
 		return (
@@ -114,25 +162,7 @@ export function AiDataConsentGate(): ReactNode {
 						<Button onClick={() => setDeclined(false)}>
 							{t("aiConsent.back")}
 						</Button>
-						{changeServer ? (
-							<Button variant="danger" onClick={() => changeServer()}>
-								{t("account.changeServer")}
-							</Button>
-						) : (
-							<Button
-								variant="danger"
-								disabled={logout.busy}
-								onClick={() =>
-									void logout
-										.run(() => unwrap(api.POST("/api/v1/auth/logout")))
-										.then((ok) => {
-											if (ok) navigate("/login");
-										})
-								}
-							>
-								{t("account.logout")}
-							</Button>
-						)}
+						{leave}
 					</>
 				}
 			>

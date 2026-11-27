@@ -46,6 +46,7 @@ func (r *ghRemoteResolver) GitToken(host string) (string, bool) {
 }
 func (r *ghRemoteResolver) GitHubToken() (string, bool) { return ghRemoteAPIToken, true }
 func (r *ghRemoteResolver) GitHubTokenRejected(string)  {}
+func (r *ghRemoteResolver) AIConsent(string) error      { return nil }
 func (r *ghRemoteResolver) ThreadGates() (egress.ThreadGates, error) {
 	return egress.ThreadGates{}, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/memory/relayroute"
@@ -127,7 +129,13 @@ type relayEnv struct {
 // newRelayEnv 建一个带真实路由解析（models.yml → egress）的记忆服务，并生成 `.env` 取得中转令牌。
 // 选定模型：default → oai/gpt-real-1（openai），reflect → claude/claude-real（anthropic），
 // consolidation → gem/gemini-real（gemini）；嵌入与重排指向假上游的 /emb、/rr。
+// 上游都在本机，不经 AI 数据同意判定（判定见 TestRelayEndpointRequiresConsent）。
 func newRelayEnv(t *testing.T) *relayEnv {
+	return newRelayEnvWith(t, nil, nil)
+}
+
+// newRelayEnvWith 同 newRelayEnv，consent 是 AI 数据同意，client 非 nil 时代替访问嵌入 / 重排接口的客户端。
+func newRelayEnvWith(t *testing.T, consent aiconsent.Checker, client *http.Client) *relayEnv {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir())
@@ -146,11 +154,11 @@ func newRelayEnv(t *testing.T) *relayEnv {
 	_, err = home.Put(ctx, agentcfg.ModelsFile, []byte(models), 0, vault)
 	require.NoError(t, err)
 
-	routes := relayroute.New(home, vault)
+	routes := relayroute.New(home, vault, consent)
 	now := time.Unix(1_800_000_000, 0)
 	svc := memory.New(memory.Config{
 		Q: st.Q, Box: box, PublicURL: testPublicURL, Now: func() time.Time { return now },
-		Family: routes.Family, Upstream: routes.Upstream,
+		Family: routes.Family, Upstream: routes.Upstream, AIConsent: consent, HTTP: client,
 	})
 	e := &relayEnv{st: st, box: box, svc: svc, h: svc.RelayHandler(), up: up}
 	e.selectModel(t, "default", "oai", "gpt-real-1")
@@ -405,4 +413,73 @@ func TestRelayUsagePerProtocol(t *testing.T) {
 		"rerank":        {1, 0, 0},
 		"mental_model":  {1, 0, 0},
 	}, got)
+}
+
+// TestRelayEndpointRequiresConsent：第三方嵌入 / 重排接口须主人已同意；没有同意时 403 ai_consent_required、上游 0 个请求，
+// 撤回后再次拒绝。本机的 gemini-rerank 适配器（模型 gemini-decision-*）按 Google 判定。
+func TestRelayEndpointRequiresConsent(t *testing.T) {
+	var mu sync.Mutex
+	granted := map[string]bool{}
+	grant := func(ids ...string) {
+		mu.Lock()
+		defer mu.Unlock()
+		granted = map[string]bool{}
+		for _, id := range ids {
+			granted[id] = true
+		}
+	}
+	consent := aiconsent.CheckerFunc(func(_ context.Context, id string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if !granted[id] {
+			return &aiconsent.DeniedError{Recipient: id}
+		}
+		return nil
+	})
+	var upAddr string
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr == "embed.example.com:80" || addr == "rerank.example.com:80" {
+			addr = upAddr
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}}}
+	e := newRelayEnvWith(t, consent, client)
+	upAddr = e.up.srv.Listener.Addr().String()
+	e.endpoint(t, apigen.MemoryEndpointEmbed, "http://embed.example.com/emb", "qwen-embed", keyEmbed)
+	e.endpoint(t, apigen.MemoryEndpointRerank, "http://rerank.example.com/rr", "bge-rerank", keyRerank)
+	embed := func() *httptest.ResponseRecorder {
+		return e.post(t, "embed/embeddings", "", e.token, map[string]any{"model": "oryn-embed", "input": []string{"你好"}})
+	}
+	rerank := func() *httptest.ResponseRecorder {
+		return e.post(t, "rerank/v1/rerank", "", e.token, map[string]any{"model": "oryn-rerank", "query": "q", "documents": []string{"a"}})
+	}
+
+	w := embed()
+	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	assert.Equal(t, aiconsent.Code, errCode(t, w))
+	assert.Contains(t, w.Body.String(), "memory-embed:embed.example.com")
+	w = rerank()
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Zero(t, e.up.count(), "没有同意时上游一个请求也收不到")
+
+	grant("memory-embed:embed.example.com")
+	w = embed()
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, 1, e.up.count())
+	assert.Equal(t, http.StatusForbidden, rerank().Code, "只同意了嵌入")
+	assert.Equal(t, 1, e.up.count())
+
+	grant()
+	assert.Equal(t, http.StatusForbidden, embed().Code, "撤回之后立即拒绝")
+	assert.Equal(t, 1, e.up.count())
+
+	// 本机的 gemini-rerank 适配器：地址在回环上，接收方仍是 Google
+	e.endpoint(t, apigen.MemoryEndpointRerank, e.up.srv.URL+"/rr", "gemini-decision-1", keyRerank)
+	w = rerank()
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "memory-rerank:generativelanguage.googleapis.com")
+	assert.Equal(t, 1, e.up.count())
+	grant("memory-rerank:generativelanguage.googleapis.com")
+	require.Equal(t, http.StatusOK, rerank().Code)
+	assert.Equal(t, 2, e.up.count())
 }

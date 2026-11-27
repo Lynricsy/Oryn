@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/api"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/artifacts"
@@ -229,6 +230,8 @@ func (s *Server) init(ctx context.Context) error {
 	// researchToken 是后台研究的 /mcp/ 凭据（M26）：出站代理只放行研究可用的工具，只交给 MCP 运行里的私有研究员。
 	mcpToken := ids.Token("mcp")
 	researchToken := ids.Token("mcr")
+	// AI 数据同意（App Store 5.1.2(i)）：各出站卡点发往第三方 AI 之前现查主人的同意记录（internal/aiconsent）
+	consent := aiconsent.NewGate(s.Store.Q)
 	setup := &orbs.DefaultSetup{
 		Store: s.Store, Home: s.Home, Vault: s.Vault, Projects: s.ProjectHomes,
 		CoordinatorEgressAddr:    fmt.Sprintf("127.0.0.1:%d", cfg.Coordinator.EgressPort),
@@ -238,6 +241,7 @@ func (s *Server) init(ctx context.Context) error {
 		PublicURL:                cfg.PublicURL,
 		// 全局助手的内置技能 oryn（只下发到协调宿主）
 		CoordinatorSkill: coord.SkillFiles,
+		AIConsent:        consent,
 	}
 	// 运维参数覆盖层须在第一个用到这些参数的服务（orbs）之前建立
 	if s.Ops, err = opsconf.New(ctx, s.Store, cfg); err != nil {
@@ -248,6 +252,7 @@ func (s *Server) init(ctx context.Context) error {
 		Idle: live.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
 		PortalURLTemplate: base.Template(), Snapshots: live.Snapshots, Pool: cfg.Pool, OrbCAPEM: string(s.OrbCAPEM),
 	}, s.Store, s.Jobs, setup, s.Vault)
+	s.Orbs.SetAIConsent(consent)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{
 		DataDir: cfg.DataDir, WakeOnFocus: live.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
@@ -362,7 +367,7 @@ func (s *Server) init(ctx context.Context) error {
 	// files 能力（步骤 7.4）：经 orb 本机 API 只读地取创建线程的工作目录
 	s.Artifacts.AttachOrbFS(s.Orbs)
 	// sample 能力（步骤 7.5）：控制面用钉住的 Core（coordinator.omp_path）一次性回答页面的问题，不经过 orb
-	s.Artifacts.AttachSampler(sample.New(sample.Config{OmpPath: cfg.Coordinator.OmpPath, Home: s.Home, Vault: s.Vault}))
+	s.Artifacts.AttachSampler(sample.New(sample.Config{OmpPath: cfg.Coordinator.OmpPath, Home: s.Home, Vault: s.Vault, Consent: consent}))
 	// artifact.call（orb / Runner 内 agent 的 artifact 工具）：须在 orb 服务接受 link 之前注册
 	s.Artifacts.RegisterOrbMethod(s.Orbs, s.LibrarySync)
 	s.Notify, err = notify.New(notify.Config{
@@ -429,9 +434,9 @@ func (s *Server) init(ctx context.Context) error {
 	// M16：内置 Hindsight 记忆。Hindsight 的 key 用 Box 加密存库；没有总超时（网关转发的 reflect 可能很慢），
 	// 探测与转发各自用 context 限时
 	// 模型中转按控制面 models.yml 的出站路由解析模型的协议与上游（密钥注入与脱敏沿用 egress）
-	memRoutes := relayroute.New(s.Home, s.Vault)
+	memRoutes := relayroute.New(s.Home, s.Vault, consent)
 	s.Memory = memory.New(memory.Config{
-		Family: memRoutes.Family, Upstream: memRoutes.Upstream, Restart: s.Threads.MarkMemoryRestart,
+		Family: memRoutes.Family, Upstream: memRoutes.Upstream, Restart: s.Threads.MarkMemoryRestart, AIConsent: consent,
 		Q: s.Store.Q, Box: box, PublicURL: cfg.PublicURL, HTTP: &http.Client{Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -508,7 +513,7 @@ func (s *Server) init(ctx context.Context) error {
 	})
 	s.Artifacts.SetActivityVisitors(frames.ArtifactVisitors)
 	// M17：主人记忆。写入与工具输出先用分享的密钥扫描规则与密钥库值脱敏
-	s.OwnerMemory = ownermem.New(ownermem.Config{Q: s.Store.Q, Box: box, Memory: s.Memory, Redact: s.Share.RedactText})
+	s.OwnerMemory = ownermem.New(ownermem.Config{Q: s.Store.Q, Box: box, Memory: s.Memory, Redact: s.Share.RedactText, AIConsent: consent})
 	s.Coord.SetOwnerMemory(s.OwnerMemory, s.Memory)
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	go s.Jobs.Run(runCtx)

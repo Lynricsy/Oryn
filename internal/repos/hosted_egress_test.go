@@ -35,6 +35,7 @@ func (hostedEgressResolver) GitHubToken() (string, bool)                      { 
 func (hostedEgressResolver) GitHubTokenRejected(string)                       {}
 func (hostedEgressResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (hostedEgressResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}
+func (hostedEgressResolver) AIConsent(string) error                           { return nil }
 
 // ThreadGates：没有线程限制（NoGateLookup 的「一律不放行」会让推送按只读评审被拒）。
 func (hostedEgressResolver) ThreadGates() (egress.ThreadGates, error) {

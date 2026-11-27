@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/geminidecision"
 )
 
@@ -50,11 +51,17 @@ var decideCriteria = []string{"无关", "不能用", "部分有用", "直接可�
 // errDecideUnset 是判断模型接口没有配置。
 var errDecideUnset = fmt.Errorf("判断模型接口未配置")
 
-// decideScores 一次请求给全部候选打分，返回与 facts 同序的期望分。
+// decideScores 一次请求给全部候选打分，返回与 facts 同序的期望分。判断模型是第三方时须主人已同意（AI 数据同意），
+// 否则不发请求、返回 *aiconsent.DeniedError（rerank 按 RRF 顺序给出）。
 func (s *Service) decideScores(ctx context.Context, query string, facts []string, now time.Time) ([]float64, error) {
 	ep, ok := s.decideEndpoint(ctx)
 	if !ok {
 		return nil, errDecideUnset
+	}
+	if id, third := aiconsent.EndpointRecipient(aiconsent.PrefixMemoryDecide, ep.base, ep.model); third {
+		if err := aiconsent.Check(ctx, s.cfg.AIConsent, id); err != nil {
+			return nil, err
+		}
 	}
 	questions := make([]geminidecision.Question, len(facts))
 	for i, f := range facts {

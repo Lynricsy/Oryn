@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/memory"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -28,7 +29,9 @@ type Config struct {
 	Redact func(ctx context.Context, text string) (string, int)
 	// HTTP 访问判断模型接口；nil 时用带超时的默认客户端。
 	HTTP *http.Client
-	Now  func() time.Time
+	// AIConsent 是 AI 数据同意：判断模型是第三方时，召回重排之前现查（nil = 一律拒绝第三方判断模型）。
+	AIConsent aiconsent.Checker
+	Now       func() time.Time
 }
 
 // Service 是全局助手的主人记忆。

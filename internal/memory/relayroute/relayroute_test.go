@@ -41,7 +41,7 @@ func TestRelayRouteFamily(t *testing.T) {
 		"  codex:\n    baseUrl: https://codex.test\n    api: openai-codex-responses\n    apiKey: sk-codex-4\n"
 	_, err = home.Put(ctx, agentcfg.ModelsFile, []byte(models), 0, vault)
 	require.NoError(t, err)
-	r := New(home, vault)
+	r := New(home, vault, nil)
 
 	for _, tc := range []struct {
 		provider, model string

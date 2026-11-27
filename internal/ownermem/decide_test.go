@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ownermem"
 )
@@ -58,14 +60,60 @@ func newFakeDecide(t *testing.T) *fakeDecide {
 	return f
 }
 
+// decideEnv 的判断模型已同意（同意判定见 TestDecideRequiresConsent）。
 func decideEnv(t *testing.T) (*env, *fakeDecide) {
 	t.Helper()
-	e := newEnv(t, true, func(c *ownermem.Config) { c.HTTP = &http.Client{Timeout: 300 * time.Millisecond} })
+	return decideEnvWith(t, aiconsent.CheckerFunc(func(context.Context, string) error { return nil }))
+}
+
+func decideEnvWith(t *testing.T, consent aiconsent.Checker) (*env, *fakeDecide) {
+	t.Helper()
+	e := newEnv(t, true, func(c *ownermem.Config) {
+		c.HTTP = &http.Client{Timeout: 300 * time.Millisecond}
+		c.AIConsent = consent
+	})
 	d := newFakeDecide(t)
 	key := "AQ.decide"
 	_, err := e.svc.PutDecideEndpoint(context.Background(), apigen.OwnerMemoryDecideUpdate{BaseURL: d.srv.URL, Model: "gemini-decision-1", APIKey: &key})
 	require.NoError(t, err)
 	return e, d
+}
+
+// TestDecideRequiresConsent：判断模型（gemini-decision-*，测试里的假服务在回环上，接收方按 Google 判定）须主人已同意；
+// 没有同意时不发请求、按 RRF 顺序给出并带同意错误；撤回后再次不发。
+func TestDecideRequiresConsent(t *testing.T) {
+	var granted atomic.Bool
+	const id = "memory-decide:generativelanguage.googleapis.com"
+	e, d := decideEnvWith(t, aiconsent.CheckerFunc(func(_ context.Context, r string) error {
+		if r != id || !granted.Load() {
+			return &aiconsent.DeniedError{Recipient: r}
+		}
+		return nil
+	}))
+	count := func() int {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		return len(d.bodies)
+	}
+	d.scores = map[string]float64{"甲": 0.1, "乙": 2.9}
+
+	res := e.svc.RerankTexts(context.Background(), "q", []string{"甲", "乙"})
+	assert.True(t, aiconsent.IsDenied(res.Err), res.Err)
+	assert.False(t, res.Reranked)
+	require.Len(t, res.Items, 2, "按 RRF 顺序给出")
+	assert.Equal(t, "甲", res.Items[0].Fact.Text)
+	assert.Zero(t, count(), "没有同意时判断模型一个请求也收不到")
+
+	granted.Store(true)
+	res = e.svc.RerankTexts(context.Background(), "q", []string{"甲", "乙"})
+	require.NoError(t, res.Err)
+	assert.True(t, res.Reranked)
+	assert.Equal(t, 1, count())
+
+	granted.Store(false)
+	res = e.svc.RerankTexts(context.Background(), "q", []string{"甲", "乙"})
+	assert.True(t, aiconsent.IsDenied(res.Err))
+	assert.Equal(t, 1, count(), "撤回之后不再发送")
 }
 
 // TestDecideRequestAndTiers:一次请求、每候选一个 score 题；按分数降序分档：≥2.0 正常、1.5–2.0 标注、<1.5 丢弃。

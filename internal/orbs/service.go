@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/config"
 	"github.com/Lynricsy/Oryn/internal/egress"
@@ -196,6 +197,8 @@ type Service struct {
 	// hostedGit 在本地服务 orb 所属项目的托管仓库（M24 阶段 ③，SetHostedGit 在服务对外可用之前设置；nil = 没有通道，
 	// 托管路由一律 403）。
 	hostedGit egress.HostedGitServer
+	// aiConsent 是 AI 数据同意（SetAIConsent 在服务对外可用之前设置；nil = 出站代理一律拒绝第三方 AI 上游）。
+	aiConsent aiconsent.Checker
 	now       func() time.Time
 
 	// idle / snaps 是运行时覆盖的空闲策略与快照配置（SetOps；nil = 用 cfg 里构造时的初值）。

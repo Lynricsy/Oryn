@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 )
@@ -61,6 +62,8 @@ type Config struct {
 	Home *agentcfg.Home
 	// Vault 解析 models.yml 里的密钥引用；nil = 任何密钥都查不到。
 	Vault *secrets.Vault
+	// Consent 是 AI 数据同意：页面的问题（主人的 artifact 内容）只发往主人已同意的模型上游；nil = 一律拒绝第三方上游。
+	Consent aiconsent.Checker
 	// Timeout 为 0 时取 DefaultTimeout；MaxProcs 为 0 时取 DefaultMaxProcs。
 	Timeout  time.Duration
 	MaxProcs int
@@ -169,7 +172,7 @@ func (s *Sampler) serveConfig(home string) (*http.Server, error) {
 		return nil, err
 	}
 	srv := &http.Server{
-		Handler:           egress.NewHandler(egressID, policyResolver{resolver: s.res, routes: rendered.Routes}),
+		Handler:           egress.NewHandler(egressID, policyResolver{resolver: s.res, routes: rendered.Routes, consent: s.cfg.Consent}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -210,6 +213,7 @@ type policyResolver struct {
 	egress.NoMemory     // 没有记忆通道
 	egress.NoHostedGit  // 没有托管仓库通道
 	routes              map[string]egress.Route
+	consent             aiconsent.Checker
 }
 
 func (p policyResolver) Policy() egress.Policy { return egress.Policy{Routes: p.routes, NoGit: true} }
@@ -224,3 +228,8 @@ func (policyResolver) GitHubTokenRejected(string) {}
 // 一次运行没有 GitHub 路由，不会出现 GitHub 写操作。
 func (policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}
+
+// AIConsent 实现 egress.ConsentLookup。
+func (p policyResolver) AIConsent(recipient string) error {
+	return aiconsent.Check(context.Background(), p.consent, recipient)
+}

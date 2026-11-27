@@ -1,4 +1,4 @@
-/** AI 数据共享同意框：required 时整页拦住（不能 Esc / 点遮罩关闭）、按用途列出接收方、同意即 PUT 当前全部 id；不需要时不出现；不同意给出退出路径。 */
+/** AI 数据共享同意框：required 时整页拦住（不能 Esc / 点遮罩关闭）、按用途列出接收方、同意即 PUT 当前全部 id；不需要时不出现；不同意给出退出路径；查询失败时拦住并可重试。 */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -30,10 +30,12 @@ const REQUIRED: AiDataConsent = {
 let puts: unknown[];
 let posts: string[];
 
-function renderWith(state: AiDataConsent) {
+/** failGets 是前几次 GET 回 500 的次数（模拟查不到同意状态）。 */
+function renderWith(state: AiDataConsent, failGets = 0) {
 	puts = [];
 	posts = [];
 	let current = state;
+	let fails = failGets;
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: Request) => {
@@ -52,6 +54,13 @@ function renderWith(state: AiDataConsent) {
 			if (input.method === "POST") {
 				posts.push(u.pathname);
 				return new Response(null, { status: 204 });
+			}
+			if (fails > 0) {
+				fails--;
+				return Response.json(
+					{ code: "internal", message: "boom" },
+					{ status: 500 },
+				);
 			}
 			return Response.json(current);
 		}),
@@ -135,5 +144,39 @@ describe("AiDataConsentGate", () => {
 			screen.getByRole("button", { name: "同意并继续" }),
 		).toBeInTheDocument();
 		expect(puts).toEqual([]);
+	});
+
+	it("查不到同意状态：不放行，整页拦住，重试成功后显示同意框", async () => {
+		renderWith(REQUIRED, 1);
+		const dialog = await screen.findByRole("dialog", {
+			name: "无法确认 AI 数据共享的同意状态",
+		});
+		expect(dialog).toHaveTextContent("在你同意之前");
+		expect(
+			screen.getByRole("button", { name: "退出登录" }),
+		).toBeInTheDocument();
+		fireEvent.keyDown(window, { key: "Escape" });
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "重试" }));
+		expect(
+			await screen.findByRole("dialog", {
+				name: "AI 功能会把你的数据发给这些服务",
+			}),
+		).toBeInTheDocument();
+	});
+
+	it("查不到同意状态、重试后不需要同意：收起", async () => {
+		renderWith(
+			{
+				...REQUIRED,
+				consentedAt: 1,
+				consentedRecipientIds: REQUIRED.recipients.map((r) => r.id),
+				required: false,
+			},
+			1,
+		);
+		fireEvent.click(await screen.findByRole("button", { name: "重试" }));
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 	});
 });

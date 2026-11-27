@@ -2,9 +2,15 @@ package api
 
 // ai_consent.go：主人对「把个人数据发给第三方 AI 服务」的同意（App Store 审核指南 5.1.2(i)）。
 //
-// 执行层面的选择：服务端不按同意状态拦截模型调用。同意框是界面级的门槛（AppShell 在 required 时整页拦住），
-// 已有的定时任务、后台研究、记忆抽取照常运行——模型请求分散在 orb 内的 omp、协调宿主、记忆中转、助手记忆判断等
-// 多条出站路径上，没有一个干净的统一卡点；在其中任一处硬拦都会让主人看不懂的后台任务半途失败。
+// 服务端强制执行：接收方 id 的规则在 internal/aiconsent（本文件推导设置页列出的接收方，各出站卡点按同一规则算出 id），
+// 每个受管的出站路径在发出第一个字节之前用 aiconsent.Gate 现查同意记录，没有同意（含从未同意、撤回之后、新出现的接收方）
+// 一律拒绝并回 `ai_consent_required`：
+//   - orb、协调宿主、记忆中转、artifact sample 的模型请求 → egress 的 /llm/ 路由（按路由的 provider 与上游主机）；
+//   - 不带 Oryn 密钥、上游在公网的 provider 由 agentcfg 同样改写到 /llm/ 路由；以环境变量降级的密钥在 orb setup 时
+//     只对已同意的 provider 注入；
+//   - 记忆的嵌入 / 重排接口 → 记忆中转（memory.relay.endpoint）；助手记忆的判断模型 → ownermem.decideScores；
+//   - 全局助手与后台研究联网 → egress 的正向代理（web:public）。
+// 后台任务（定时、后台研究、记忆抽取）在主人同意之前因此暂停（请求被拒、稍后重试或记失败），同意后的下一个请求即恢复。
 // 接收方由当前配置推导（deriveAIRecipients），新的接收方出现时 required 变为真，界面随即重新征求同意。
 
 import (
@@ -13,10 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -24,6 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -31,12 +35,6 @@ import (
 // aiConsentCatalogWait 是推导接收方时等模型目录的上限：目录在 models.yml 变化后要重跑 omp（最长一分钟），
 // 同意框每次加载都会请求本接口，不能被它拖住；等不到时只按 models.yml 推导。
 const aiConsentCatalogWait = 3 * time.Second
-
-// webRecipientID 是全局助手联网的接收方：搜索词与打开的网址发往公网网站（grounded 搜索本身走已列出的模型 provider）。
-const webRecipientID = "web:public"
-
-// localProviders 是没写 baseUrl 时默认连本机的 provider，不是第三方。
-var localProviders = map[string]bool{"ollama": true, "lmstudio": true}
 
 // providerLabels 是已知 provider 的显示名（与 web/src/lib/model-picker.ts 的 PROVIDER_LABELS 一致）。
 var providerLabels = map[string]string{
@@ -71,7 +69,7 @@ var providerLabels = map[string]string{
 var hostLabels = func() map[string]string {
 	m := map[string]string{"api.cohere.com": "Cohere", "api.cohere.ai": "Cohere", "api.voyageai.com": "Voyage AI", "api.jina.ai": "Jina AI"}
 	for key, base := range agentcfg.BuiltinBaseURLs {
-		if h := urlHost(base); h != "" {
+		if h := aiconsent.URLHost(base); h != "" {
 			m[h] = providerLabels[key]
 		}
 	}
@@ -86,10 +84,11 @@ type aiRecipientSources struct {
 	CatalogProviders []string
 	// MemoryProviders 是记忆（M16，已启用时）各用途生效的 provider 键。
 	MemoryProviders []string
-	// MemoryEmbedURL、MemoryRerankURL 是记忆已启用时配置的嵌入 / 重排接口地址。
-	MemoryEmbedURL, MemoryRerankURL string
-	// DecideURL 是助手记忆运行且判断模型接口已配置时的地址。
-	DecideURL string
+	// MemoryEmbedURL、MemoryRerankURL 是记忆已启用时配置的嵌入 / 重排接口地址，*Model 是对应的模型名。
+	MemoryEmbedURL, MemoryRerankURL     string
+	MemoryEmbedModel, MemoryRerankModel string
+	// DecideURL、DecideModel 是助手记忆运行且判断模型接口已配置时的地址与模型。
+	DecideURL, DecideModel string
 	// Web 为真表示全局助手存在且联网开着。
 	Web bool
 }
@@ -99,11 +98,12 @@ type aiRecipientSources struct {
 //     （顶层 baseUrl，缺省取内置上游）；provider 下各模型条目自带的 baseUrl 是另一条上游，同样列出——agentcfg 会把
 //     它们分别改写成独立的出站路由（`<key>.m<i>`），不列就会出现「同意框只写了 A、实际发给了 B」；
 //     记忆用途选中的 provider 在它的每条上游上追加 memory；
-//   - 记忆的嵌入 / 重排接口 → memory-embed:<host> / memory-rerank:<host>，助手记忆的判断模型 → memory-decide:<host>；
+//   - 记忆的嵌入 / 重排接口 → memory-embed:<host> / memory-rerank:<host>，助手记忆的判断模型 → memory-decide:<host>
+//     （aiconsent.EndpointRecipient：本机的 gemini-rerank 适配器转发到 Google，按 Google 列出）；
 //   - 助手联网 → web:public。
 //
-// 模型接收方的 id 是 `model:<key>@<host>`（主机未知时为 `model:<key>`）：上游换了主机，id 随之变化，界面重新征求同意。
-// 上游在本机、内网、链路本地或单标签主机名上的不算第三方；没写 baseUrl 的 ollama / lmstudio 同样排除。
+// id 规则在 aiconsent（ModelRecipient、EndpointRecipient），出站卡点用同一套规则判定。上游换了主机，id 随之变化，
+// 界面重新征求同意。上游在本机、内网、链路本地或单标签主机名上的不算第三方；没写 baseUrl 的 ollama / lmstudio 同样排除。
 func deriveAIRecipients(src aiRecipientSources) []apigen.AiDataRecipient {
 	type modelRecip struct {
 		key, host string
@@ -112,12 +112,9 @@ func deriveAIRecipients(src aiRecipientSources) []apigen.AiDataRecipient {
 	models := map[string]*modelRecip{}
 	yml := modelsYMLProviders(src.ModelsYML)
 	addHost := func(key, host string, p apigen.AiDataPurpose) {
-		if (host == "" && localProviders[key]) || isLocalHost(host) {
+		id, third := aiconsent.ModelRecipient(key, host)
+		if !third {
 			return
-		}
-		id := "model:" + key
-		if host != "" {
-			id += "@" + host
 		}
 		m := models[id]
 		if m == nil {
@@ -135,14 +132,14 @@ func deriveAIRecipients(src aiRecipientSources) []apigen.AiDataRecipient {
 		}
 		prov := yml[key]
 		if withBase {
-			host := urlHost(prov.BaseURL)
+			host := aiconsent.URLHost(prov.BaseURL)
 			if host == "" {
-				host = urlHost(agentcfg.BuiltinBaseURLs[key])
+				host = aiconsent.URLHost(agentcfg.BuiltinBaseURLs[key])
 			}
 			addHost(key, host, p)
 		}
 		for _, mb := range prov.ModelBaseURLs {
-			if host := urlHost(mb); host != "" {
+			if host := aiconsent.URLHost(mb); host != "" {
 				addHost(key, host, p)
 			}
 		}
@@ -171,23 +168,24 @@ func deriveAIRecipients(src aiRecipientSources) []apigen.AiDataRecipient {
 		}
 		out = append(out, apigen.AiDataRecipient{ID: id, Name: name, Host: optHost(m.host), Purposes: m.purposes})
 	}
-	for _, ep := range []struct{ prefix, url string }{
-		{"memory-embed:", src.MemoryEmbedURL},
-		{"memory-rerank:", src.MemoryRerankURL},
-		{"memory-decide:", src.DecideURL},
+	for _, ep := range []struct{ prefix, url, model string }{
+		{aiconsent.PrefixMemoryEmbed, src.MemoryEmbedURL, src.MemoryEmbedModel},
+		{aiconsent.PrefixMemoryRerank, src.MemoryRerankURL, src.MemoryRerankModel},
+		{aiconsent.PrefixMemoryDecide, src.DecideURL, src.DecideModel},
 	} {
-		host := urlHost(ep.url)
-		if host == "" || isLocalHost(host) {
+		id, third := aiconsent.EndpointRecipient(ep.prefix, ep.url, ep.model)
+		if !third {
 			continue
 		}
+		host := strings.TrimPrefix(id, ep.prefix)
 		name := hostLabels[host]
 		if name == "" {
 			name = host
 		}
-		out = append(out, apigen.AiDataRecipient{ID: ep.prefix + host, Name: name, Host: &host, Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeMemory}})
+		out = append(out, apigen.AiDataRecipient{ID: id, Name: name, Host: &host, Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeMemory}})
 	}
 	if src.Web {
-		out = append(out, apigen.AiDataRecipient{ID: webRecipientID, Name: "Web", Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeWeb}})
+		out = append(out, apigen.AiDataRecipient{ID: aiconsent.WebRecipientID, Name: "Web", Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeWeb}})
 	}
 	return out
 }
@@ -237,41 +235,6 @@ func modelsYMLProviders(content []byte) map[string]ymlProvider {
 	return out
 }
 
-// urlHost 返回地址的小写主机名；解析不了时为空。
-func urlHost(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ""
-	}
-	return strings.ToLower(u.Hostname())
-}
-
-// isLocalHost 判断主机是否在主人自己的机器或内网：localhost、*.localhost / *.local / *.internal、单标签主机名
-// （容器网络里的服务名），以及回环、私有、链路本地、未指定与 CGNAT（100.64.0.0/10，Tailscale 等）地址。空主机返回 false。
-func isLocalHost(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if host == "" {
-		return false
-	}
-	if ip, err := netip.ParseAddr(host); err == nil {
-		ip = ip.Unmap()
-		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() ||
-			netip.MustParsePrefix("100.64.0.0/10").Contains(ip)
-	}
-	if net.ParseIP(host) != nil {
-		return false
-	}
-	if host == "localhost" || !strings.Contains(host, ".") {
-		return true
-	}
-	for _, suf := range []string{".localhost", ".local", ".internal"} {
-		if strings.HasSuffix(host, suf) {
-			return true
-		}
-	}
-	return false
-}
-
 func optHost(h string) *string {
 	if h == "" {
 		return nil
@@ -317,10 +280,10 @@ func (s *Server) aiRecipientSources(ctx context.Context) (aiRecipientSources, er
 			return src, err
 		}
 		if eps.Embed != nil {
-			src.MemoryEmbedURL = eps.Embed.BaseURL
+			src.MemoryEmbedURL, src.MemoryEmbedModel = eps.Embed.BaseURL, eps.Embed.Model
 		}
 		if eps.Rerank != nil {
-			src.MemoryRerankURL = eps.Rerank.BaseURL
+			src.MemoryRerankURL, src.MemoryRerankModel = eps.Rerank.BaseURL, eps.Rerank.Model
 		}
 	}
 	if s.OwnerMemory != nil && s.OwnerMemory.Service != nil && s.OwnerMemory.Service.Enabled(ctx) {
@@ -329,7 +292,7 @@ func (s *Server) aiRecipientSources(ctx context.Context) (aiRecipientSources, er
 			return src, err
 		}
 		if st.Decide != nil && st.Decide.HasKey {
-			src.DecideURL = st.Decide.BaseURL
+			src.DecideURL, src.DecideModel = st.Decide.BaseURL, st.Decide.Model
 		}
 	}
 	if s.Coord != nil && s.Coord.Service != nil {

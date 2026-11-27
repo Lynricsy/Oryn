@@ -406,6 +406,21 @@ orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811`）到达控制�
 
 `models.yml` 中，`providers.<key>.apiKey` 只能引用本 provider 自己的密钥 `omp/models/<key>/apiKey`。只有这一个密钥会走环境变量降级；它若已绑定上游主机（`hosts` 非空），就不允许降级。`models.yml` 里不允许引用 `git/*` 密钥。其它 `${oryn:secret:…}` 引用必须属于 `hosts` 非空的密钥，而且只绑定到 origin 主机与 `hosts` 匹配的路由。`hosts` 为空的密钥只能注入到它自己 provider 的路由，其它任何路由都不行。导入时，provider 密钥的 `hosts` 包括 provider `baseUrl` 与各模型 `baseUrl` 的全部主机。经代理的 WebSocket / Upgrade（101）连接只对响应头做真实值回显脱敏，不改写升级后的字节流，否则会破坏其分帧。
 
+### AI 数据同意（App Store 5.1.2(i)）
+
+主人在「设置 → 隐私与数据」同意之前，orynd 不把数据发给任何第三方 AI 服务。接收方按当前配置推导（设置页列出的就是这些，id 规则在 `internal/aiconsent`）：模型上游 `model:<provider>@<主机>`（没有 baseUrl 也不在内置表里、以环境变量降级的 provider 是 `model:<provider>`）、记忆的嵌入 / 重排接口 `memory-embed:<主机>` / `memory-rerank:<主机>`、助手记忆的判断模型 `memory-decide:<主机>`，以及全局助手联网 `web:public`。本机、内网、链路本地、CGNAT 与单标签主机名上的上游不算第三方，不需要同意；本机的 `gemini-rerank` 适配器会把重排请求转给 Google，按 `memory-rerank:generativelanguage.googleapis.com` 判定。
+
+每个出站卡点在发出第一个字节之前现读同意记录（不缓存，同意与撤回对下一个请求立即生效）；没有同意、撤回之后、或出现了新的接收方（新的 provider、模型条目自带的新 `baseUrl` 主机）时一律拒绝：
+
+- 模型请求（工作 orb、Runner、协调宿主、记忆中转里 Hindsight 调用的模型、artifact 的 `sample` 能力）经出站代理的 `/llm/` 路由，拒绝回 403 JSON，`error.code` 为 `ai_consent_required`，`error.message` 指向「设置 → 隐私与数据」。不带 Oryn 密钥、上游在公网的 provider（`apiKey` 是环境变量名或 `!命令`，或只写了 `baseUrl`）同样改写到出站代理，请求里的凭据原样转发；上游在本机或内网的维持直连。
+- 记忆中转转发嵌入 / 重排之前判定，拒绝回 403 `{"code":"ai_consent_required"}`；助手记忆召回时判断模型被拒则按 RRF 顺序给出、不重排。
+- 全局助手与后台研究的正向代理（CONNECT 与 http 转发）在拨号之前判定 `web:public`，拒绝回 403；`coordinator.web_allow_hosts` 里的内网主机不需要同意。
+- 以环境变量降级的模型密钥（omp 直连上游，出站代理管不到）只在主人同意了 `model:<provider>` 之后才在工作 orb 的 setup 里注入；撤回对已经在运行的 orb 要到它下一次 setup（停机后恢复、重建）才生效。要让撤回立即生效，给这类 provider 写上 `baseUrl`。
+
+每个被拒的接收方只记一条日志（`AI 数据同意：主人尚未同意…`），同意后再被撤回会重新记。模型目录（`omp models`，只列模型、不带主人数据）不受同意限制。
+
+**升级到带服务端执行的版本**：已有服务器升级后，主人在「设置 → 隐私与数据」同意之前，AI 功能与后台 AI 任务（定时任务、后台研究、记忆抽取与整理）都会暂停：模型与记忆请求被拒、记失败或稍后重试，不会把数据发出去。定时任务的运行因此失败，连续失败达到上限（默认 3 次）会按原有规则自动暂停，同意后到定时页重新启用。升级后打开 Web UI 或 App，同意框列出当前的接收方，同意后下一个请求即恢复；以环境变量降级的 provider 要等 orb 下一次 setup 才拿到密钥。
+
 ## 8. 协调宿主（Space 与全局助手）
 
 Space 协调者与全局助手的 agent 不跑在 orb 里，而是跑在控制面这台机器上：orynd 内置一个名为 `@host` 的 provider（在 provider 列表里看不到），需要时拉起子进程 `orynd coordinator-host`，子进程先把自己关进操作系统沙箱，再以协调档启动 omp（每个协调对话一个进程）。子进程唯一的对外通道是 orynd 交给它的 socketpair；模型请求经它内部的代理端口回到 orynd，由 orynd 注入真实密钥，协调 agent 拿不到任何密钥。全局助手（不含 Space 协调者）的联网与 MCP 也走同一个代理端口，由 orynd 的正向代理放行公网目标，见下文「全局助手联网与 MCP（M19）」。

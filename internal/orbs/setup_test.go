@@ -17,9 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -213,4 +215,38 @@ func TestPlanDeliveryBudget(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "超过单次下发上限")
 	assert.Contains(t, err.Error(), "全局")
+}
+
+// TestPlanEnvFallbackRequiresConsent：环境变量降级的模型密钥（omp 直连上游，出站代理管不到）只在主人同意了
+// `model:<provider>` 之后才下发到工作 orb；撤回之后的下一次 setup 不再下发。
+func TestPlanEnvFallbackRequiresConsent(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(ctx, dataDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	box, err := secrets.New(bytes.Repeat([]byte{7}, 32))
+	require.NoError(t, err)
+	vault := secrets.NewVault(st, box)
+	home, err := agentcfg.NewHome(dataDir)
+	require.NoError(t, err)
+	_, err = home.Put(ctx, agentcfg.ModelsFile, []byte("providers:\n  groq:\n    apiKey: gsk-literal-0123456789abcdef\n"), 0, vault)
+	require.NoError(t, err)
+	require.NoError(t, st.Q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
+	d := &DefaultSetup{Store: st, Home: home, Vault: vault, AIConsent: aiconsent.NewGate(st.Q)}
+	env := func() map[string]string {
+		t.Helper()
+		p, err := d.Plan(ctx, db.Orb{ID: "orb-x"})
+		require.NoError(t, err)
+		return p.Params.Env
+	}
+
+	assert.NotContains(t, env(), "ORYN_MODEL_KEY_GROQ", "没有同意：降级的密钥不下发")
+	at := int64(1)
+	_, err = st.Q.SetOwnerAiConsent(ctx, db.SetOwnerAiConsentParams{ConsentedAt: &at, Recipients: `["model:groq"]`})
+	require.NoError(t, err)
+	assert.Equal(t, "gsk-literal-0123456789abcdef", env()["ORYN_MODEL_KEY_GROQ"])
+	_, err = st.Q.ClearOwnerAiConsent(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, env(), "ORYN_MODEL_KEY_GROQ", "撤回之后不再下发")
 }

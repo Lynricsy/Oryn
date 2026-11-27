@@ -7,14 +7,14 @@ iOS App（`com.lynricsy.oryn`）提交 App Store 审核时要填的内容：审�
 - Oryn 是自托管软件，每台服务器只有一个所有者。所有者账号在自己的服务器上创建：浏览器打开服务器日志里的 setup 链接，注册 Passkey 并保存 10 个恢复码（见 [deploy.md](deploy.md)）。App 里不能注册账号。
 - App 是 Tauri 壳：自带的连接页与用户自己的 orynd 配对，配对后加载该服务器的 Web UI。配对码要在已登录的浏览器里批准，App 里不能批准配对。
 - 对话、文件、记忆与设置都在用户自己的服务器上，开发者收不到。开发者运营的服务只有官方推送网关 `https://push.oryn.best`（见 [push-gateway.md](push-gateway.md) 与 [protocol.md](protocol.md)「官方推送网关」）。
-- 模型调用由服务器发出，设备从不直连 AI 服务商。App 在第一次使用 AI 功能前列出接收数据的服务商并征得同意，服务器新增服务商时再次征求；「设置 → 隐私与数据」可查看接收方并撤回同意，撤回后 App 里不能使用 AI 功能（Guideline 5.1.2(i)）。
+- 模型调用由服务器发出，设备从不直连 AI 服务商。服务器在所有者同意之前不把数据发给任何第三方 AI 服务：模型请求（含后台任务）、记忆的嵌入 / 重排 / 判断模型与助手联网都在发出前现查同意记录，没有同意的接收方一律拒绝（`ai_consent_required`），请求不发出。App 在第一次使用 AI 功能前列出接收数据的服务商并征得同意；服务器新增接收方（新的服务商或新的上游主机）时，发往它的请求在再次同意前被拒，App 随即再次征求。「设置 → 隐私与数据」可查看接收方并撤回同意，撤回后服务器经手的下一个请求即被拒，App 里不能使用 AI 功能（Guideline 5.1.2(i)）。本机与内网上的模型不算第三方；以环境变量降级下发到 orb 的模型密钥只在同意后下发，撤回要到 orb 下一次 setup 才收回（见 [deploy.md「AI 数据同意」](deploy.md#ai-数据同意app-store-512i)），演示服务器不要用这种配置。
 
 ## 审核用的演示服务器
 
 审核员没有自己的服务器，提交前准备一台专供审核的 orynd，不要用日常实例：
 
 1. 公网可达的 HTTPS 地址，证书由公共 CA 签发（App 只信任 Mozilla 根证书，私有 CA 不受支持）。
-2. 服务器版本与提交的 App 版本一致，含 AI 同意闸门。
+2. 服务器版本与提交的 App 版本一致，含 AI 同意闸门与服务端的同意执行。
 3. 至少配置一个模型 Provider，并放几条演示线程，让审核员能走通一次对话。
 4. `push.gateway.url` 保持缺省（官方网关），推送可用。
 5. 准备 3 个未用过的恢复码写进审核备注。恢复码每个只能用一次；用恢复码登录后要为审核设备注册一个新的 Passkey，之后才是完整的网页会话、能批准配对（恢复会话本身只能重新注册 Passkey，15 分钟有效）。
@@ -55,7 +55,9 @@ Steps:
 
 Data handling:
 - AI requests are sent by the user's server to the model providers its owner
-  configured, never from the device, and only after in-app consent
+  configured, never from the device. The server itself refuses to send any
+  data to a third-party AI provider until consent is given in the app, and
+  stops relaying requests to it as soon as consent is withdrawn
   (Guideline 5.1.2(i)).
 - The only service we operate is the push gateway (push.oryn.best). It stores
   an encrypted APNs device token and public keys, never notification content:
@@ -111,7 +113,8 @@ Contact: <联系人姓名>, <联系邮箱或电话>
 ## 提交前检查
 
 - [ ] IPA 里有 `Oryn.app/PrivacyInfo.xcprivacy` 与 `Oryn.app/PlugIns/NotificationService.appex/PrivacyInfo.xcprivacy`（见 mobile.md「隐私清单」）。
-- [ ] 演示服务器的版本含 AI 同意闸门：第一次使用 AI 前弹出列出服务商的同意提示，「设置 → 隐私与数据」能看到接收方并撤回。
+- [ ] 演示服务器的版本含 AI 同意闸门：第一次使用 AI 前弹出列出服务商的同意提示，「设置 → 隐私与数据」能看到接收方并撤回；撤回后发消息，回复是 `ai_consent_required` 的拒绝，重新同意后恢复。
+- [ ] 演示服务器的模型 Provider 写了 `baseUrl` 或在内置表里（anthropic、openai、google、deepseek、openrouter），没有以环境变量降级的 provider（它的撤回要到 orb 下一次 setup 才生效）。
 - [ ] 演示服务器公网可达、证书有效，配好模型 Provider，审核备注里的恢复码未用过；按「审核备注模板」的步骤用一台没配对过的设备走一遍（走完后重新准备恢复码）。
 - [ ] `https://docs.oryn.best/privacy/` 与 `https://docs.oryn.best/privacy/en/` 能打开，内容与当前版本一致。
 - [ ] 「App 隐私」问卷按上表填好，与隐私清单一致。

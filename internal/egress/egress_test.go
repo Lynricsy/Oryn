@@ -23,11 +23,12 @@ type fakeR struct {
 	pol     Policy
 	secrets map[string][2]string // id → 值, 允许主机（逗号分隔）
 	git     map[string]string
-	gh      string      // 非空时 GitHubToken 返回它
-	rec     *writeRec   // 非 nil 时记录 GitHub 写操作回调
-	gl      *gateFake   // 门禁现查的状态（gate_test.go）；nil 时一律不放行
-	mem     *memFake    // 记忆通道（memory_test.go）；nil 时没有记忆通道
-	hosted  *hostedFake // 托管仓库通道（hosted_test.go）；nil 时没有通道
+	gh      string       // 非空时 GitHubToken 返回它
+	rec     *writeRec    // 非 nil 时记录 GitHub 写操作回调
+	gl      *gateFake    // 门禁现查的状态（gate_test.go）；nil 时一律不放行
+	mem     *memFake     // 记忆通道（memory_test.go）；nil 时没有记忆通道
+	hosted  *hostedFake  // 托管仓库通道（hosted_test.go）；nil 时没有通道
+	consent *consentFake // AI 数据同意（consent_test.go）；nil 时一律拒绝
 }
 
 func (f fakeR) Policy() Policy { return f.pol }
@@ -323,7 +324,7 @@ func TestNoGitPolicy(t *testing.T) {
 	h := NewHandler("orb-x", fakeR{git: map[string]string{"github.com": "tok"}, pol: Policy{
 		NoGit:  true,
 		Routes: map[string]Route{"anthropic": {Origin: "https://api.anthropic.com", SecretIDs: []string{"s1"}}},
-	}})
+	}, consent: newConsent("model:anthropic@api.anthropic.com")})
 	for _, p := range []string{
 		"/git/github.com/a/b/info/refs?service=git-upload-pack",
 		"/git/github.com/a/b/git-upload-pack",

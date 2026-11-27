@@ -2944,7 +2944,10 @@
 		"decline": "不同意",
 		"declinedTitle": "不同意就无法使用 AI 功能",
 		"declinedBody": "Oryn 的对话、agent、记忆和联网都依赖这些服务。你可以更换服务器或退出登录；下次打开 Oryn 时会再次询问。",
-		"back": "返回"
+		"back": "返回",
+		"loadErrorTitle": "无法确认 AI 数据共享的同意状态",
+		"loadErrorBody": "在你同意之前，你的 Oryn 服务器不会把数据发给第三方 AI 服务。服务器能连上后请重试；一直失败可以更换服务器或退出登录。",
+		"retry": "重试"
 	},
 	"privacy": {
 		"aiTitle": "AI 数据共享",

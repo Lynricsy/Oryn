@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -60,6 +61,9 @@ type Config struct {
 	Family func(ctx context.Context, providerKey, modelID string) (apigen.MemoryFamily, error)
 	// Upstream 按中央模型目录查出模型的上游（模型中转用，见 relay.go）；nil 时 LLM 中转返回 503。
 	Upstream func(ctx context.Context, providerKey, modelID string) (ModelUpstream, error)
+	// AIConsent 是 AI 数据同意：中转发往第三方嵌入 / 重排接口之前现查（LLM 中转由 Upstream 的出站代理判定）；
+	// nil = 一律拒绝第三方接口。
+	AIConsent aiconsent.Checker
 }
 
 // Service 是记忆服务。

@@ -111,9 +111,9 @@ func TestImportAndRender(t *testing.T) {
 	assert.Equal(t, "!pass show key", p["cmdform"].APIKey)
 	assert.Equal(t, "ORYN_MODEL_KEY_EXA", p["exa"].APIKey)
 	assert.Equal(t, map[string]egress.Route{
-		"custom":    {Origin: "https://llm.example.com", SecretIDs: []string{"sec1"}},
-		"custom.m0": {Origin: "https://alt.example.com", SecretIDs: []string{"sec1"}},
-		"anthropic": {Origin: "https://api.anthropic.com", SecretIDs: []string{"sec2"}},
+		"custom":    {Origin: "https://llm.example.com", Provider: "custom", SecretIDs: []string{"sec1"}},
+		"custom.m0": {Origin: "https://alt.example.com", Provider: "custom", SecretIDs: []string{"sec1"}},
+		"anthropic": {Origin: "https://api.anthropic.com", Provider: "anthropic", SecretIDs: []string{"sec2"}},
 	}, out.Routes)
 	assert.Equal(t, map[string]string{"ORYN_MODEL_KEY_EXA": "exa-literal-xyz"}, out.Env)
 	assert.Len(t, out.Warnings, 1)
@@ -238,8 +238,62 @@ func TestSecretRefPolicy(t *testing.T) {
 	out, err := Render(map[string][]byte{ModelsFile: []byte(ok)}, r)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"ORYN_MODEL_KEY_X": "OWN"}, out.Env)
-	assert.Equal(t, egress.Route{Origin: "https://llm.example.com", SecretIDs: []string{"c"}}, out.Routes["custom"])
-	assert.Equal(t, egress.Route{Origin: "https://api.y.com", SecretIDs: []string{"c"}, HostBoundIDs: []string{"bound"}}, out.Routes["custom.m0"])
+	assert.Equal(t, egress.Route{Origin: "https://llm.example.com", Provider: "custom", SecretIDs: []string{"c"}}, out.Routes["custom"])
+	assert.Equal(t, egress.Route{Origin: "https://api.y.com", Provider: "custom", SecretIDs: []string{"c"}, HostBoundIDs: []string{"bound"}}, out.Routes["custom.m0"])
+}
+
+// AI 数据同意：不带 Oryn 密钥的 provider 上游在公网时同样改写到出站代理（路由不绑定密钥），本机 / 内网上游维持直连；
+// 只写了模型条目、没有 apiKey 与 baseUrl 的 provider 顶层不动（同意框也不列它）。
+func TestKeylessRemoteProvidersRouted(t *testing.T) {
+	yml := "providers:\n" +
+		"  envform:\n    apiKey: MY_KEY\n    baseUrl: https://llm.example.com/v1\n" +
+		"  openai:\n    apiKey: OPENAI_API_KEY\n" +
+		"  bare:\n    baseUrl: https://bare.example.org\n    models:\n      - id: a\n        baseUrl: http://192.168.1.5:8000/v1\n" +
+		"      - id: b\n        baseUrl: https://cloud.example.net/v1\n" +
+		"  home:\n    baseUrl: http://gpu.local/v1\n" +
+		"  anthropic:\n    models:\n      - id: x\n"
+	out, err := RenderAt(map[string][]byte{ModelsFile: []byte(yml)}, fakeResolver{}, "127.0.0.1:9911")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]egress.Route{
+		"envform": {Origin: "https://llm.example.com", Provider: "envform"},
+		"openai":  {Origin: "https://api.openai.com", Provider: "openai"},
+		"bare":    {Origin: "https://bare.example.org", Provider: "bare"},
+		"bare.m1": {Origin: "https://cloud.example.net", Provider: "bare"},
+	}, out.Routes)
+	var doc struct {
+		Providers map[string]struct {
+			BaseURL string `yaml:"baseUrl"`
+			APIKey  string `yaml:"apiKey"`
+			Models  []struct {
+				BaseURL string `yaml:"baseUrl"`
+			} `yaml:"models"`
+		} `yaml:"providers"`
+	}
+	require.NoError(t, yaml.Unmarshal(out.Files[ModelsFile], &doc))
+	p := doc.Providers
+	assert.Equal(t, "http://127.0.0.1:9911/llm/envform/v1", p["envform"].BaseURL)
+	assert.Equal(t, "MY_KEY", p["envform"].APIKey, "请求里的凭据由 omp 自己带上，代理原样转发")
+	assert.Equal(t, "http://127.0.0.1:9911/llm/openai/v1", p["openai"].BaseURL)
+	assert.Equal(t, "http://127.0.0.1:9911/llm/bare", p["bare"].BaseURL)
+	assert.Equal(t, "http://192.168.1.5:8000/v1", p["bare"].Models[0].BaseURL, "内网上游维持直连")
+	assert.Equal(t, "http://127.0.0.1:9911/llm/bare.m1/v1", p["bare"].Models[1].BaseURL)
+	assert.Equal(t, "http://gpu.local/v1", p["home"].BaseURL)
+	assert.Empty(t, p["anthropic"].BaseURL)
+}
+
+// AI 数据同意：环境变量降级的密钥只对 EnvConsent 放行的 provider 下发，其余换成不绑定路由的占位符。
+func TestEnvFallbackRequiresConsent(t *testing.T) {
+	r := fakeResolver{
+		"omp/models/x/apiKey": {"a", "X-KEY", ""},
+		"omp/models/y/apiKey": {"b", "Y-KEY", ""},
+	}
+	yml := "providers:\n  x:\n    apiKey: \"${oryn:secret:omp/models/x/apiKey}\"\n  y:\n    apiKey: \"${oryn:secret:omp/models/y/apiKey}\"\n"
+	out, err := RenderWith(map[string][]byte{ModelsFile: []byte(yml)}, r, RenderOptions{EnvConsent: func(k string) bool { return k == "x" }})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"ORYN_MODEL_KEY_X": "X-KEY"}, out.Env)
+	assert.Contains(t, string(out.Files[ModelsFile]), Placeholder("b"))
+	assert.NotContains(t, string(out.Files[ModelsFile]), "Y-KEY")
+	assert.Empty(t, out.Routes)
 }
 
 // OD5：provider 的模型条目 baseUrl 在另一台主机上：导入绑定的主机含它，经 egress 的请求能用上真实密钥。
@@ -287,3 +341,6 @@ func (p policyResolver) GitHubToken() (string, bool)                      { retu
 func (p policyResolver) GitHubTokenRejected(string)                       {}
 func (p policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (p policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}
+
+// AIConsent：测试上游都在本机，不经同意判定；判定本身见 egress 的测试。
+func (p policyResolver) AIConsent(string) error { return nil }

@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/secrets"
 )
@@ -309,6 +310,10 @@ type RenderOptions struct {
 	// 没有 baseUrl 的 provider 的 apiKey 换成占位符、不进 Env、不绑定路由——这类 provider 在该宿主上不可用，
 	// 模型目录照常显示。
 	NoEnvFallback bool
+	// EnvConsent 非 nil 时，环境变量降级只对它返回真的 provider 生效（AI 数据同意：降级的密钥让 omp 直连上游，
+	// 出站代理管不到，只能在下发时扣下）；返回假的 provider 按 NoEnvFallback 处理。nil = 不按同意过滤
+	// （渲染结果的 Env 不下发到任何地方的调用方）。
+	EnvConsent func(providerKey string) bool
 }
 
 // RenderWith 按 opts 生成 omp-home 文件。
@@ -336,6 +341,10 @@ func RenderWith(files map[string][]byte, r Resolver, opts RenderOptions) (Render
 //   - 环境变量降级只用于该密钥，且仅当它没有绑定上游主机（绑定了主机的密钥只能经代理使用）；opts.NoEnvFallback 时不降级；
 //   - provider 子树里的其它引用必须属于 hosts 非空的密钥，且只绑定到上游主机与 hosts 匹配的路由；
 //   - providers 之外的引用换成占位符但不绑定任何路由（egress 拒绝使用）；任何位置都不能引用 git/* 密钥。
+//
+// 不带 Oryn 密钥的 provider（apiKey 是环境变量名、`!命令`，或只写了 baseUrl）上游在公网时同样改写到出站代理：路由不绑定
+// 任何密钥，请求里的凭据原样转发，代理据此执行 AI 数据同意（与 internal/api 的接收方推导同一口径：有 apiKey 或 baseUrl
+// 时含顶层上游，模型条目自带的 baseUrl 总是改写）。上游在本机或内网的维持直连（它们不是第三方，orb 内的本机也不是控制面的本机）。
 func renderModels(content []byte, r Resolver, opts RenderOptions, out *Rendered) ([]byte, error) {
 	egressAddr := opts.EgressAddr
 	doc, providers, err := parseModels(content)
@@ -356,20 +365,26 @@ func renderModels(content []byte, r Resolver, opts RenderOptions, out *Rendered)
 		origins := map[string]string{} // 本 provider 产生的路由键 → 上游前缀
 		var own []string               // 本 provider 自己的 apiKey 密钥 id
 		ak := mapGet(prov, "apiKey")
-		if ak != nil && ak.Kind == yaml.ScalarNode && ak.Value == SecretRef(ModelKeySecretName(key)) {
+		bu := mapGet(prov, "baseUrl")
+		ownKey := ak != nil && ak.Kind == yaml.ScalarNode && ak.Value == SecretRef(ModelKeySecretName(key))
+		if ownKey {
 			secretName := ModelKeySecretName(key)
 			id, value, ok := r.Lookup(secretName)
 			if !ok {
 				return nil, fmt.Errorf("provider %s 引用的密钥 %s 不存在", key, secretName)
 			}
 			base := providerBase(key, prov)
-			bu := mapGet(prov, "baseUrl")
 			switch {
 			case base == "" && opts.NoEnvFallback:
 				// 不降级：占位符既不是环境变量名也不绑定路由，真实密钥不离开控制面
 				ak.Value = Placeholder(id)
 				ak.Style = yaml.DoubleQuotedStyle
 				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 没有 baseUrl 且不在内置表中，在不下发密钥的宿主上不可用", key))
+			case base == "" && opts.EnvConsent != nil && !opts.EnvConsent(key):
+				// 主人还没同意把数据发给这个 provider：降级的密钥不下发（同意之后的下一次 setup 才注入）
+				ak.Value = Placeholder(id)
+				ak.Style = yaml.DoubleQuotedStyle
+				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 以环境变量降级，主人尚未在「设置 → 隐私与数据」同意把数据发给它，密钥未下发", key))
 			case base == "":
 				// 环境变量降级：omp 先把 apiKey 当环境变量名解析
 				if _, hosts, _ := r.SecretByID(id); len(hosts) > 0 {
@@ -390,30 +405,39 @@ func renderModels(content []byte, r Resolver, opts RenderOptions, out *Rendered)
 				ak.Style = yaml.DoubleQuotedStyle
 				own = append(own, id)
 				origins[key] = origin
-				if bu == nil {
-					appendPair(prov, "baseUrl", local)
-				} else {
-					bu.Value = local
-				}
+				setBase(prov, bu, local)
 			}
-			// 自定义模型条目自带的 baseUrl
-			if models := mapGet(prov, "models"); models != nil && models.Kind == yaml.SequenceNode {
-				for i, m := range models.Content {
-					if m.Kind != yaml.MappingNode {
-						continue
-					}
-					mb := mapGet(m, "baseUrl")
-					if mb == nil || mb.Kind != yaml.ScalarNode || mb.Value == "" {
-						continue
-					}
-					rk := fmt.Sprintf("%s.m%d", key, i)
-					local, origin, err := rewriteBase(mb.Value, rk, egressAddr)
-					if err != nil {
-						return nil, fmt.Errorf("provider %s models[%d].baseUrl: %w", key, i, err)
-					}
-					mb.Value = local
-					origins[rk] = origin
+		} else if hasValue(ak) || hasValue(bu) {
+			// 不带 Oryn 密钥：公网上游经出站代理（AI 数据同意），本机 / 内网上游维持直连
+			if base := providerBase(key, prov); base != "" && !aiconsent.IsLocalHost(aiconsent.URLHost(base)) {
+				local, origin, err := rewriteBase(base, key, egressAddr)
+				if err != nil {
+					return nil, fmt.Errorf("provider %s baseUrl: %w", key, err)
 				}
+				origins[key] = origin
+				setBase(prov, bu, local)
+			}
+		}
+		// 自定义模型条目自带的 baseUrl（不带 Oryn 密钥时只改写公网上游）
+		if models := mapGet(prov, "models"); models != nil && models.Kind == yaml.SequenceNode {
+			for i, m := range models.Content {
+				if m.Kind != yaml.MappingNode {
+					continue
+				}
+				mb := mapGet(m, "baseUrl")
+				if mb == nil || mb.Kind != yaml.ScalarNode || mb.Value == "" {
+					continue
+				}
+				if !ownKey && aiconsent.IsLocalHost(aiconsent.URLHost(mb.Value)) {
+					continue
+				}
+				rk := fmt.Sprintf("%s.m%d", key, i)
+				local, origin, err := rewriteBase(mb.Value, rk, egressAddr)
+				if err != nil {
+					return nil, fmt.Errorf("provider %s models[%d].baseUrl: %w", key, i, err)
+				}
+				mb.Value = local
+				origins[rk] = origin
 			}
 		}
 		// provider 子树内其余密钥引用（如自定义请求头）：只绑定到主机匹配的路由
@@ -441,7 +465,7 @@ func renderModels(content []byte, r Resolver, opts RenderOptions, out *Rendered)
 			}
 		}
 		for rk, origin := range origins {
-			out.Routes[rk] = egress.Route{Origin: origin, SecretIDs: own, HostBoundIDs: bound[rk]}
+			out.Routes[rk] = egress.Route{Origin: origin, Provider: key, SecretIDs: own, HostBoundIDs: bound[rk]}
 		}
 	}
 	// providers 之外的引用：换成占位符但不绑定任何路由（egress 会拒绝使用）
@@ -488,6 +512,20 @@ func providerBase(key string, prov *yaml.Node) string {
 		return bu.Value
 	}
 	return BuiltinBaseURLs[key]
+}
+
+// hasValue 报告节点是非空的标量。
+func hasValue(n *yaml.Node) bool {
+	return n != nil && n.Kind == yaml.ScalarNode && strings.TrimSpace(n.Value) != ""
+}
+
+// setBase 把 provider 的 baseUrl 设为 local（没有 baseUrl 键时追加）。
+func setBase(prov, bu *yaml.Node, local string) {
+	if bu == nil {
+		appendPair(prov, "baseUrl", local)
+		return
+	}
+	bu.Value = local
 }
 
 // rewriteBase 把上游 baseUrl 改写为经 orbd 出站代理的地址，返回新地址与上游前缀。

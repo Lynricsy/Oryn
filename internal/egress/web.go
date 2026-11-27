@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 )
 
 // webDialTimeout 是正向代理（CONNECT 隧道与 absolute-form 转发）连接上游的拨号超时。
@@ -327,12 +329,18 @@ func webAllowed(pol *WebPolicy, host, port string) bool {
 
 // dialWeb 为正向代理连接 host:port：命中 AllowHosts 时普通拨号，否则只连公网地址（errNotPublic）。
 func dialWeb(ctx context.Context, pol *WebPolicy, host, port string) (net.Conn, error) {
+	if webTestDial != nil {
+		return webTestDial(ctx, net.JoinHostPort(host, port))
+	}
 	d := net.Dialer{Timeout: webDialTimeout}
 	if !webAllowed(pol, host, port) {
 		d.Control = publicOnly
 	}
 	return d.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 }
+
+// webTestDial 非 nil 时代替 dialWeb 的拨号（只有测试赋值：把公网主机名拨到测试服务器）。
+var webTestDial func(ctx context.Context, addr string) (net.Conn, error)
 
 // webPolicyKey 是 absolute-form 转发请求的 context 里携带 *WebPolicy 的键（webTransport 拨号时取）。
 type webPolicyKey struct{}
@@ -377,14 +385,40 @@ func denyWeb(w http.ResponseWriter, who, target string, err error) {
 	http.Error(w, "oryn egress: 上游不可达", http.StatusBadGateway)
 }
 
-// serveConnect 处理 `CONNECT host:port`（M19 正向代理）：策略没有 Web 时 403。
+// serveConnect 处理 `CONNECT host:port`（M19 正向代理）：策略没有 Web 时 403；目标不是主人放行的内网服务时须主人
+// 已同意联网（aiconsent.WebRecipientID），否则 403 `ai_consent_required`，不拨号。
 func (h *Handler) serveConnect(w http.ResponseWriter, r *http.Request) {
-	serveWebConnect(w, r, h.R.Policy().Web, h.OrbID)
+	pol := h.R.Policy().Web
+	if pol != nil && !h.webConsented(w, pol, r.Host) {
+		return
+	}
+	serveWebConnect(w, r, pol, h.OrbID)
 }
 
-// serveForward 处理协调宿主的 absolute-form 请求（M19 正向代理），见 serveWebForward。
+// serveForward 处理协调宿主的 absolute-form 请求（M19 正向代理），见 serveWebForward；同意判定同 serveConnect。
 func (h *Handler) serveForward(w http.ResponseWriter, r *http.Request, pol *WebPolicy) {
+	if pol != nil && !h.webConsented(w, pol, r.URL.Host) {
+		return
+	}
 	serveWebForward(w, r, pol, h.OrbID)
+}
+
+// webConsented 判定正向代理的目标（host[:port]）能否发出：写在 AllowHosts 里、且是本机或内网主机名的目标
+// （主人放行的内网服务）不是第三方，直接放行；其余（公网目标）须主人已同意全局助手联网。拒绝时已写出 403
+// （正文含 ai_consent_required 与去处），不拨号。
+func (h *Handler) webConsented(w http.ResponseWriter, pol *WebPolicy, hostport string) bool {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host, port = hostport, "80"
+	}
+	if webAllowed(pol, host, port) && aiconsent.IsLocalHost(host) {
+		return true
+	}
+	if err := h.R.AIConsent(aiconsent.WebRecipientID); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // serveWebConnect 处理 `CONNECT host:port`：pol 为 nil 时 403；拨号成功后接管连接，回 200 并在两端之间双向转发。

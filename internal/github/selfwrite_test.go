@@ -328,6 +328,9 @@ func (r svcResolver) GitHubToken() (string, bool) {
 func (r svcResolver) GitHubTokenRejected(tok string) {
 	r.e.s.GitHubTokenRejected(r.e.ctx, r.orbID, tok)
 }
+
+// AIConsent：这些测试只走 git 与 GitHub 路由，没有 AI 接收方。
+func (svcResolver) AIConsent(string) error { return nil }
 func (r svcResolver) GitHubWriteBegin(w egress.GitHubWrite) string {
 	return r.e.s.GitHubWriteBegin(r.e.ctx, r.orbID, w)
 }

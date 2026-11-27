@@ -283,7 +283,8 @@ func (c *Catalog) run(cl *call, files map[string][]byte) {
 }
 
 // loadConfig 读取 models.yml 与 config.yml（不存在的跳过），并计算缓存键：
-// sha256(渲染后的 models.yml ‖ config.yml ‖ 本架构 Core 钉住的 sha256)，各段带长度前缀。
+// sha256(渲染后的 models.yml ‖ config.yml ‖ 出站路由 ‖ 本架构 Core 钉住的 sha256)，各段带长度前缀。渲染后的 baseUrl
+// 只剩 `/llm/<路由键>/…`，上游主机只在路由里，所以路由也进键：换了上游主机要重跑目录。
 func (c *Catalog) loadConfig() (string, map[string][]byte, error) {
 	files := map[string][]byte{}
 	for _, p := range []string{agentcfg.ModelsFile, agentcfg.ConfigFile} {
@@ -300,10 +301,15 @@ func (c *Catalog) loadConfig() (string, map[string][]byte, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	routes, err := json.Marshal(rendered.Routes) // map 键按序编码，结果稳定
+	if err != nil {
+		return "", nil, err
+	}
 	h := sha256.New()
 	for _, part := range [][]byte{
 		rendered.Files[agentcfg.ModelsFile],
 		rendered.Files[agentcfg.ConfigFile],
+		routes,
 		[]byte(core.Pin()[pinKey()]),
 	} {
 		_ = binary.Write(h, binary.BigEndian, uint64(len(part)))

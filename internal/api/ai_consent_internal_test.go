@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 )
 
@@ -89,18 +90,14 @@ func TestDeriveAIRecipients(t *testing.T) {
 			{ID: "model:openai@api.openai.com", Name: "OpenAI", Host: host("api.openai.com"), Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeChat, apigen.AiDataPurposeMemory}},
 			{ID: "memory-embed:api.openai.com", Name: "OpenAI", Host: host("api.openai.com"), Purposes: mem},
 			{ID: "memory-decide:generativelanguage.googleapis.com", Name: "Google", Host: host("generativelanguage.googleapis.com"), Purposes: mem},
-			{ID: webRecipientID, Name: "Web", Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeWeb}},
+			{ID: aiconsent.WebRecipientID, Name: "Web", Purposes: []apigen.AiDataPurpose{apigen.AiDataPurposeWeb}},
 		}, got, "本机的重排接口不列出")
 	})
-}
 
-func TestIsLocalHost(t *testing.T) {
-	for h, want := range map[string]bool{
-		"": false, "localhost": true, "LOCALHOST.": true, "a.localhost": true, "nas.local": true, "host.docker.internal": true,
-		"ollama": true, "127.0.0.1": true, "::1": true, "10.0.0.2": true, "172.16.3.4": true, "192.168.0.1": true,
-		"169.254.1.1": true, "fe80::1": true, "fd00::1": true, "100.64.0.1": true, "0.0.0.0": true,
-		"8.8.8.8": false, "2001:4860::1": false, "api.openai.com": false,
-	} {
-		assert.Equal(t, want, isLocalHost(h), h)
-	}
+	t.Run("本机的 gemini-rerank 适配器按 Google 列出", func(t *testing.T) {
+		got := deriveAIRecipients(aiRecipientSources{MemoryRerankURL: "http://127.0.0.1:27183", MemoryRerankModel: "gemini-decision-1"})
+		assert.Equal(t, []apigen.AiDataRecipient{
+			{ID: "memory-rerank:generativelanguage.googleapis.com", Name: "Google", Host: host("generativelanguage.googleapis.com"), Purposes: mem},
+		}, got)
+	})
 }

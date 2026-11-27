@@ -2944,7 +2944,10 @@
 		"decline": "Don't agree",
 		"declinedTitle": "AI features need your consent",
 		"declinedBody": "Chats, agents, memory and web access in Oryn all rely on these services. You can change servers or sign out; Oryn will ask again next time you open it.",
-		"back": "Back"
+		"back": "Back",
+		"loadErrorTitle": "Couldn't check AI data sharing consent",
+		"loadErrorBody": "Your Oryn server doesn't send your data to third-party AI services until you agree. Retry once the server is reachable; if it keeps failing, change servers or sign out.",
+		"retry": "Retry"
 	},
 	"privacy": {
 		"aiTitle": "AI data sharing",

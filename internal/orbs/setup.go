@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/link"
@@ -96,6 +97,9 @@ type DefaultSetup struct {
 	PublicURL string
 	// CoordinatorSkill 返回下发给协调宿主的内置技能文件（omp-home 相对路径 → 内容，coord.SkillFiles）；nil = 不下发。
 	CoordinatorSkill func() map[string][]byte
+	// AIConsent 是 AI 数据同意：环境变量降级的模型密钥只对主人已同意的 provider 下发到工作 orb（降级的密钥让 omp
+	// 直连上游，出站代理管不到）。nil = 一律不下发降级的密钥。
+	AIConsent aiconsent.Checker
 }
 
 // SSH 给出一台 orb 的 SSH 配置（M18）；协调 orb 返回 nil（不动 orb 内的 SSH 配置），runner 只有全局主机（M21）。
@@ -479,7 +483,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 		plan.Egress.GitRepos[projectRepo.host] = []string{egress.NormalizeRepo(projectRepo.path)}
 	}
 	if d.Home != nil {
-		home, rendered, _, err := d.renderHome(resolver, agentcfg.RenderOptions{}, nil)
+		home, rendered, _, err := d.renderHome(resolver, agentcfg.RenderOptions{EnvConsent: d.envConsent(ctx)}, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -547,6 +551,15 @@ func RunnerProjectConfigOf(projects ProjectConfigs, projectID string, extra map[
 		return nil, withheld, nil
 	}
 	return &apigen.LinkCtlProjectConfig{Files: ompFiles(files, modes)}, withheld, nil
+}
+
+// envConsent 返回环境变量降级的同意判定：provider 没有上游主机，接收方 id 是 `model:<key>`（aiconsent.ModelRecipient）；
+// 本机 provider（ollama / lmstudio）不是第三方，照常降级。
+func (d *DefaultSetup) envConsent(ctx context.Context) func(string) bool {
+	return func(key string) bool {
+		id, third := aiconsent.ModelRecipient(key, "")
+		return !third || aiconsent.Check(ctx, d.AIConsent, id) == nil
+	}
 }
 
 // renderHome 读全局 omp-home 并按 opts 变换（models.yml 的密钥换成占位符、baseUrl 改写到出站代理），返回下发清单与

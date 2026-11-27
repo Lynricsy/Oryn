@@ -53,6 +53,10 @@ func (policyResolver) GitHubTokenRejected(string) {}
 func (policyResolver) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (policyResolver) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}
 
+// AIConsent 实现 egress.ConsentLookup：目录运行（`omp models`）只列出模型、不带主人的任何数据，不是同意要管的出站；
+// 接收方清单本身要靠目录推导，在同意之前也必须能跑。
+func (policyResolver) AIConsent(string) error { return nil }
+
 // serveEgress 在 ln 上提供 egress 代理；调用方负责 Close 返回的 server（同时关闭 ln）。
 func serveEgress(ln net.Listener, r vaultResolver, routes map[string]egress.Route) *http.Server {
 	srv := &http.Server{

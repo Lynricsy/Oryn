@@ -1,6 +1,6 @@
 // Package relayroute 为记忆模型中转查出中央模型目录里一个模型的协议类型与上游：按控制面的 models.yml 渲染出
-// egress 路由（agentcfg.RenderAt），再经 egress.Handler 转发。真实密钥的注入、绑定检查与响应脱敏全部沿用 egress 的规则，
-// 这里不接触密钥明文。
+// egress 路由（agentcfg.RenderAt），再经 egress.Handler 转发。真实密钥的注入、绑定检查、响应脱敏与 AI 数据同意的判定
+// 全部沿用 egress 的规则，这里不接触密钥明文。
 //
 // 它单独成包是因为 egress 依赖 memory（网关的调用方身份），memory 不能反过来依赖 egress；由 orynd 装配进 memory.Config。
 package relayroute
@@ -18,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/egress"
 	"github.com/Lynricsy/Oryn/internal/memory"
@@ -36,13 +37,14 @@ var ErrUnsupported = errors.New("模型协议不受记忆中转支持")
 // Router 按控制面的 omp-home（中央模型目录同一份 models.yml）解析模型路由。每次调用都重新渲染，
 // 管理页换模型、主人改 models.yml 或轮换密钥都在下一条请求生效。
 type Router struct {
-	home  *agentcfg.Home
-	vault *secrets.Vault
+	home    *agentcfg.Home
+	vault   *secrets.Vault
+	consent aiconsent.Checker
 }
 
-// New 构造路由解析器。
-func New(home *agentcfg.Home, vault *secrets.Vault) *Router {
-	return &Router{home: home, vault: vault}
+// New 构造路由解析器。consent 是 AI 数据同意（nil = 一律拒绝发往第三方上游）。
+func New(home *agentcfg.Home, vault *secrets.Vault, consent aiconsent.Checker) *Router {
+	return &Router{home: home, vault: vault, consent: consent}
 }
 
 // route 是一个模型解析出的上游。
@@ -73,7 +75,7 @@ func (r *Router) Upstream(_ context.Context, providerKey, modelID string) (memor
 	if err != nil {
 		return memory.ModelUpstream{}, err
 	}
-	h := egress.NewHandler(egressID, policy{vault: r.vault, routes: rt.routes})
+	h := egress.NewHandler(egressID, policy{vault: r.vault, routes: rt.routes, consent: r.consent})
 	return memory.ModelUpstream{Family: rt.family, Forward: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		forward(h, rt, w, req)
 	})}, nil
@@ -228,6 +230,7 @@ type policy struct {
 	egress.NoHostedGit  // 没有托管仓库通道
 	vault               *secrets.Vault
 	routes              map[string]egress.Route
+	consent             aiconsent.Checker
 }
 
 func (p policy) Policy() egress.Policy { return egress.Policy{Routes: p.routes, NoGit: true} }
@@ -244,3 +247,8 @@ func (policy) GitHubTokenRejected(string) {}
 // 中转没有 GitHub 路由，不会出现 GitHub 写操作。
 func (policy) GitHubWriteBegin(egress.GitHubWrite) string       { return "" }
 func (policy) GitHubWriteEnd(egress.GitHubWrite, int, []string) {}
+
+// AIConsent 实现 egress.ConsentLookup：Hindsight 调用的模型（记忆抽取、整理、回答）同样要主人已同意。
+func (p policy) AIConsent(recipient string) error {
+	return aiconsent.Check(context.Background(), p.consent, recipient)
+}
