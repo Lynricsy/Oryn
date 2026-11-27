@@ -535,9 +535,9 @@ func messageKey(payload json.RawMessage) string {
 
 func (a *attacher) frame(raw json.RawMessage) {
 	var f struct {
-		Type    string `json:"type"`
-		ID      string `json:"id"`
-		Method  string `json:"method"`
+		Type     string   `json:"type"`
+		ID       string   `json:"id"`
+		Method   string   `json:"method"`
 		Target   string   `json:"targetId"`
 		Steering []string `json:"steering"`
 		FollowUp []string `json:"followUp"`

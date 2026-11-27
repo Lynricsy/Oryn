@@ -75,7 +75,9 @@ func exitCode(err error) int {
 
 func TestSandboxUpRoundsDurations(t *testing.T) {
 	f := &fakeSandboxAPI{orb: true, handlers: map[string]func(map[string]any) (any, error){
-		"create": func(map[string]any) (any, error) { return map[string]any{"sandbox": map[string]any{"id": "sbx_1"}}, nil },
+		"create": func(map[string]any) (any, error) {
+			return map[string]any{"sandbox": map[string]any{"id": "sbx_1"}}, nil
+		},
 	}}
 	out, _, err := runSandbox(t, f, "up", "--network", "none", "--backend", "kvm", "--idle", "90s", "--ttl", "2h")
 	require.NoError(t, err)

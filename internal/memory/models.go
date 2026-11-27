@@ -23,7 +23,9 @@ type CatalogModel struct {
 }
 
 // endpointAAD 是嵌入或重排 key 在 secrets.Box 里的 AAD 名称（与迁移 0036 的注释一致）。
-func endpointAAD(kind apigen.MemoryEndpointKind) string { return "memory/endpoint/" + string(kind) + "/api-key" }
+func endpointAAD(kind apigen.MemoryEndpointKind) string {
+	return "memory/endpoint/" + string(kind) + "/api-key"
+}
 
 // familyOfModel 用 Config.Family 判定模型的协议类型；不支持或查不到时返回原因。
 func (s *Service) familyOfModel(ctx context.Context, providerKey, modelID string) (apigen.MemoryFamily, string) {

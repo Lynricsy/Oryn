@@ -145,7 +145,7 @@ func (h *Host) CloseFrame(token string) {
 }
 
 func isPublicFrame(g *frame) bool { return g.public }
-func anyFrame(*frame) bool       { return true }
+func anyFrame(*frame) bool        { return true }
 
 // add 登记一个帧：先清掉过期的；公开帧另有上限 maxPublicFrames，超出时只淘汰最旧的公开帧。全部帧（含公开帧）
 // 共用总上限 maxFrames：总表满时优先淘汰最久未用的公开帧；没有公开帧可淘汰时，主人的申请淘汰最久未用的帧，

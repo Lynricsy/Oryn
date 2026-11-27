@@ -299,8 +299,8 @@ func parseHTMLForm(raw string) ([]formBlock, bool) {
 		root = doc
 	}
 	var (
-		blocks     []formBlock
-		fields     = map[string]*formField{}
+		blocks      []formBlock
+		fields      = map[string]*formField{}
 		unsupported bool
 	)
 	var walk func(n *html.Node, legend string, labelText string)

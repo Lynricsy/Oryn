@@ -31,9 +31,9 @@ import (
 type admFake struct {
 	srv *httptest.Server
 
-	mu       sync.Mutex
-	key      string
-	failDel  bool // DELETE 一律 500
+	mu      sync.Mutex
+	key     string
+	failDel bool // DELETE 一律 500
 	// failRefresh 非 0 时 mental model 的 refresh 返回这个状态
 	failRefresh int
 	reflects    []map[string]any
@@ -42,19 +42,19 @@ type admFake struct {
 	// pauses 按 "METHOD path" 暂停一次请求（不持有 mu），用来确定性地制造并发交错
 	pauseMu sync.Mutex
 	pauses  map[string]*admPause
-	docs     map[string]*admDoc
-	models   map[string]*admModel
-	ops      map[string]map[string]any
-	files    map[string][]byte
-	calls    []string // "METHOD path"
-	retains  []map[string]any
-	recalls  []map[string]any
-	refresh  []string // "<id>:<mode>"
-	creates  []map[string]any
-	patches  []map[string]any
-	docDels  []string
-	mmDels   []string
-	clock    int
+	docs    map[string]*admDoc
+	models  map[string]*admModel
+	ops     map[string]map[string]any
+	files   map[string][]byte
+	calls   []string // "METHOD path"
+	retains []map[string]any
+	recalls []map[string]any
+	refresh []string // "<id>:<mode>"
+	creates []map[string]any
+	patches []map[string]any
+	docDels []string
+	mmDels  []string
+	clock   int
 }
 
 type admDoc struct {
@@ -1114,7 +1114,9 @@ func TestMemoryAdminForgetHidesStaleModel(t *testing.T) {
 	out, err := e.svc.ForgetThread(ctx, "T-a")
 	require.NoError(t, err)
 	assert.Equal(t, 1, out.Deleted)
-	f.with(func(f *admFake) { assert.Equal(t, []string{mm + ":full"}, f.refresh, "删除后立即提交全量刷新") })
+	f.with(func(f *admFake) {
+		assert.Equal(t, []string{mm + ":full"}, f.refresh, "删除后立即提交全量刷新")
+	})
 
 	// hidden 以 P 线程身份核对网关：list / get 的内容为空、历史为空、reflect 排除该模型
 	hidden := func(gw *memory.Gateway) {

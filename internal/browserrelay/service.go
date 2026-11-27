@@ -21,9 +21,9 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/auth"
-	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
@@ -477,6 +477,7 @@ func (s *Service) notifyApprovalResolved(threadID, decision, summary string) {
 		}
 	}()
 }
+
 // HTTPStatusForError 把本包业务错误映射为 HTTP 状态码与错误码。
 func HTTPStatusForError(err error) (int, string) {
 	switch {

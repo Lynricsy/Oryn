@@ -41,8 +41,8 @@ func TestOverflowFactsStayEncodable(t *testing.T) {
 	}
 	day := int64(24 * time.Hour / time.Millisecond)
 	for _, w := range []struct{ from, to int64 }{
-		{ts - day, ts + day},       // 中段读汇总
-		{ts - 1, ts + 1},           // 整段读原始行
+		{ts - day, ts + day},      // 中段读汇总
+		{ts - 1, ts + 1},          // 整段读原始行
 		{ts - 7, now.UnixMilli()}, // 头尾原始行
 	} {
 		for _, g := range []string{GroupModel, GroupThread, GroupPurpose, GroupTotal, GrainDay} {
