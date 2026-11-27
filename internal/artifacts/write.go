@@ -86,9 +86,17 @@ type staged struct {
 }
 
 // keepBytes 报告写入时是否要在内存里保留该文件的字节（HTML 的 UTF-8 校验、canvas.json 与类型化入口文件的解析）。
-// 类型化 artifact 的图片只校验文件头，不整体留在内存里。
+// 类型化 artifact 的图片只校验文件头，不整体留在内存里；二进制（Office）类型的入口在内容存储的文件上校验。
 func keepBytes(path, typ string) bool {
-	return IsHTML(path) || path == EntryCanvas || (typ != "" && path == TypeEntry(typ))
+	return IsHTML(path) || path == EntryCanvas || (typ != "" && !IsBinaryType(typ) && path == TypeEntry(typ))
+}
+
+// fileLimit 返回单个文件的上限：二进制类型的入口用 MaxOfficeFileBytes，其余 MaxFileBytes。
+func fileLimit(path, typ string) int64 {
+	if IsBinaryType(typ) && path == TypeEntry(typ) {
+		return MaxOfficeFileBytes
+	}
+	return MaxFileBytes
 }
 
 // stage 校验路径并把新文件落进内容存储（事务之外，流式）。
@@ -110,9 +118,10 @@ func (s *Service) stage(changes []FileChange, typ string) (staged, error) {
 		if ch.Data == nil {
 			return staged{}, opErr(CodeInvalid, "文件 %s 缺少内容。", ch.Path)
 		}
-		st, err := s.c.put(ch.Data, MaxFileBytes, keepBytes(ch.Path, typ))
+		limit := fileLimit(ch.Path, typ)
+		st, err := s.c.put(ch.Data, limit, keepBytes(ch.Path, typ))
 		if errors.Is(err, errFileTooLarge) {
-			return staged{}, opErr(CodeTooLarge, "文件 %s 超过单文件上限 %d MiB。请拆小或压缩。", ch.Path, MaxFileBytes>>20)
+			return staged{}, opErr(CodeTooLarge, "文件 %s 超过单文件上限 %d MiB。请拆小或压缩。", ch.Path, limit>>20)
 		}
 		if err != nil {
 			return staged{}, err
@@ -251,11 +260,28 @@ func (s *Service) headBytes(st staged, m manifest, path string, n int) ([]byte, 
 	return buf[:k], nil
 }
 
-// validateTyped 按类型规格校验类型化 artifact 的清单：入口文件给完整内容，其余文件给文件头。
+// validateTyped 按类型规格校验类型化 artifact 的清单：入口文件给完整内容，其余文件给文件头；
+// 二进制类型只允许入口一个文件，并在内容存储的文件上调 Inspect。
 func (s *Service) validateTyped(typ string, m manifest, st staged) (shape, error) {
 	spec, ok := LookupType(typ)
 	if !ok {
-		return shape{}, opErr(CodeInvalid, "未知的类型 %q；只能是 document 或 slides。", typ)
+		return shape{}, opErr(CodeInvalid, "未知的类型 %q；可用的类型：%s。", typ, typeNames)
+	}
+	if spec.Inspect != nil {
+		e, ok := m[spec.Entry]
+		if !ok || len(m) != 1 {
+			return shape{}, opErr(CodeInvalid, "%s artifact 只能有 %s 这一个文件。", typeLabel(typ), spec.Entry)
+		}
+		f, err := s.c.open(e.sha)
+		if err != nil {
+			return shape{}, err
+		}
+		defer f.Close()
+		pages, ps := spec.Inspect(f, e.size)
+		if len(ps) > 0 {
+			return shape{}, typedInvalid(typ, ps)
+		}
+		return shape{kind: spec.Kind, pages: pages, format: spec.Format}, nil
 	}
 	files := make(map[string][]byte, len(m))
 	for p := range m {
@@ -274,7 +300,7 @@ func (s *Service) validateTyped(typ string, m manifest, st staged) (shape, error
 	if ps := spec.Validate(files); len(ps) > 0 {
 		return shape{}, typedInvalid(typ, ps)
 	}
-	return shape{kind: typ, pages: spec.Pages(files[spec.Entry]), format: spec.Format}, nil
+	return shape{kind: spec.Kind, pages: spec.Pages(files[spec.Entry]), format: spec.Format}, nil
 }
 
 // validate 校验一个版本的清单并算出它的形态。
@@ -289,8 +315,12 @@ func (s *Service) validate(typ string, m manifest, st staged) (shape, error) {
 	for _, e := range m {
 		total += e.size
 	}
-	if total > MaxVersionBytes {
-		return shape{}, opErr(CodeTooLarge, "一个版本的文件总共不能超过 %d MiB，这次是 %.1f MiB。", MaxVersionBytes>>20, float64(total)/(1<<20))
+	maxTotal := int64(MaxVersionBytes)
+	if IsBinaryType(typ) {
+		maxTotal = MaxOfficeFileBytes
+	}
+	if total > maxTotal {
+		return shape{}, opErr(CodeTooLarge, "一个版本的文件总共不能超过 %d MiB，这次是 %.1f MiB。", maxTotal>>20, float64(total)/(1<<20))
 	}
 	if p := CaseClash(m.paths()); p != "" {
 		return shape{}, opErr(CodeInvalid, "路径 %s 与另一个文件只差大小写；同一版本里不能有这样的两个文件。", p)
@@ -456,7 +486,7 @@ func (s *Service) create(ctx context.Context, p CreateParams, pre *staged) (Arti
 		return Artifact{}, opErr(CodeInvalid, "未知的来源 %q。", p.Origin)
 	}
 	if p.Type != "" && TypeEntry(p.Type) == "" {
-		return Artifact{}, opErr(CodeInvalid, "未知的类型 %q；只能是 document 或 slides，普通页面与画布不写 type。", p.Type)
+		return Artifact{}, opErr(CodeInvalid, "未知的类型 %q；可用的类型：%s。普通页面与画布不写 type。", p.Type, typeNames)
 	}
 	caps, err := NormalizeCapabilities(p.Capabilities)
 	if err != nil {

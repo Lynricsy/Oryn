@@ -56,3 +56,43 @@ func TestM31ScheduleWebhooksMigration(t *testing.T) {
 	require.NoError(t, run("srn-4", "sch-manual4", "webhook"))
 	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM schedule_runs WHERE id = 'srn-1' AND payload IS NULL`), "旧运行的 payload 为 NULL")
 }
+
+// TestM31ArtifactOfficeMigration 覆盖 0069：带旧数据从 68 升级后 type / kind 不变，接受 Office 类型与 sheet；
+// 回滚到 68 删掉 Office artifact（连同版本），原 CHECK 恢复，其余数据保留。
+func TestM31ArtifactOfficeMigration(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t, t.TempDir())
+	p := githubProvider(t, s)
+	exec := func(q string, args ...any) error {
+		_, err := s.DB.ExecContext(ctx, q, args...)
+		return err
+	}
+	insert := func(id string, typ any, kind string) error {
+		return exec(`INSERT INTO artifacts (id, origin, type, kind, title, head, size, pages, created_at, updated_at)
+			VALUES (?, 'agent', ?, ?, 't', 1, 1, 1, 1, 1)`, id, typ, kind)
+	}
+	_, err := p.DownTo(ctx, 68)
+	require.NoError(t, err)
+	require.NoError(t, insert("art-web", nil, "web"))
+	require.NoError(t, insert("art-doc", "document", "document"))
+	require.NoError(t, insert("art-slides", "slides", "slides"))
+	assert.Error(t, insert("art-x", "docx", "document"))
+
+	_, err = p.Up(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM artifacts WHERE id = 'art-web' AND type IS NULL AND kind = 'web'`))
+	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM artifacts WHERE id = 'art-doc' AND type = 'document' AND kind = 'document'`))
+	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM artifacts WHERE id = 'art-slides' AND type = 'slides' AND kind = 'slides'`))
+	require.NoError(t, insert("art-xlsx", "xlsx", "sheet"))
+	require.NoError(t, insert("art-pdf", "pdf", "document"))
+	assert.Error(t, insert("art-bad", "odt", "document"))
+	assert.Error(t, insert("art-bad2", "docx", "spreadsheet"))
+	require.NoError(t, exec(`INSERT INTO artifact_versions (artifact_id, n, size, pages, files_key, created_at) VALUES ('art-xlsx', 1, 1, 1, 'k', 1)`))
+
+	_, err = p.DownTo(ctx, 68)
+	require.NoError(t, err)
+	assert.Equal(t, 3, queryInt(ctx, t, s, `SELECT COUNT(*) FROM artifacts`), "回滚删掉 Office artifact")
+	assert.Zero(t, queryInt(ctx, t, s, `SELECT COUNT(*) FROM artifact_versions`), "版本随之删除")
+	assert.Error(t, insert("art-x2", "docx", "document"))
+	assert.Equal(t, 1, queryInt(ctx, t, s, `SELECT COUNT(*) FROM artifacts WHERE id = 'art-doc' AND type = 'document' AND kind = 'document'`))
+}

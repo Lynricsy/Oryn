@@ -164,7 +164,7 @@ func (q *Queries) InsertArtifactPublication(ctx context.Context, arg InsertArtif
 }
 
 const listArtifactPublications = `-- name: ListArtifactPublications :many
-SELECT p.id, p.artifact_id, p.slug, p.access, p.code, p.code_gen, p.code_failures, p.code_locked, p.version, p.follow, p.pending_version, p.created_at, p.updated_at, a.id, a.project_id, a.thread_id, a.origin, a.type, a.kind, a.title, a.head, a.size, a.pages, a.created_at, a.updated_at, a.opened_at, a.deleted_at FROM artifact_publications p JOIN artifacts a ON a.id = p.artifact_id
+SELECT p.id, p.artifact_id, p.slug, p.access, p.code, p.code_gen, p.code_failures, p.code_locked, p.version, p.follow, p.pending_version, p.created_at, p.updated_at, a.id, a.project_id, a.thread_id, a.origin, a.title, a.head, a.size, a.pages, a.created_at, a.updated_at, a.opened_at, a.deleted_at, a.type, a.kind FROM artifact_publications p JOIN artifacts a ON a.id = p.artifact_id
 ORDER BY p.updated_at DESC, p.id DESC
 `
 
@@ -201,8 +201,6 @@ func (q *Queries) ListArtifactPublications(ctx context.Context) ([]ListArtifactP
 			&i.Artifact.ProjectID,
 			&i.Artifact.ThreadID,
 			&i.Artifact.Origin,
-			&i.Artifact.Type,
-			&i.Artifact.Kind,
 			&i.Artifact.Title,
 			&i.Artifact.Head,
 			&i.Artifact.Size,
@@ -211,6 +209,8 @@ func (q *Queries) ListArtifactPublications(ctx context.Context) ([]ListArtifactP
 			&i.Artifact.UpdatedAt,
 			&i.Artifact.OpenedAt,
 			&i.Artifact.DeletedAt,
+			&i.Artifact.Type,
+			&i.Artifact.Kind,
 		); err != nil {
 			return nil, err
 		}

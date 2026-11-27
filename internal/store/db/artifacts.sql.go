@@ -34,7 +34,7 @@ func (q *Queries) EraseArtifact(ctx context.Context, id string) (int64, error) {
 }
 
 const getArtifact = `-- name: GetArtifact :one
-SELECT id, project_id, thread_id, origin, type, kind, title, head, size, pages, created_at, updated_at, opened_at, deleted_at FROM artifacts WHERE id = ?1
+SELECT id, project_id, thread_id, origin, title, head, size, pages, created_at, updated_at, opened_at, deleted_at, type, kind FROM artifacts WHERE id = ?1
 `
 
 func (q *Queries) GetArtifact(ctx context.Context, id string) (Artifact, error) {
@@ -45,8 +45,6 @@ func (q *Queries) GetArtifact(ctx context.Context, id string) (Artifact, error) 
 		&i.ProjectID,
 		&i.ThreadID,
 		&i.Origin,
-		&i.Type,
-		&i.Kind,
 		&i.Title,
 		&i.Head,
 		&i.Size,
@@ -55,6 +53,8 @@ func (q *Queries) GetArtifact(ctx context.Context, id string) (Artifact, error) 
 		&i.UpdatedAt,
 		&i.OpenedAt,
 		&i.DeletedAt,
+		&i.Type,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -351,7 +351,7 @@ func (q *Queries) ListArtifactVersions(ctx context.Context, artifactID string) (
 }
 
 const listArtifacts = `-- name: ListArtifacts :many
-SELECT id, project_id, thread_id, origin, type, kind, title, head, size, pages, created_at, updated_at, opened_at, deleted_at FROM artifacts
+SELECT id, project_id, thread_id, origin, title, head, size, pages, created_at, updated_at, opened_at, deleted_at, type, kind FROM artifacts
 WHERE ((CAST(?1 AS INTEGER) = 0 AND deleted_at IS NULL) OR (CAST(?1 AS INTEGER) <> 0 AND deleted_at IS NOT NULL))
   AND (CAST(?2 AS TEXT) = '' OR thread_id = CAST(?2 AS TEXT)
        OR EXISTS (SELECT 1 FROM artifact_versions v WHERE v.artifact_id = artifacts.id AND v.author_thread_id = CAST(?2 AS TEXT)))
@@ -381,8 +381,6 @@ func (q *Queries) ListArtifacts(ctx context.Context, arg ListArtifactsParams) ([
 			&i.ProjectID,
 			&i.ThreadID,
 			&i.Origin,
-			&i.Type,
-			&i.Kind,
 			&i.Title,
 			&i.Head,
 			&i.Size,
@@ -391,6 +389,8 @@ func (q *Queries) ListArtifacts(ctx context.Context, arg ListArtifactsParams) ([
 			&i.UpdatedAt,
 			&i.OpenedAt,
 			&i.DeletedAt,
+			&i.Type,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -406,7 +406,7 @@ func (q *Queries) ListArtifacts(ctx context.Context, arg ListArtifactsParams) ([
 }
 
 const listArtifactsDeletedBefore = `-- name: ListArtifactsDeletedBefore :many
-SELECT id, project_id, thread_id, origin, type, kind, title, head, size, pages, created_at, updated_at, opened_at, deleted_at FROM artifacts WHERE deleted_at IS NOT NULL AND deleted_at < ?1 ORDER BY deleted_at, id
+SELECT id, project_id, thread_id, origin, title, head, size, pages, created_at, updated_at, opened_at, deleted_at, type, kind FROM artifacts WHERE deleted_at IS NOT NULL AND deleted_at < ?1 ORDER BY deleted_at, id
 `
 
 // Trash entries deleted before @ts (for cleanup).
@@ -424,8 +424,6 @@ func (q *Queries) ListArtifactsDeletedBefore(ctx context.Context, ts *int64) ([]
 			&i.ProjectID,
 			&i.ThreadID,
 			&i.Origin,
-			&i.Type,
-			&i.Kind,
 			&i.Title,
 			&i.Head,
 			&i.Size,
@@ -434,6 +432,8 @@ func (q *Queries) ListArtifactsDeletedBefore(ctx context.Context, ts *int64) ([]
 			&i.UpdatedAt,
 			&i.OpenedAt,
 			&i.DeletedAt,
+			&i.Type,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

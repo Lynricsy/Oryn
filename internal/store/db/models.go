@@ -16,8 +16,6 @@ type Artifact struct {
 	ProjectID *string `json:"projectId"`
 	ThreadID  *string `json:"threadId"`
 	Origin    string  `json:"origin"`
-	Type      *string `json:"type"`
-	Kind      string  `json:"kind"`
 	Title     string  `json:"title"`
 	Head      int64   `json:"head"`
 	Size      int64   `json:"size"`
@@ -26,6 +24,8 @@ type Artifact struct {
 	UpdatedAt int64   `json:"updatedAt"`
 	OpenedAt  *int64  `json:"openedAt"`
 	DeletedAt *int64  `json:"deletedAt"`
+	Type      *string `json:"type"`
+	Kind      string  `json:"kind"`
 }
 
 type ArtifactComment struct {

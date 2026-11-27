@@ -3,6 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 )
@@ -33,18 +34,27 @@ type TypeSpec struct {
 	Name, Entry string
 	// Format 是这个类型当前的格式版本（记进 artifact_versions.format）。
 	Format int
+	// Kind 是 artifacts.kind 的取值；document / slides 填自己的名字。
+	Kind string
+	// Viewer 是查看器 bundle 名：_oryn/viewer/<Viewer>.js|css。
+	Viewer string
 	// Validate 校验一个版本的全部文件：入口文件给完整内容，其余文件只给前 sniffBytes 个字节（文件头校验够用）。
-	// 最多返回 maxProblems 条问题；合法时返回空。
+	// 最多返回 maxProblems 条问题；合法时返回空。二进制类型为 nil。
 	Validate func(files map[string][]byte) []Problem
-	// Pages 返回页数；只对通过 Validate 的入口文件调用。
+	// Pages 返回页数；只对通过 Validate 的入口文件调用。二进制类型为 nil。
 	Pages func(entry []byte) int
+	// Inspect 非 nil 表示二进制类型：入口不读进内存，在内容存储的文件上校验并算页数；版本里只能有入口这一个文件。
+	Inspect func(r io.ReaderAt, size int64) (pages int, ps []Problem)
 }
 
 // typeSpecs 是类型注册表。
 var typeSpecs = map[string]*TypeSpec{
-	TypeDocument: {Name: TypeDocument, Entry: EntryDocument, Format: 1, Validate: validateDocument, Pages: func([]byte) int { return 1 }},
-	TypeSlides:   {Name: TypeSlides, Entry: EntrySlides, Format: 1, Validate: validateSlides, Pages: deckPages},
+	TypeDocument: {Name: TypeDocument, Entry: EntryDocument, Format: 1, Kind: KindDocument, Viewer: TypeDocument, Validate: validateDocument, Pages: func([]byte) int { return 1 }},
+	TypeSlides:   {Name: TypeSlides, Entry: EntrySlides, Format: 1, Kind: KindSlides, Viewer: TypeSlides, Validate: validateSlides, Pages: deckPages},
 }
+
+// typeNames 是全部类型的文案列表（错误提示用）。
+const typeNames = "document、slides、docx、docm、xlsx、xlsm、pptx、pptm、pdf"
 
 // LookupType 返回类型的规格；plain（空串）与未知类型 ok 为假。
 func LookupType(name string) (*TypeSpec, bool) {
@@ -72,7 +82,7 @@ func (ps *problems) add(where, format string, args ...any) {
 // typedInvalid 把问题列表写成 invalid 错误：逐条列出位置与原因，并指向对应的教程主题。
 func typedInvalid(typ string, ps []Problem) *OpError {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s 内容不合法，逐条修正后再写（格式见 read_artifact_guide 的 %s 主题）：", typeLabel(typ), typ)
+	fmt.Fprintf(&b, "%s 内容不合法，逐条修正后再写（格式见 read_artifact_guide 的 %s 主题）：", typeLabel(typ), guideTopicOf(typ))
 	for _, p := range ps {
 		fmt.Fprintf(&b, "\n- %s: %s", p.Where, p.Message)
 	}
@@ -82,12 +92,28 @@ func typedInvalid(typ string, ps []Problem) *OpError {
 	return opErr(CodeInvalid, "%s", b.String())
 }
 
+// guideTopicOf 返回类型对应的 read_artifact_guide 主题：Office 类型都指向 office。
+func guideTopicOf(typ string) string {
+	if IsBinaryType(typ) {
+		return "office"
+	}
+	return typ
+}
+
 func typeLabel(typ string) string {
 	switch typ {
 	case TypeDocument:
 		return "文档"
 	case TypeSlides:
 		return "幻灯片"
+	case TypeDocx, TypeDocm:
+		return "Word 文档"
+	case TypeXlsx, TypeXlsm:
+		return "Excel 表格"
+	case TypePptx, TypePptm:
+		return "PowerPoint 演示文稿"
+	case TypePDF:
+		return "PDF"
 	}
 	return typ
 }

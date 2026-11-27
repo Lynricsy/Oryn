@@ -34,6 +34,7 @@ const (
 	KindCanvas   = "canvas"
 	KindDocument = "document"
 	KindSlides   = "slides"
+	KindSheet    = "sheet"
 )
 
 // 来源（origin）。
@@ -59,6 +60,9 @@ const (
 	CodeRateLimited       = "rate_limited"
 	CodeForbidden         = "forbidden"
 	CodeRenderUnavailable = "render_unavailable"
+	CodeUnsupportedFormat = "unsupported_format"
+	CodeBadOffice         = "bad_office"
+	CodeLocked            = "locked"
 )
 
 // State 是冲突时返回给调用方的当前状态。
@@ -94,6 +98,8 @@ func (e *OpError) Status() int {
 		return http.StatusTooManyRequests
 	case CodeForbidden:
 		return http.StatusForbidden
+	case CodeLocked:
+		return http.StatusLocked
 	case CodeRenderUnavailable:
 		return http.StatusServiceUnavailable
 	default:

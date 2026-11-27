@@ -533,6 +533,21 @@ func (s *Service) agentRead(ctx context.Context, c Caller, params json.RawMessag
 			head["viewing"] = names
 		}
 	}
+	if IsBinaryType(a.Type) {
+		// 二进制 Office 文件不读字节：只给清单与取回指引
+		if !slices.ContainsFunc(files, func(f File) bool { return f.Path == p.Path }) {
+			return Result{}, opErr(CodeInvalid, "版本 %d 里没有文件 %s。path 取 files 列表里的路径；不给表示入口文件。", v.Version, p.Path)
+		}
+		head["binary"] = true
+		head["hint"] = "这是二进制 Office 文件；用 pull_artifact 取回到本机后再处理。"
+		hb, _ := json.Marshal(head)
+		details := make(obj, len(head)+1)
+		for k, x := range head {
+			details[k] = x
+		}
+		details["op"] = OpRead
+		return Result{Text: string(hb), Details: details}, nil
+	}
 	data, _, err := s.ReadFile(ctx, a.ID, v.Version, p.Path)
 	if oe, ok := AsOpError(err); ok && oe.Code == CodeNotFound {
 		return Result{}, opErr(CodeInvalid, "版本 %d 里没有文件 %s。path 取 files 列表里的路径；不给表示入口文件。", v.Version, p.Path)

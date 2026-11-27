@@ -38,6 +38,21 @@ const (
 	MaxEditTextRunes = 10_000
 	// MaxParams 是一个页面能声明的调节参数个数上限。
 	MaxParams = 24
+	// MaxOfficeFileBytes 是 Office 类型单个文件（即单个版本）的上限。
+	MaxOfficeFileBytes = 256 << 20
+	// MaxPreviewBytes：超过它的 Office 文件不做帧内预览、不出缩略图。
+	MaxPreviewBytes = 64 << 20
+	// PullPageBytes 是 pull_artifact 每页的原始字节数。
+	PullPageBytes = 4 << 20
+	// MaxPrintPages 是打印视图最多渲染的页数。
+	MaxPrintPages = 200
+)
+
+// Office 容器的校验上限（只读 zip 目录与 [Content_Types].xml）。
+const (
+	maxOfficeZipEntries    = 10000
+	maxOfficeUnzippedBytes = 2 << 30
+	maxContentTypesBytes   = 1 << 20
 )
 
 // orphanGrace：没有任何行引用的内容文件与临时文件只在早于该时长时删除，避开「先落内容再插行」的窗口。

@@ -89,6 +89,12 @@ var mimeByExt = map[string]string{
 	".csv":   "text/csv; charset=utf-8",
 	".xml":   "application/xml",
 	".glb":   "model/gltf-binary",
+	".docx":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".docm":  "application/vnd.ms-word.document.macroEnabled.12",
+	".xlsx":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xlsm":  "application/vnd.ms-excel.sheet.macroEnabled.12",
+	".pptx":  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".pptm":  "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
 }
 
 // MimeOf 按扩展名返回 MIME 类型；不在表里的回 application/octet-stream。

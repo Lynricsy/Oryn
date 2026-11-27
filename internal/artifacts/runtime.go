@@ -222,7 +222,7 @@ func oneArg(args json.RawMessage, v any) error {
 //   - write({baseVersion, text})：把入口文件换成 text，落成一个用户版本，回 {version}。
 func (h *Host) contentCap() runtimeCap {
 	return runtimeCap{
-		available: func(_ context.Context, rc *runtimeCall) bool { return rc.art.Type != "" },
+		available: func(_ context.Context, rc *runtimeCall) bool { return rc.art.Type != "" && !IsBinaryType(rc.art.Type) },
 		ops: map[string]runtimeOp{
 			"read":  h.contentRead,
 			"write": h.contentWrite,
