@@ -2,6 +2,7 @@ package coord
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -227,4 +228,61 @@ func TestOrynConfirmFlow(t *testing.T) {
 	assert.Equal(t, actionAPICall, acts[0].Action)
 	assert.Equal(t, "owner", acts[0].Origin)
 	assert.NotContains(t, acts[0].Summary, "s3cret")
+}
+
+// 批量变更的确认卡与审计摘要不含文件内容：content 换成字节数（base64 按解码后），path / encoding / mode / delete 保留。
+func TestOrynAgentConfigBatchDigest(t *testing.T) {
+	const secretText = "TOP-SECRET-SKILL-BODY"
+	bin := base64.StdEncoding.EncodeToString([]byte{0, 1, 2, 3, 4})
+	body := map[string]any{
+		"delete": []string{"skills/s"},
+		"files": []map[string]any{
+			{"path": "skills/s/SKILL.md", "content": secretText},
+			{"path": "skills/s/a.bin", "content": bin, "encoding": "base64", "mode": 493},
+			{"path": "skills/s/bad.bin", "content": "!!!", "encoding": "base64"},
+		},
+	}
+	// jsonText 用 json.Marshal：< > 转义成 \u003c \u003e
+	check := func(t *testing.T, summary string) {
+		t.Helper()
+		assert.NotContains(t, summary, secretText)
+		assert.NotContains(t, summary, bin)
+		assert.Contains(t, summary, `"content":"\u003c21 bytes\u003e","path":"skills/s/SKILL.md"`)
+		assert.Contains(t, summary, `"content":"\u003c5 bytes\u003e","encoding":"base64","mode":493,"path":"skills/s/a.bin"`)
+		assert.Contains(t, summary, `"content":"\u003c3 bytes\u003e"`, "解不开的 base64 按字符串长度")
+		assert.Contains(t, summary, `"delete":["skills/s"]`)
+	}
+
+	// 全局：confirm，挂卡时的 Summary
+	ce := newConfirmEnv(t)
+	fake := &fakeAPI{}
+	ce.c.SetAPI(fake)
+	conv := ce.assistant()
+	res := ce.call(conv, ToolOryn, orynArgs("applyAgentConfigBatch", map[string]any{"body": body}), true)
+	require.False(t, res.IsError, res.Text)
+	var v map[string]any
+	require.NoError(t, json.Unmarshal([]byte(res.Text), &v))
+	require.Equal(t, "awaiting_owner", v["status"])
+	row, err := ce.st.Q.GetAssistantConfirmation(ce.ctx, v["confirmationId"].(string))
+	require.NoError(t, err)
+	check(t, row.Summary)
+	ce.c.UIAnswered(ce.ctx, conv.ID, v["confirmationId"].(string), json.RawMessage(`{"confirmed":true}`))
+	assert.Contains(t, string(fake.last(t).body), secretText, "实际请求体不打码")
+	acts := ce.actions()
+	require.Len(t, acts, 1)
+	check(t, acts[0].Summary)
+
+	// 项目级：write，直接执行并审计
+	e := newEnv(t, true)
+	fake = &fakeAPI{}
+	e.c.SetAPI(fake)
+	res = e.call(e.assistant(), ToolOryn, orynArgs("applyProjectAgentConfigBatch", map[string]any{"id": "prj_1", "body": body}), true)
+	require.False(t, res.IsError, res.Text)
+	assert.Equal(t, "/api/v1/projects/prj_1/agent-config/batch", fake.last(t).target)
+	acts = e.actions()
+	require.Len(t, acts, 1)
+	check(t, acts[0].Summary)
+
+	// 其它操作不受影响
+	assert.Nil(t, apiPolicy["putProjectAgentConfigFile"].BodyDigest)
 }

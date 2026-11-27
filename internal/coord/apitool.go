@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -140,7 +141,7 @@ func (s *Service) apiOp(ctx context.Context, c toolCtx, op string, args json.Raw
 	if s.api == nil {
 		return failResult(errf(CodeCoordinatorUnavailable, "Oryn operations are not configured"))
 	}
-	req, err := buildAPIRequest(rt, args)
+	req, err := buildAPIRequest(rt, pol, args)
 	if err != nil {
 		return failResult(err)
 	}
@@ -330,7 +331,8 @@ func (r apiRequest) summary(op string) string {
 }
 
 // buildAPIRequest 按路由把 args 映射成请求：path 参数必填、query 参数按名字、请求体在 body 下；未知参数与未知的请求体顶层字段一律拒绝。
-func buildAPIRequest(rt apiRoute, raw json.RawMessage) (apiRequest, error) {
+// pol 只用于打码摘要（BodyDigest）。
+func buildAPIRequest(rt apiRoute, pol opPolicy, raw json.RawMessage) (apiRequest, error) {
 	req := apiRequest{op: rt.Op, method: rt.Method, pathVals: map[string]string{}, query: url.Values{}}
 	args := map[string]json.RawMessage{}
 	if len(raw) > 0 && string(raw) != "null" {
@@ -449,7 +451,7 @@ func buildAPIRequest(rt apiRoute, raw json.RawMessage) (apiRequest, error) {
 		}
 		req.contentType, req.body = rt.BodyType, compact.Bytes()
 	}
-	req.redacted = redactArgs(args, rt.BodyType == "application/octet-stream")
+	req.redacted = redactArgs(args, rt.BodyType == "application/octet-stream", pol.BodyDigest)
 	return req, nil
 }
 
@@ -527,8 +529,8 @@ var redactKeys = map[string]bool{
 }
 
 // redactArgs 返回打码后的紧凑 args JSON（空 args 为空串）：redactKeys 里的键值为非空字符串、对象或数组时换成 "***"；
-// octetBody 为真时 body 显示为 "<N bytes>"。
-func redactArgs(args map[string]json.RawMessage, octetBody bool) string {
+// octetBody 为真时 body 显示为 "<N bytes>"；digest 非 nil 时 JSON body 先经它改写。
+func redactArgs(args map[string]json.RawMessage, octetBody bool, digest func(any) any) string {
 	if len(args) == 0 {
 		return ""
 	}
@@ -545,6 +547,9 @@ func redactArgs(args map[string]json.RawMessage, octetBody bool) string {
 		var v any
 		if dec.Decode(&v) != nil {
 			continue
+		}
+		if k == "body" && digest != nil {
+			v = digest(v)
 		}
 		out[k] = v
 	}
@@ -579,6 +584,37 @@ func sensitiveValue(v any) bool {
 		return true
 	}
 	return false
+}
+
+// digestAgentConfigBatch 是 AgentConfigBatch 请求体的摘要改写：files[*].content 换成 "<N bytes>"（base64 时 N 为解码后
+// 字节数，解不开按字符串长度；不是字符串时为 "<invalid>"），path / encoding / mode 与 delete 列表原样保留。
+// 文件内容不进确认卡与审计：它可能很大，也可能是二进制。
+func digestAgentConfigBatch(body any) any {
+	obj, _ := body.(map[string]any)
+	files, _ := obj["files"].([]any)
+	for _, it := range files {
+		f, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		c, ok := f["content"]
+		if !ok {
+			continue
+		}
+		s, ok := c.(string)
+		if !ok {
+			f["content"] = "<invalid>"
+			continue
+		}
+		n := len(s)
+		if f["encoding"] == string(apigen.Base64) {
+			if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+				n = len(b)
+			}
+		}
+		f["content"] = fmt.Sprintf("<%d bytes>", n)
+	}
+	return body
 }
 
 // ---- 确认卡 ----
@@ -665,7 +701,7 @@ func (s *Service) confirmAPICall(ctx context.Context, row db.AssistantConfirmati
 	if s.api == nil {
 		return "", errf(CodeCoordinatorUnavailable, "Oryn operations are not configured")
 	}
-	req, err := buildAPIRequest(rt, a.Args)
+	req, err := buildAPIRequest(rt, pol, a.Args)
 	if err != nil {
 		return "", err
 	}

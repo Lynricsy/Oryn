@@ -48,6 +48,7 @@ type opPolicy struct {
 	ConfirmWhen func(body map[string]any, query url.Values) bool // 非 nil 且返回真时，opWrite 改走确认卡
 	ConfirmNote string                                           // ConfirmWhen 的文字说明，进操作文档
 	Check       func(path map[string]string) error               // 额外的参数规则
+	BodyDigest  func(body any) any                               // 非 nil 时，请求体进确认卡正文与审计摘要前先经它改写（如文件内容换成字节数）
 	Note        string                                           // 追加到确认卡正文与操作文档
 	Deny        string                                           // opDeny 的原因（英文一句，含替代做法）；空串 = 内部接口，不进文档
 	Timeout     time.Duration                                    // 0 = apiCallTimeout
@@ -136,13 +137,14 @@ func buildAPIPolicy() map[string]opPolicy {
 		"listProjectAgentConfigFiles", "getProjectAgentConfigFile", "listProjectSecrets")
 	set("projects", opWrite, none, "createProject", "syncProjectRepo", "createProjectHostedRepo", "deleteProjectSnapshots",
 		"putProjectAgentConfigFile", "deleteProjectAgentConfigFile")
+	set("projects", opWrite, opPolicy{BodyDigest: digestAgentConfigBatch}, "applyProjectAgentConfigBatch")
 	set("projects", opWrite, opPolicy{
 		ConfirmWhen: func(body map[string]any, _ url.Values) bool { _, ok := body["githubGates"]; return ok },
 		ConfirmNote: "changing githubGates needs confirmation",
 	}, "updateProject")
 	set("projects", opConfirm, opPolicy{Note: "If the project has an Oryn-hosted repository, that repository is the only copy and is deleted permanently."}, "deleteProject")
 	set("projects", opConfirm, none, "putProjectWebhook", "deleteProjectWebhook", "putProjectSecret", "deleteProjectSecret")
-	set("projects", opDeny, deny(denyBinary("write files one by one with putProjectAgentConfigFile")), "importProjectAgentConfig")
+	set("projects", opDeny, deny(denyBinary("write a whole entry with applyProjectAgentConfigBatch")), "importProjectAgentConfig")
 
 	// spaces
 	set("spaces", opRead, none, "listSpaces", "getSpace", "getSpaceProgress")
@@ -305,7 +307,8 @@ func buildAPIPolicy() map[string]opPolicy {
 	// 生成式 UI 开关改变助手自己的工具表与指引（关掉的视图不能由助手自己打开），同其它约束助手的设置一样要确认
 	set("settings", opConfirm, none, "putAgentConfigFile", "deleteAgentConfigFile", "restartAgentConfigSessions", "putSecret", "deleteSecret", "revokeDevice",
 		"putGenerativeUISettings")
-	set("settings", opDeny, deny(denyBinary("write files one by one with putAgentConfigFile")), "importAgentConfig")
+	set("settings", opConfirm, opPolicy{BodyDigest: digestAgentConfigBatch}, "applyAgentConfigBatch")
+	set("settings", opDeny, deny(denyBinary("write a whole entry with applyAgentConfigBatch")), "importAgentConfig")
 	set("settings", opDeny, deny(denyClient), "getMe")
 	set("settings", opDeny, deny(denyHuman), "authSetupBegin", "authSetupFinish", "authLoginBegin", "authLoginFinish", "authRecovery",
 		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll", "patchOpsSettings",
