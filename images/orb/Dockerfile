@@ -86,7 +86,7 @@ RUN pacman --disable-sandbox -Syu --noconfirm --needed --overwrite /etc/pacman.d
       imagemagick librsvg libwebp-utils libjxl libheif libavif optipng pngquant jpegoptim gifsicle \
       perl-image-exiftool graphviz qrencode zbar ffmpeg sox libebur128 mediainfo yt-dlp aria2 httpie miller duckdb \
       python-numpy python-pandas python-scipy python-matplotlib python-pillow python-requests python-beautifulsoup4 \
-      python-lxml python-yaml python-openpyxl python-xlsxwriter python-docx python-pypdf python-reportlab \
+      python-lxml python-yaml python-openpyxl python-xlsxwriter python-docx python-pypdf python-reportlab python-typing_extensions \
       tigervnc xorg-setxkbmap xkeyboard-config openbox chromium xorg-xsetroot \
       xfce4-terminal mousepad pcmanfm dbus at-spi2-core adwaita-icon-theme-legacy \
       ttf-liberation noto-fonts-cjk noto-fonts-emoji xorg-xdpyinfo xorg-xwininfo xorg-xprop xorg-xauth xclip \
@@ -96,6 +96,10 @@ RUN pacman --disable-sandbox -Syu --noconfirm --needed --overwrite /etc/pacman.d
  && pacman -Q > /usr/local/share/oryn/packages.txt \
  && pacman -Scc --noconfirm \
  && chromium --version && openbox --version | head -1
+# python-pptx（M31 Office 文件）：Arch 官方仓库与 Arch Linux ARM 都没有这个包，按 PyPI 钉死版本装进系统环境；
+# 它的依赖 lxml、Pillow、XlsxWriter、typing_extensions 都已由上面的 pacman 装好，所以 --no-deps。
+RUN pip install --no-cache-dir --no-deps --break-system-packages --root-user-action=ignore python-pptx==1.0.2 \
+ && python3 -c 'import pptx; print("python-pptx", pptx.__version__)'
 # Chromium 受管策略（root 所有，不随 Profile 归档传播）：禁止安装任何扩展、代理固定直连。
 # 防止被注入的 agent 往独占持有的 Profile 里放扩展或代理设置、经保存长期驻留（M8 安全审查 F2）。
 RUN mkdir -p /etc/chromium/policies/managed \

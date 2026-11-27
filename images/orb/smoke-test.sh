@@ -283,7 +283,7 @@ http --version >/dev/null
 [[ "$(python3 - <<'PY'
 import matplotlib
 matplotlib.use("Agg")
-import bs4, docx, lxml, numpy, openpyxl, pandas, PIL, pypdf, reportlab, requests, scipy, xlsxwriter, yaml
+import bs4, docx, lxml, numpy, openpyxl, pandas, PIL, pptx, pypdf, reportlab, requests, scipy, xlsxwriter, yaml
 import matplotlib.pyplot as plt
 plt.plot([0, 1], [0, 1])
 plt.savefig("plot.png")
