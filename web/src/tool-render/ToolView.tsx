@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
+import { useExpand } from "../lib/use-expand";
 import { Elapsed } from "./parts";
 import {
 	baseToolName,
@@ -201,6 +202,8 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		setUserOpen(null);
 	}
 	const open = userOpen ?? props.defaultOpen ?? false;
+	// 展开体开合做高度过渡；收起动画期间仍挂着（aria-expanded 已经是收起）
+	const body = useExpand<HTMLDivElement>(open);
 	const { args: outerArgs, intent: argIntent } = normalizeArgs(
 		props.name === "ask" && typeof props.args === "string"
 			? { html: props.args }
@@ -256,6 +259,9 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		!(renderer.livePartial === true && renderProps.partial)
 			? stripAnsi(replaceTabs(props.partial))
 			: "";
+	// 这张卡在本次挂载里跑过：结束时结果图标弹出（历史卡片、重新挂载的卡片不播放）
+	const [ran, setRan] = useState(false);
+	if (status === "run" && !ran) setRan(true);
 	const jobOutput = job?.output ? stripAnsi(replaceTabs(job.output)) : "";
 
 	return (
@@ -331,7 +337,10 @@ export function ToolView(props: ToolViewProps): ReactNode {
 						aria-label={t("toolRender.running")}
 					/>
 				) : (
-					<span className={`tv-status tv-status--${status}`} aria-hidden="true">
+					<span
+						className={`tv-status tv-status--${status}${ran ? " tv-status--settle" : ""}`}
+						aria-hidden="true"
+					>
 						<Icon
 							name={
 								status === "ok"
@@ -348,8 +357,8 @@ export function ToolView(props: ToolViewProps): ReactNode {
 					<Icon name="chevronRight" size={12} />
 				</span>
 			</button>
-			{open && (
-				<div className="tv-body">
+			{body.shown && (
+				<div ref={body.ref} className="tv-body">
 					{renderer.Input && (
 						<ToolSection kind="in" label={t("toolRender.input")}>
 							<renderer.Input {...renderProps} />

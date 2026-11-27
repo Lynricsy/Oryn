@@ -32,6 +32,7 @@ import {
 import { anchorOf } from "../../lib/context-menu/selection";
 import { isSkillPromptCustomMessage } from "../../lib/custom-messages";
 import { BUILTIN_ROLE_NAMES, type BuiltinRole } from "../../lib/model-roles";
+import { motionAllowed } from "../../lib/motion";
 import { describeOrynHeader, parseOrynMessage } from "../../lib/oryn-message";
 import {
 	type ModelSourceRecord,
@@ -63,6 +64,7 @@ import {
 	type TurnIdentities,
 	useTranscriptContext,
 } from "./context";
+import { ArrivalLog, EnterArmedContext, INTRO_MS } from "./entrance";
 import {
 	assistantEdges,
 	BranchSummaryCard,
@@ -119,6 +121,10 @@ const EARLIER_H = 44;
 /** 定位条目后描边的时长与寻找工具卡的最多帧数。 */
 const REVEAL_MS = 2400;
 const REVEAL_TRIES = 30;
+/** 跟随新内容的平滑滚动：指数逼近的时间常数（ms），约 3τ 追平；流式增长读起来是连续的滑动而不是逐行跳。 */
+const FOLLOW_TAU = 90;
+/** 「回到底部」从很远处出发时先跳到离底 (1 + JUMP_LEAD) 屏处，再滑完最后一段。 */
+const JUMP_LEAD = 0.6;
 /** 定位描边：警示色细线，不改变布局（outline 不占位）。 */
 const REVEAL_RING = [
 	"outline-2",
@@ -548,7 +554,7 @@ export function rowGaps(
 function PendingPrompt({ text }: { text: string }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex flex-col items-end gap-1 pr-10 pb-3">
+		<div className="tx-enter-user flex flex-col items-end gap-1 pr-10 pb-3">
 			<span className="sr-only">{t("transcript.you")}</span>
 			<UserBubble avatar dim>
 				<UserText text={text} />
@@ -821,17 +827,66 @@ export const Transcript = memo(function Transcript({
 	});
 	const total = virtualizer.getTotalSize();
 
-	const scrollToEnd = useCallback(() => {
-		const el = scrollRef.current;
-		if (el) el.scrollTop = el.scrollHeight;
-	}, []);
+	// 贴底跟随：snap 直接到底；follow 平滑追到底（逐帧指数逼近，每帧重读目标，内容边长边追）；
+	// jump（「回到底部」）远处先跳近再滑。用户一接手（滚轮 / 触摸 / 拖滚动条）、退出跟随或选区暂停就停下。
+	// 挂载后 INTRO_MS 内、离底超过一屏（首轮补发、切换线程）一律直接到位。
+	const glide = useRef(0);
+	const touching = useRef(false);
+	const [mountedAt] = useState(() => performance.now());
+	const scrollToEnd = useCallback(
+		(mode: "snap" | "follow" | "jump" = "snap") => {
+			const el = scrollRef.current;
+			if (!el) return;
+			const view = el.clientHeight;
+			const left = el.scrollHeight - view - el.scrollTop;
+			const smooth =
+				mode !== "snap" &&
+				motionAllowed() &&
+				(mode === "jump" ||
+					(left <= view && performance.now() - mountedAt >= INTRO_MS));
+			if (!smooth) {
+				cancelAnimationFrame(glide.current);
+				glide.current = 0;
+				el.scrollTop = el.scrollHeight;
+				return;
+			}
+			if (left > view) el.scrollTop = el.scrollHeight - view * (1 + JUMP_LEAD);
+			if (glide.current) return;
+			let last = performance.now();
+			const tick = (now: number) => {
+				glide.current = 0;
+				const el = scrollRef.current;
+				if (
+					!el ||
+					!stick.current ||
+					hold.current ||
+					touching.current ||
+					dragging.current ||
+					now < intentUntil.current
+				)
+					return;
+				const rest = el.scrollHeight - el.clientHeight - el.scrollTop;
+				if (rest <= 0.5) return;
+				const dt = Math.min(48, Math.max(0, now - last));
+				last = now;
+				const step = rest * (1 - Math.exp(-dt / FOLLOW_TAU));
+				// 每步至少 1px（小数滚动位置会被取整到设备像素，太小的步子走不动）
+				el.scrollTop =
+					rest - step < 1 ? el.scrollHeight : el.scrollTop + Math.max(1, step);
+				glide.current = requestAnimationFrame(tick);
+			};
+			glide.current = requestAnimationFrame(tick);
+		},
+		[mountedAt],
+	);
+	useEffect(() => () => cancelAnimationFrame(glide.current), []);
 
 	// 引用回复：转录里有选区时暂停贴底跟随（stick 不变），选区没了再补一次贴底
 	const hold = useRef(false);
 	const onHold = useCallback(
 		(held: boolean) => {
 			hold.current = held;
-			if (!held && stick.current) scrollToEnd();
+			if (!held && stick.current) scrollToEnd("follow");
 		},
 		[scrollToEnd],
 	);
@@ -888,7 +943,7 @@ export const Transcript = memo(function Transcript({
 		if (bottom) stick.current = true;
 		else if (now < intentUntil.current || (dragging.current && movedUp))
 			stick.current = false;
-		else if (stick.current && !hold.current) scrollToEnd();
+		else if (stick.current && !hold.current) scrollToEnd("follow");
 		setAtBottom(stick.current || bottom);
 
 		const report = onReadRef.current;
@@ -935,6 +990,10 @@ export const Transcript = memo(function Transcript({
 		};
 		const onTouchStart = (e: TouchEvent) => {
 			touchY.current = e.touches[0]?.clientY ?? null;
+			touching.current = true;
+		};
+		const onTouchEnd = () => {
+			touching.current = false;
 		};
 		const onTouchMove = (e: TouchEvent) => {
 			const y = e.touches[0]?.clientY;
@@ -956,6 +1015,8 @@ export const Transcript = memo(function Transcript({
 		el.addEventListener("keydown", onKey);
 		el.addEventListener("touchstart", onTouchStart, passive);
 		el.addEventListener("touchmove", onTouchMove, passive);
+		el.addEventListener("touchend", onTouchEnd, passive);
+		el.addEventListener("touchcancel", onTouchEnd, passive);
 		el.addEventListener("pointerdown", onPointerDown);
 		window.addEventListener("pointerup", onPointerUp);
 		window.addEventListener("pointercancel", onPointerUp);
@@ -964,16 +1025,23 @@ export const Transcript = memo(function Transcript({
 			el.removeEventListener("keydown", onKey);
 			el.removeEventListener("touchstart", onTouchStart);
 			el.removeEventListener("touchmove", onTouchMove);
+			el.removeEventListener("touchend", onTouchEnd);
+			el.removeEventListener("touchcancel", onTouchEnd);
 			el.removeEventListener("pointerdown", onPointerDown);
 			window.removeEventListener("pointerup", onPointerUp);
 			window.removeEventListener("pointercancel", onPointerUp);
 		};
 	}, []);
 
-	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随
+	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随。
+	// 输入坞变高（多行输入、软键盘）直接贴底：滑动的那几帧里最新内容会被输入坞盖住
+	const lastInset = useRef(insetBottom);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 与 insetBottom 变化即需要重新贴底
 	useLayoutEffect(() => {
-		if (stick.current && !hold.current && !rewind) scrollToEnd();
+		const docked = lastInset.current !== insetBottom;
+		lastInset.current = insetBottom;
+		if (stick.current && !hold.current && !rewind)
+			scrollToEnd(docked ? "snap" : "follow");
 	}, [items, total, insetBottom, scrollToEnd, rewind]);
 
 	// 向前翻页：点击时记下距底距离，更早的条目并入后恢复它（内容从上方长出，阅读位置不动）
@@ -1087,171 +1155,194 @@ export const Transcript = memo(function Transcript({
 		return () => cancelAnimationFrame(id);
 	}, [rewindSelectedKey, rewindScrollNonce, virtualizer]);
 
-	const virtualItems = virtualizer.getVirtualItems();
-	const rendered = useMemo(
-		() =>
-			virtualItems.map((v) => {
-				const item = v.index < rows.length ? rows[v.index] : undefined;
-				const turn = turns.footers.get(v.index);
-				const quote = mainline && turn ? turnFinalText(turn) : "";
-				// 会话分隔线、自动消息与 agent 各块都铺满正文列；主人的用户气泡右侧让出头像列（pr-10）
-				const userRow = item !== undefined && isOwnerRow(item);
-				const rowEntryId =
-					item?.kind === "message" || item?.kind === "custom_message"
-						? item.entryId
-						: undefined;
-				const rewindSelected = Boolean(
-					rewind && item && rewind.selectedKey === item.key,
-				);
-				const rewindSelectable = Boolean(
-					rewind && item && rewind.selectableKeys.has(item.key),
-				);
-				const rewindDropped = Boolean(
-					rewind && item && rewind.droppedKeys.has(item.key),
-				);
-				return (
-					<div
-						key={v.key}
-						data-index={v.index}
-						data-kind={item?.kind}
-						data-role={
-							item?.kind === "message" ? String(item.message.role) : undefined
-						}
-						data-entry-id={rowEntryId}
-						data-live={item?.kind === "message" && item.live ? "1" : undefined}
-						data-rewind-selected={rewindSelected ? "1" : undefined}
-						data-rewind-dropped={rewindDropped ? "1" : undefined}
-						ref={virtualizer.measureElement}
-						// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上；
-						// 行是 inline-size 容器：助手正文的表格按行宽（100cqw）伸出正文列
-						className={`@container absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5 ${rewindSelected ? "z-10" : ""}`}
-						style={{
-							transform: `translateY(${v.start}px)`,
-							// 行间距只来自本行上边距（见 rowGaps）；末尾的 footer 行再留一点底
-							paddingTop: item ? gaps[v.index] : GAP_FLOW,
-							paddingBottom: item ? 0 : 6,
-						}}
-					>
-						{/* biome-ignore lint/a11y/noStaticElementInteractions: Rewind 模式允许点击任意转录行移动选中框，键盘由 RewindMode 全局接管 */}
-						{/* biome-ignore lint/a11y/useKeyWithClickEvents: 键盘导航由 RewindMode 全局窗口监听接管 */}
-						<div
-							onClick={
-								rewindSelectable && item
-									? () => rewind?.onPick(item.key)
-									: undefined
-							}
-							className={`group/row relative mx-auto max-w-3xl ${userRow ? "pr-10" : ""} ${rewindSelectable ? "cursor-pointer" : ""} ${rewindDropped ? "opacity-45 transition-opacity duration-150" : ""} ${revealed && !revealed.toolCallId && item?.key === revealed.key ? REVEAL_RING.join(" ") : ""}`}
-						>
-							{rewindSelected && (
-								<div
-									aria-hidden
-									data-testid="rewind-outline"
-									className="pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-md border-[1.5px] border-accent border-dashed bg-accent-soft/35"
-								>
-									{rewind?.badge && (
-										<span className="absolute -top-2.5 right-2 rounded-full border border-accent/40 bg-panel px-2 py-px font-medium text-2xs text-accent-ink">
-											{rewind.badge}
-										</span>
-									)}
-								</div>
-							)}
-							{!rewindSelected && rewindSelectable && (
-								<div
-									aria-hidden
-									className="pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-md border border-transparent border-dashed transition-colors duration-150 group-hover/row:border-border-strong"
-								/>
-							)}
-							{turns.starts.has(v.index) && (
-								// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
-								<TurnHead
-									working={liveStart === v.index}
-									model={turns.models.get(v.index)}
-									// 行里没有 thinking_level_change 时，各回合的级别就是会话当前级别
-									thinking={
-										turns.models.get(v.index)?.thinking ??
-										(turns.thinkingSeen ? undefined : sessionThinking)
-									}
-									known={sessionModel}
-									face={resolveTurnRole(
-										turns.models.get(v.index),
-										turns.trails.get(v.index),
-										identities.faces,
-									)}
-									identities={identities}
-									source={turns.trails.get(v.index)?.record?.source}
-								/>
-							)}
-							{item ? (
-								// 模型 / 思考级别切换行：保留虚拟行（行号不变），不画内容
-								turns.hidden.has(v.index) ? null : (
-									<>
-										<ItemView
-											item={item}
-											turn={turn}
-											turnStart={
-												turns.starts.has(v.index) ||
-												turns.userStarts.has(v.index)
-											}
-										/>
-										{quote && <ContinueInNew text={quote} />}
-									</>
-								)
-							) : (
-								<>
-									{pendingPrompts.map((p) => (
-										<PendingPrompt key={p.id} text={p.text} />
-									))}
-									{awaiting && (
-										// 补足到回合边界的间距（行自带 GAP_FLOW），头像行与接替它的回合首行落在同一高度
-										<div
-											data-testid="awaiting-turn"
-											style={{ paddingTop: GAP_TURN - GAP_FLOW }}
-										>
-											<TurnHead
-												working
-												model={awaitingModel}
-												thinking={sessionThinking}
-												known={sessionModel}
-												face={resolveTurnRole(
-													awaitingModel,
-													awaitingTrail,
-													identities.faces,
-												)}
-												identities={identities}
-												source={awaitingTrail?.record?.source}
-											/>
-											<TypingDots />
-										</div>
-									)}
-									<AwaitingReplyContext.Provider value={awaiting}>
-										{footer}
-									</AwaitingReplyContext.Provider>
-								</>
-							)}
-						</div>
-					</div>
-				);
-			}),
-		[
-			virtualItems,
-			rows,
-			mainline,
-			footer,
-			virtualizer.measureElement,
-			turns,
-			gaps,
-			pendingPrompts,
-			liveStart,
-			sessionModel,
-			sessionThinking,
-			identities,
-			awaiting,
-			awaitingModel,
-			awaitingTrail,
-			revealed,
-			rewind,
-		],
+	// 入场动画（entrance.ts）：挂载后 INTRO_MS 内不启用。助手消息由块级入场负责（MessageView 的 FlowBlock）；
+	// 待发气泡换成真实 user 行是交接，气泡早已在场，不再入场
+	const armed = performance.now() - mountedAt >= INTRO_MS;
+	const [log] = useState(() => new ArrivalLog<MainlineRow>());
+	const hadPending = useRef(false);
+	log.note(
+		rows,
+		armed,
+		(row) =>
+			!(row.kind === "message" && row.message.role === "assistant") &&
+			!(isUserRow(row) && hadPending.current),
+		performance.now(),
 	);
+	useEffect(() => {
+		hadPending.current = pendingPrompts.length > 0;
+	});
+
+	const virtualItems = virtualizer.getVirtualItems();
+	const rendered = useMemo(() => {
+		const now = performance.now();
+		return virtualItems.map((v) => {
+			const item = v.index < rows.length ? rows[v.index] : undefined;
+			const turn = turns.footers.get(v.index);
+			const quote = mainline && turn ? turnFinalText(turn) : "";
+			// 会话分隔线、自动消息与 agent 各块都铺满正文列；主人的用户气泡右侧让出头像列（pr-10）
+			const userRow = item !== undefined && isOwnerRow(item);
+			const entering =
+				item === undefined || !log.entering(item.key, now)
+					? ""
+					: userRow
+						? "tx-enter-user"
+						: "tx-enter";
+			const rowEntryId =
+				item?.kind === "message" || item?.kind === "custom_message"
+					? item.entryId
+					: undefined;
+			const rewindSelected = Boolean(
+				rewind && item && rewind.selectedKey === item.key,
+			);
+			const rewindSelectable = Boolean(
+				rewind && item && rewind.selectableKeys.has(item.key),
+			);
+			const rewindDropped = Boolean(
+				rewind && item && rewind.droppedKeys.has(item.key),
+			);
+			return (
+				<div
+					key={v.key}
+					data-index={v.index}
+					data-kind={item?.kind}
+					data-role={
+						item?.kind === "message" ? String(item.message.role) : undefined
+					}
+					data-entry-id={rowEntryId}
+					data-live={item?.kind === "message" && item.live ? "1" : undefined}
+					data-rewind-selected={rewindSelected ? "1" : undefined}
+					data-rewind-dropped={rewindDropped ? "1" : undefined}
+					ref={virtualizer.measureElement}
+					// 行内菜单（消息操作）会溢出到相邻行：悬停 / 聚焦时把本行抬到兄弟行之上；
+					// 行是 inline-size 容器：助手正文的表格按行宽（100cqw）伸出正文列
+					className={`@container absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5 ${rewindSelected ? "z-10" : ""}`}
+					style={{
+						transform: `translateY(${v.start}px)`,
+						// 行间距只来自本行上边距（见 rowGaps）；末尾的 footer 行再留一点底
+						paddingTop: item ? gaps[v.index] : GAP_FLOW,
+						paddingBottom: item ? 0 : 6,
+					}}
+				>
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: Rewind 模式允许点击任意转录行移动选中框，键盘由 RewindMode 全局接管 */}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: 键盘导航由 RewindMode 全局窗口监听接管 */}
+					<div
+						onClick={
+							rewindSelectable && item
+								? () => rewind?.onPick(item.key)
+								: undefined
+						}
+						className={`group/row relative mx-auto max-w-3xl ${entering} ${userRow ? "pr-10" : ""} ${rewindSelectable ? "cursor-pointer" : ""} ${rewindDropped ? "opacity-45 transition-opacity duration-150" : ""} ${revealed && !revealed.toolCallId && item?.key === revealed.key ? REVEAL_RING.join(" ") : ""}`}
+					>
+						{rewindSelected && (
+							<div
+								aria-hidden
+								data-testid="rewind-outline"
+								className="pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-md border-[1.5px] border-accent border-dashed bg-accent-soft/35"
+							>
+								{rewind?.badge && (
+									<span className="absolute -top-2.5 right-2 rounded-full border border-accent/40 bg-panel px-2 py-px font-medium text-2xs text-accent-ink">
+										{rewind.badge}
+									</span>
+								)}
+							</div>
+						)}
+						{!rewindSelected && rewindSelectable && (
+							<div
+								aria-hidden
+								className="pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-md border border-transparent border-dashed transition-colors duration-150 group-hover/row:border-border-strong"
+							/>
+						)}
+						{turns.starts.has(v.index) && (
+							// 回合起点：头像单独占一行，放在本行（回合首行）内部，不另占虚拟行
+							<TurnHead
+								working={liveStart === v.index}
+								model={turns.models.get(v.index)}
+								// 行里没有 thinking_level_change 时，各回合的级别就是会话当前级别
+								thinking={
+									turns.models.get(v.index)?.thinking ??
+									(turns.thinkingSeen ? undefined : sessionThinking)
+								}
+								known={sessionModel}
+								face={resolveTurnRole(
+									turns.models.get(v.index),
+									turns.trails.get(v.index),
+									identities.faces,
+								)}
+								identities={identities}
+								source={turns.trails.get(v.index)?.record?.source}
+							/>
+						)}
+						{item ? (
+							// 模型 / 思考级别切换行：保留虚拟行（行号不变），不画内容
+							turns.hidden.has(v.index) ? null : (
+								<>
+									<ItemView
+										item={item}
+										turn={turn}
+										turnStart={
+											turns.starts.has(v.index) || turns.userStarts.has(v.index)
+										}
+									/>
+									{quote && <ContinueInNew text={quote} />}
+								</>
+							)
+						) : (
+							<>
+								{pendingPrompts.map((p) => (
+									<PendingPrompt key={p.id} text={p.text} />
+								))}
+								{awaiting && (
+									// 补足到回合边界的间距（行自带 GAP_FLOW），头像行与接替它的回合首行落在同一高度
+									<div
+										data-testid="awaiting-turn"
+										className="tx-enter"
+										style={{ paddingTop: GAP_TURN - GAP_FLOW }}
+									>
+										<TurnHead
+											working
+											model={awaitingModel}
+											thinking={sessionThinking}
+											known={sessionModel}
+											face={resolveTurnRole(
+												awaitingModel,
+												awaitingTrail,
+												identities.faces,
+											)}
+											identities={identities}
+											source={awaitingTrail?.record?.source}
+										/>
+										<TypingDots />
+									</div>
+								)}
+								<AwaitingReplyContext.Provider value={awaiting}>
+									{footer}
+								</AwaitingReplyContext.Provider>
+							</>
+						)}
+					</div>
+				</div>
+			);
+		});
+	}, [
+		virtualItems,
+		log,
+		rows,
+		mainline,
+		footer,
+		virtualizer.measureElement,
+		turns,
+		gaps,
+		pendingPrompts,
+		liveStart,
+		sessionModel,
+		sessionThinking,
+		identities,
+		awaiting,
+		awaitingModel,
+		awaitingTrail,
+		revealed,
+		rewind,
+	]);
 
 	// 「回到底部」是悬在托盘顶边上方 8px 的独立小圆钮；输入坞整体独立悬浮，不遮罩、不淡出周围正文
 	const trayTop = trayTopOverride ?? Math.max(0, insetBottom - DOCK_GAP);
@@ -1290,7 +1381,9 @@ export const Transcript = memo(function Transcript({
 						</div>
 					)}
 					<ActiveToolCallsContext.Provider value={activeTools}>
-						{rendered}
+						<EnterArmedContext.Provider value={armed}>
+							{rendered}
+						</EnterArmedContext.Provider>
 					</ActiveToolCallsContext.Provider>
 					{rewind?.emptyFilterText && rows.length === 0 && (
 						<div
@@ -1328,8 +1421,9 @@ export const Transcript = memo(function Transcript({
 					style={{ bottom: trayTop + 8 }}
 					onClick={() => {
 						stick.current = true;
+						intentUntil.current = 0;
 						setAtBottom(true);
-						scrollToEnd();
+						scrollToEnd("jump");
 					}}
 				>
 					<Icon name="arrowDown" size={14} />

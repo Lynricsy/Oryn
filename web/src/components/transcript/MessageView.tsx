@@ -3,7 +3,15 @@
  * 所有字段都按「可能残缺」处理——条目与流式帧都是外部 JSON。
  */
 import type { TFunction } from "i18next";
-import { memo, type ReactNode, useRef, useState } from "react";
+import {
+	type ComponentProps,
+	memo,
+	type ReactNode,
+	useContext,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import type { Orb, ThreadState } from "../../api/client";
@@ -41,6 +49,7 @@ import {
 } from "../../lib/oryn-message";
 import { normalizeQuote, splitLeadingQuote } from "../../lib/quote";
 import { parseTitleCard } from "../../lib/title";
+import { useExpand } from "../../lib/use-expand";
 import { patchComposerDraft } from "../../state/composer-drafts";
 import type { JsonRecord } from "../../state/message-builder";
 import { locateEntry, runSideAsk, sideAskBusy } from "../../state/side-ask";
@@ -65,9 +74,11 @@ import { AgentAvatar } from "./AgentAvatar";
 import { useToolCallActive, useToolsExpand } from "./active-tools";
 import { renderKnownCustomMessage } from "./CustomMessages";
 import { type TranscriptContextValue, useTranscriptContext } from "./context";
+import { EnterArmedContext } from "./entrance";
 import { Foldable } from "./Foldable";
 import { BackgroundToolView, JobEventMessage } from "./JobEvents";
 import { escapeAngles, MD_SIZE } from "./NoticeLine";
+import { useSmoothText } from "./smooth-text";
 import { UserText } from "./UserText";
 
 const CHIP =
@@ -943,6 +954,13 @@ function thinkingPreview(text: string, streaming: boolean): string {
 	return streaming ? `…${flat.slice(-240)}` : flat.slice(0, 240);
 }
 
+/** 思考中自动展开的窗口最多露出的高度（px，约 8 行）：只看最近的思路，不把整段推进转录。 */
+const THINK_TAIL_H = 160;
+
+/**
+ * 思考块：思考中自动展开、文字平滑显现；展开窗口限高，始终滚在最新一行（顶部渐隐表示上面还有）。
+ * 思考结束（下一块开始或回合结束）自动合上，高度缩回为一行。用户点过以用户为准；Rewind 的 Ctrl+O 批量展开为全文。
+ */
 function ThinkingBlock({
 	text,
 	streaming,
@@ -958,7 +976,24 @@ function ThinkingBlock({
 		setPrevEpoch(expand.epoch);
 		setUserOpen(null);
 	}
-	const open = userOpen ?? expand.expanded;
+	// 自动态（没点过、没批量展开）：开合只跟着是否在思考走；收起动画期间也保持限高窗口，不先撑开再缩
+	const auto = userOpen === null && !expand.expanded;
+	const open = userOpen ?? (expand.expanded || streaming);
+	// 展开体收起时先缩回再卸载（留白用 padding，高度过渡才包含上下留白）
+	const body = useExpand<HTMLDivElement>(open);
+	const shownText = useSmoothText(text, streaming);
+	const [clipped, setClipped] = useState(false);
+	// 限高窗口跟住最新一行（scroll-smooth：换行时滑上去而不是跳）
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 文字变长即需要重新贴底
+	useLayoutEffect(() => {
+		const el = body.ref.current;
+		if (!auto || !el) {
+			setClipped(false);
+			return;
+		}
+		setClipped(el.scrollHeight > el.clientHeight + 1);
+		el.scrollTop = el.scrollHeight;
+	}, [auto, shownText, body.shown]);
 	return (
 		<div>
 			<button
@@ -977,15 +1012,17 @@ function ThinkingBlock({
 				<Icon
 					name="chevronRight"
 					size={12}
-					className={`shrink-0 text-ghost transition-transform duration-150 group-hover/think:text-faint ${open ? "rotate-90" : ""}`}
+					className={`shrink-0 text-ghost transition-transform duration-200 group-hover/think:text-faint ${open ? "rotate-90" : ""}`}
 				/>
 			</button>
-			{open && (
+			{body.shown && (
 				<div
+					ref={body.ref}
 					data-ask-scope="thinking"
-					className={`mt-0.5 mb-1.5 whitespace-pre-wrap break-words pl-[22px] text-muted text-xs leading-relaxed ${streaming ? "stream-caret" : ""}`}
+					className={`whitespace-pre-wrap break-words pt-0.5 pb-1.5 pl-[22px] text-muted text-xs leading-relaxed ${auto ? "scroll-smooth overflow-hidden motion-reduce:scroll-auto" : ""} ${clipped ? "[mask-image:linear-gradient(to_bottom,transparent,black_2rem)]" : ""} ${streaming ? "stream-caret" : ""}`}
+					style={auto ? { maxHeight: THINK_TAIL_H } : undefined}
 				>
-					{text}
+					{shownText}
 				</div>
 			)}
 		</div>
@@ -1348,6 +1385,34 @@ export function assistantEdges(
 	return [head ?? "prose", live && head === null ? "prose" : last];
 }
 
+/** 流式正文：显示长度平滑追上到达的文字（见 smooth-text.ts），结束后整段。 */
+function StreamMarkdown({
+	text,
+	streaming,
+}: {
+	text: string;
+	streaming: boolean;
+}): ReactNode {
+	return (
+		<Markdown text={useSmoothText(text, streaming)} streaming={streaming} />
+	);
+}
+
+/**
+ * 助手消息的一个内容块。流式中新出现的块（思考、正文、工具卡）挂载时淡入上移（`.tx-enter`）；
+ * 是否入场在挂载时定下，之后的重渲染不会重播或打断它。
+ */
+function FlowBlock({
+	enter,
+	className,
+	...rest
+}: ComponentProps<"div"> & { enter: boolean }): ReactNode {
+	const armed = useContext(EnterArmedContext);
+	const [entering] = useState(enter && armed);
+	const cls = [className, entering ? "tx-enter" : ""].filter(Boolean).join(" ");
+	return <div {...rest} className={cls || undefined} />;
+}
+
 /** 等待 agent 首个可见输出时的占位：三个依次跃动的点（待回复的回合头下、空的流式助手消息里）。 */
 export function TypingDots(): ReactNode {
 	const { t } = useTranslation();
@@ -1425,7 +1490,7 @@ function AssistantMessage({
 		let node: ReactNode;
 		switch (b.type) {
 			case "text":
-				node = <Markdown text={String(b.text)} streaming={streaming} />;
+				node = <StreamMarkdown text={String(b.text)} streaming={streaming} />;
 				break;
 			case "thinking":
 				node = (
@@ -1455,7 +1520,8 @@ function AssistantMessage({
 				node = <Images content={[b]} />;
 		}
 		blocks.push(
-			<div
+			<FlowBlock
+				enter={live}
 				key={
 					b.type === "toolCall" && typeof b.id === "string" && b.id ? b.id : key
 				}
@@ -1476,7 +1542,7 @@ function AssistantMessage({
 				style={marginTop ? { marginTop } : undefined}
 			>
 				{node}
-			</div>,
+			</FlowBlock>,
 		);
 	});
 	return (

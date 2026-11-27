@@ -102,9 +102,9 @@
 	outline-offset: -2px;
 }
 
-/* 展开后头部与卡内展开体之间一条发丝线 */
-.tv-head[aria-expanded="true"] {
-	border-bottom: 1px solid var(--tv-border);
+/* 展开体顶部一条发丝线隔开头部：画在展开体上，收起动画期间随它一起缩走 */
+.tv-body {
+	border-top: 1px solid var(--tv-border);
 }
 
 /* 类别色图标方块：底 = 类别色 12%，图标 = 类别色（--cat-*，低彩度，只表达工具类别） */
@@ -158,6 +158,11 @@
 
 .tv-status--pending {
 	color: var(--tv-ghost);
+}
+
+/* 本次挂载里跑过的调用结束时：结果图标从运行指示的位置轻轻弹出（历史卡片不播放） */
+.tv-status--settle {
+	animation: tv-settle 380ms var(--ease, ease);
 }
 
 .tv-spin {
@@ -328,6 +333,7 @@
 	overflow-wrap: anywhere;
 	max-height: 160px;
 	overflow-y: auto;
+	animation: tv-rise 240ms var(--ease, ease);
 }
 
 /* 横向溢出的代码 / diff：被裁掉的一侧渐隐（parts.tsx 的 useOverflowX 写 data-overflow）。
@@ -6209,6 +6215,27 @@ button.tv-term-row:hover {
 @keyframes tv-fade-in {
 	from {
 		opacity: 0;
+	}
+}
+
+@keyframes tv-rise {
+	from {
+		opacity: 0;
+		translate: 0 -4px;
+	}
+}
+
+@keyframes tv-settle {
+	from {
+		opacity: 0;
+		scale: 0.4;
+	}
+	60% {
+		opacity: 1;
+		scale: 1.15;
+	}
+	to {
+		scale: 1;
 	}
 }
 

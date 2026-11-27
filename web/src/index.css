@@ -1535,6 +1535,32 @@ main.pt-safe:has([data-safe-bleed]:not(main [inert] *)) {
 }
 
 /*
+ * 转录入场（谁播放由 components/transcript/entrance.ts 决定）：新到达的行与流式中新出现的块从下方 6px 淡入；
+ * 主人的气泡从右下角轻轻放大。用独立的 translate / scale 属性，不碰虚拟行定位用的 transform。
+ * 减少动效时由文末的全局规则压成 1ms。
+ */
+@keyframes tx-enter {
+	from {
+		opacity: 0;
+		translate: 0 6px;
+	}
+}
+.tx-enter {
+	animation: tx-enter 320ms var(--ease);
+}
+@keyframes tx-enter-user {
+	from {
+		opacity: 0;
+		translate: 0 8px;
+		scale: 0.97;
+	}
+}
+.tx-enter-user {
+	transform-origin: 100% 100%;
+	animation: tx-enter-user 300ms var(--ease);
+}
+
+/*
  * 启动画面（index.html / launcher.html 的静态 #boot-splash，交接逻辑见 lib/boot-splash.ts）：纸面底色上居中一枚大品牌标，
  * 插入符闪烁；底部一片 14px 点阵（与首页托盘的点阵同一格距），椭圆遮罩从底边中央向上、向两侧渐隐，
  * 两束光（主题色与邻近色，与首页两侧的线同一对）反向横扫过点阵。
