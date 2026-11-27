@@ -271,3 +271,51 @@ func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {
 	assert.Len(t, f.setupParams(t, "resume.run"), 1, "只重试停止，不重走 resume")
 	assert.NotContains(t, f.setupParams(t, "resume.run")[0].Env, groqEnv)
 }
+
+// TestWithdrawEnvKeysRevokedDuringResume：orb 上次下发时没有降级密钥（envHeld 已知为空）；同意之后一次 resume 生成了
+// 带密钥的参数，在 orbd 应答之前撤回。撤回时 WithdrawEnvKeys 按旧的空记录不会记下它；应答之后、进 ready 之前按最新同意
+// 复查：不进 ready，退回 connecting 重走 resume，新参数里没有密钥，随后才 ready。
+func TestWithdrawEnvKeysRevokedDuringResume(t *testing.T) {
+	ctx := context.Background()
+	f := newEnvFixture(t, false, false)
+	require.NotContains(t, f.setupParams(t, "setup.run")[0].Env, groqEnv)
+
+	at := int64(2)
+	_, err := f.h.st.Q.SetOwnerAiConsent(ctx, db.SetOwnerAiConsentParams{ConsentedAt: &at, Recipients: `["model:groq"]`})
+	require.NoError(t, err)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var first atomic.Bool
+	first.Store(true)
+	f.o.mu.Lock()
+	f.o.fail = func(method string) error {
+		if method == "resume.run" && first.CompareAndSwap(true, false) {
+			close(entered)
+			<-release
+		}
+		return nil
+	}
+	f.o.mu.Unlock()
+
+	require.True(t, f.h.svc.reprepareForEnv(ctx, f.orb.ID, nil), "触发一次 resume")
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("resume.run 没有发出")
+	}
+	require.Equal(t, "gsk-literal-0123456789abcdef", f.setupParams(t, "resume.run")[0].Env[groqEnv], "同意之后的参数带着密钥")
+
+	_, err = f.h.st.Q.ClearOwnerAiConsent(ctx)
+	require.NoError(t, err)
+	f.h.svc.WithdrawEnvKeys(ctx, "consent")
+	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID), "旧的 envHeld 为空：撤回时记不下")
+	close(release)
+
+	require.Eventually(t, func() bool {
+		return countEvent(f.h.eventSeq(f.orb.ID), "resuming>ready") == 1 && len(f.setupParams(t, "resume.run")) == 2
+	}, 10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
+	seq := f.h.eventSeq(f.orb.ID)
+	assert.Equal(t, 1, countEvent(seq, "resuming>connecting"), "带着已撤回密钥的那次 resume 不进 ready：%v", seq)
+	f.assertWithdrawn(t)
+	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
+}

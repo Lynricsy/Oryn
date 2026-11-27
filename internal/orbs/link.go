@@ -646,6 +646,20 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 		detail["resumeOk"] = rres.Ok
 	}
+	if hit, ok := s.envDeliveredWithheld(ctx, plan.EnvFallback); !ok || len(hit) > 0 {
+		// 本次参数生成之后、orbd 应答之前同意被撤回（或无法判定）：orbd 环境里带着现在不被同意的密钥，不进 ready，
+		// 退回 connecting 按最新同意重走一遍（重走时停掉 agent）。无法判定时稍后再试，期间连接超时则进 failed。
+		s.restoreEnvWithdraw(l.orbID, hit)
+		slog.Warn("orbs: 下发的环境变量降级密钥已不被同意，重走本阶段", "orb", l.orbID, "phase", phase, "providers", hit, "judged", ok)
+		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": hit}); moved {
+			if ok {
+				s.advance(l.orbID)
+			} else {
+				time.AfterFunc(envAgentStopRetry, func() { s.advance(l.orbID) })
+			}
+		}
+		return
+	}
 	if !withdrawn {
 		// 新环境已生效：停掉还带着旧环境的 agent，进入 ready 后由线程服务重新拉起
 		if !s.stopEnvAgents(ctx, l, withdraw) {

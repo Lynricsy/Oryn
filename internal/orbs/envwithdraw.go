@@ -126,6 +126,30 @@ func (s *Service) reprepareForEnv(ctx context.Context, orbID string, providers [
 	return moved
 }
 
+// envDeliveredWithheld 在 orbd 应答 setup / resume 之后、进入 ready 之前按最新的同意复查本次实际下发的降级密钥（names
+// 为变量名，plan.EnvFallback）：生成参数之后、应答之前被撤回的 provider，WithdrawEnvKeys 看到的还是旧的 envHeld，
+// 不会记下。返回其中现在已被扣下的 provider；ok 为假表示无法判定（读同意或配置失败），调用方按「不能进 ready」处理。
+func (s *Service) envDeliveredWithheld(ctx context.Context, names []string) (hit []string, ok bool) {
+	if len(names) == 0 {
+		return nil, true
+	}
+	w, isW := s.setup.(EnvWithholder)
+	if !isW {
+		return nil, true
+	}
+	keys, err := w.WithheldEnvKeys(ctx)
+	if err != nil {
+		slog.Warn("orbs: 复查已下发的环境变量降级密钥失败", "err", err)
+		return nil, false
+	}
+	for _, k := range keys {
+		if slices.Contains(names, agentcfg.EnvFallbackName(k)) {
+			hit = append(hit, k)
+		}
+	}
+	return hit, true
+}
+
 // takeEnvWithdraw 取走 orb 待收回的 provider（runPhase 在生成参数之前调用：此后的同意变化另行记下）。
 func (s *Service) takeEnvWithdraw(orbID string) []string {
 	s.mu.Lock()
