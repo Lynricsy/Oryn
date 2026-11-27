@@ -285,6 +285,25 @@ describe("OfficeEditor", () => {
 		]);
 	});
 
+	it("文档没改过（result: unmodified）算保存成功：照常关闭会话并返回", async () => {
+		const onClose = vi.fn();
+		const { frame } = await mount(onClose);
+		loadDocument(frame);
+		log = [];
+		fireEvent.click(screen.getByTestId("office-editor-done"));
+		// Collabora 实测原文：DontSaveIfUnmodified 跳过保存时回 success: false
+		fromEngine(frame.contentWindow, "Action_Save_Resp", {
+			success: false,
+			result: "unmodified",
+		});
+		await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+		expect(screen.queryByTestId("office-editor-save-failed")).toBeNull();
+		expect(log).toEqual([
+			"post Action_Save",
+			`DELETE /api/v1/artifact-office-sessions/${SID}`,
+		]);
+	});
+
 	it("等不到 Action_Save_Resp：10 秒后照常关闭会话并提示保存未确认", async () => {
 		const onClose = vi.fn();
 		const { frame } = await mount(onClose);

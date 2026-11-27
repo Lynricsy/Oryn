@@ -7,7 +7,8 @@
  * 回 `Host_PostmessageReady`，`Document_Loaded` 撤掉加载遮罩；`UI_Close` 等同「完成」。
  *
  * 「完成」：文档加载过就先发 `Action_Save`（不结束编辑、未修改不保存、要回执），最多等 `OFFICE_SAVE_WAIT_MS`
- * 的 `Action_Save_Resp`：明确 `success: true` 才关闭会话（`DELETE`）、让 artifact 查询失效并回到查看器；
+ * 的 `Action_Save_Resp`：`success: true`（或 `result: "unmodified"`，文档没改过、`DontSaveIfUnmodified` 跳过了保存）
+ * 才关闭会话（`DELETE`）、让 artifact 查询失效并回到查看器；
  * 回执是失败（含缺字段）时不关闭，编辑器留着并提示原因，「完成」可再试；等不到回执照常关闭并提示保存未确认。
  * 卸载时同样先发 `Action_Save`，在下一个宏任务里关闭（StrictMode 的模拟卸载随即重新挂载，关闭被取消，会话照用）：
  * iframe 随之移除，引擎做一次退出保存，服务端在关闭宽限期内仍接受它。
@@ -320,9 +321,9 @@ function LiveEditor({
 					}
 					break;
 				case "Action_Save_Resp":
-					// 只有明确的 success: true 算保存成功；其余（含缺字段）都按失败
+					// success: true 或没改过（result: "unmodified"）算保存成功；其余（含缺字段）都按失败
 					saveWaitRef.current?.(
-						msg.values.success === true
+						msg.values.success === true || msg.values.result === "unmodified"
 							? { kind: "saved" }
 							: {
 									kind: "failed",
