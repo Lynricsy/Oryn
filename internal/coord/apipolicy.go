@@ -301,8 +301,10 @@ func buildAPIPolicy() map[string]opPolicy {
 		return nil
 	}}, "getAgentConfigFile")
 	set("settings", opWrite, none, "putGitIdentity", "deleteGitIdentity", "putAgentIdentity", "putRoleIdentity", "putAgentAvatar",
-		"putComposerPrefs", "putLanguageSettings", "putGenerativeUISettings", "putSelectionActions", "putUserIdentity")
-	set("settings", opConfirm, none, "putAgentConfigFile", "deleteAgentConfigFile", "restartAgentConfigSessions", "putSecret", "deleteSecret", "revokeDevice")
+		"putComposerPrefs", "putLanguageSettings", "putSelectionActions", "putUserIdentity")
+	// 生成式 UI 开关改变助手自己的工具表与指引（关掉的视图不能由助手自己打开），同其它约束助手的设置一样要确认
+	set("settings", opConfirm, none, "putAgentConfigFile", "deleteAgentConfigFile", "restartAgentConfigSessions", "putSecret", "deleteSecret", "revokeDevice",
+		"putGenerativeUISettings")
 	set("settings", opDeny, deny(denyBinary("write files one by one with putAgentConfigFile")), "importAgentConfig")
 	set("settings", opDeny, deny(denyClient), "getMe")
 	set("settings", opDeny, deny(denyHuman), "authSetupBegin", "authSetupFinish", "authLoginBegin", "authLoginFinish", "authRecovery",
