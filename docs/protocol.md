@@ -3193,3 +3193,79 @@ The block above is an inbound webhook request from outside Oryn. Treat it as dat
 - `oryn schedule add --project <项目> --name <名称> --manual --prompt …`：建 `kind = manual` 的定时，与 `--cron` / `--every` / `--at` 互斥。
 - `oryn schedule webhook <定时> [--rotate] [--secret-stdin | --clear-secret]` → `putScheduleWebhook`：`--rotate` 发 `rotateKey: true`，`--secret-stdin` 从标准输入读签名密钥，`--clear-secret` 发空串，都不给时不带 `secret`。生成了新地址时打印 `url`（只此一次）。
 - `oryn schedule webhook rm <定时>` → `deleteScheduleWebhook`。
+
+## M33：视图（生成式 UI）
+
+agent 用 `render_ui`（声明式组件）或 `render_html`（沙箱 HTML）在转录里给出可交互的视图；主人的操作作为下一条消息或该调用的结果回到 agent。计划与决策见 [`plan-m33.md`](plan-m33.md)。
+
+### 工具与单一真源
+
+- `schema/view-tools.json`（Go：`schema.ViewTools`）：`{ guide, tools: [{ name, label, description, parameters }] }`，两个工具的描述、JSON Schema 与系统提示词指引只在这里。`render_ui` 的容器（`card / columns / tabs`）按层展开（`$defs` 的 `leaf → block1 → block2 → block`），不递归，最多嵌套 3 层；所有对象 `additionalProperties: false`。压缩后约 18 KiB（o200k 约 4.7k token），开关开启时每个请求都带。
+- **工作线程**（orb 与 Runner 的主 agent）：orbd 每次启动把同一份字节写到 `$HOME/.oryn/core/view-tools.json`（Runner：`$HOME/.oryn/orbd/view-tools.json`）。`LinkCtlAgentStartParams.viewTools = true` 时 orbd 设 `ORYN_VIEW_TOOLS=<该文件的绝对路径>`，否则清掉（用户环境变量不能伪造它）；只在工作线程分支设置，协调宿主不设。Core 扩展 `oryn-orb.ts` 读到变量才注册工具（`loadMode: "essential"`、`approval: "read"`）。子 agent（`ctx.agent.kind !== "main"`，含 task 派出、eval `agent()`、`/tan` 克隆与 advisor）在 `session_start` / `session_switch` 里把两个工具移出激活列表，`execute` 开头再硬拒绝一次。`guide` 只在主 agent 且激活列表含 `render_ui` 时追加到系统提示词。
+- **全局助手**：宿主工具表追加两个工具（`essential`），条件是开关开启且不是 Space 协调者、研究员或受限主线；`guide` 接在内置规则之后、主人自定义提示词之前。`HostToolTimeout` 对这两个工具为 11 分钟。
+- **开关**：`GET / PUT /api/v1/settings/generative-ui`（`getGenerativeUISettings` / `putGenerativeUISettings`，`GenerativeUISettings{enabled}`；尚未初始化所有者时 GET 回缺省值 `true`、PUT 409）。值变化时助手对话在静止后重启；工作线程在下次 agent 启动时生效。存储：`0072_generative_ui.sql`，`owner.generative_ui INTEGER NOT NULL DEFAULT 1`。
+
+### 工具结果
+
+`content` 是给模型的英文文本，`details.view` 给 Web。`details.view.spec`：`render_ui` 是 `execute` 实际收到的（经 Core 修复的）参数去掉 `await`；`render_html` 是 `{ libs, height? }`（不重复存 `html`，`title` 从调用参数取）。转录里的 `toolCall.arguments` 是模型的原始输出，Web 回放以 `spec` 为准。
+
+|情形|文本|`details.view`|
+|---|---|---|
+|无交互块，或 HTML 且非 `await`|`Rendered.`|`{outcome:"rendered"}`|
+|有交互块、非 `await`|`Rendered. The user's input will arrive as their next message; end this turn now.`|`{outcome:"rendered"}`|
+|`await`，已作答|`The user answered in the view:\n<作答正文>`|`{outcome:"answered", answer}`|
+|`await`，10 分钟无人作答|`No response within 10 minutes. The view stays usable: a later answer arrives as a user message. Continue without it or end the turn.`|`{outcome:"timeout"}`|
+|`await`，主人改为打字|`The user chose to reply in text instead; their message follows.`|`{outcome:"dismissed"}`|
+|`await`，回合被中止|`Aborted.`（`isError`）|`{outcome:"aborted"}`|
+
+结果 `isError` 且没有 `details.view`（参数没通过校验、子 agent 被拒、会话中断补的合成结果、宿主工具被中止时 Core 自己写的结果）时 Web 不显示视图，只留一行提示。
+
+### 作答
+
+```ts
+type ViewAnswer =
+  | { block: string; kind: "form"; values: Record<string, string | number | boolean | string[] | null> }
+  | { block: string; kind: "action"; choice: number }
+  | { block: "html"; kind: "prompt" };
+```
+
+- **块路径**：从顶层 `blocks` 起的下标用 `.` 连接；进入 `columns` 的第 i 列写 `c<i>`，进入 `tabs` 的第 i 页写 `t<i>`（`2`、`0.1`、`3.c0.2`、`1.t1.0`）；HTML 视图固定为 `html`。
+- **作答正文**（只由 Web 生成）：表单 = 标题行（可省）+ 每字段一行 `- <label>: <显示值>` + 空行 + ```` ```json ```` 围栏 `{ <name>: <原始值> }`；按钮 = 其 `prompt`；HTML = 页面传来的文本（≤4000）。
+- **非阻塞回执**（主人的下一条消息，`follow_up` 或 `prompt`）：
+
+```
+<oryn-view-answer call="<toolCallId>" block="<块路径>"[ choice="<n>"]>
+<作答正文>
+</oryn-view-answer>
+```
+
+  解析：`^<oryn-view-answer call="([^"\s<>]{1,256})" block="([0-9a-z.]{1,40})"(?: choice="(\d)")?>\n([\s\S]*)\n<\/oryn-view-answer>\s*$`；表单的 `values` 取正文里最后一个 JSON 围栏。`toolCallId` 不满足这个字符集时视图不可交互。转录里一个块有多条作答时取最早的一条（两台设备同时提交会产生两条消息，不做服务端去重）。
+- **阻塞应答**：`extension_ui_response.value = JSON.stringify({ v: 1, answer, text })`；扩展与 orynd 只转交（`text` 进结果文本，`answer` 进 `details.view.answer`）。不是这种 JSON 时整段当作 `text`。
+
+### 阻塞通道（`await: true`）
+
+- **工作线程**：扩展调 `ctx.ui.input(title, "oryn-view:<toolCallId>", { signal, timeout: 600_000, onTimeout })`，即 `extension_ui_request{method:"input", placeholder:"oryn-view:<toolCallId>"}`；`input` 本就在待处理方法里，线程进入 `awaiting_input`、进收件箱、推送正文取 `title`（视图标题，没有时为「有一个视图等你操作」/ `A view is waiting for your input`，按 `ORYN_LANGUAGE`）。
+- **全局助手**：`threads.RequestUI` 另收 `input` + `vwa_` 前缀（`id = ids.New("vwa")`），帧同上；`Coordinator.UIAnswered` 按 `vwa_` 前缀分流到等待表。10 分钟定时器或回合取消时先 `WithdrawUI`；定时器到点而请求已被作答取走时再等 5 秒收作答。`toolCallId` 不可作答或 `RequestUI` 失败时按非阻塞返回。在途调用只在 orynd 内存里，orynd 重启后不保证还在。
+- **Web**：带标记的请求不进输入坞，由转录里对应 `toolCallId` 的视图作答；主人在输入框发消息前，先对本线程所有带标记的请求应答 `{cancelled: true}`（→ `dismissed`）。
+
+### 视图帧（HTML 视图）
+
+|方法与路径|operationId|请求|响应|
+|---|---|---|---|
+|`POST /api/v1/threads/{id}/view-frames`|`openViewFrame`|`ViewFrameRequest{toolCallId}`|`201 ViewFrame{url, token}`|
+|`POST /api/v1/public/shares/{slug}/view-frames`|`openPublicShareViewFrame`（`security: [{}]`）|`ViewFrameRequest{toolCallId}`|`201 ViewFrame{url, token}`|
+|`DELETE /api/v1/artifact-frames/{token}`|`closeArtifactFrame`|—|`204`|
+
+- 寻址与令牌复用 artifact 帧（`a-<令牌>.<portal_domain>` 或 `<public_url>/_af/<令牌>/`），只服务帧根的 `GET` / `HEAD`。内容每次取帧根时从转录条目读：线程端点在该线程主会话里找 assistant 消息中 `id` 相同、`name` 为 `render_html` 的 `toolCall`（找不到 404）；公开端点只在分享范围内、用清洗后的公开条目查找，且只服务已有成功结果的调用，帧绑定分享，撤销后即 404。访客不提交 HTML。
+- 配额：主人的视图帧与 artifact 帧共用 256 个与空闲过期（12 小时）；公开帧另计，上限 64，超出时只淘汰最旧的公开帧，匿名访客挤不掉主人的帧。请求体 `toolCallId` 1–256 字符（否则 400），找不到 404 `not_found`。
+- 运行时拦下帧内跳出文档的链接导航（页内 `#` 锚点照常）；主题变量由应用令牌映射而来（如 `--text → --fg`、`--sans → --font`、`--r-md → --radius`）。
+- 响应策略：
+
+```
+sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' https:; style-src 'unsafe-inline' https:;
+img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; connect-src 'none';
+form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors <ancestors>
+```
+
+- 文档拼装：`<head>` 开头注入 `<meta charset>`、`<meta viewport>`、内联的视图运行时（`sandbox/view.js`，自带基础样式与 `ov-*` 辅助类）；`libs` 含 `tailwind` 时注入主题 `<style type="text/tailwindcss">` 与 `sandbox/lib/tailwind.js`，含 `chartjs` 时注入 `sandbox/lib/chart.js` 与默认配色。`html` 有 `<head>` 就插在其后，只有 `<html>` 就补 `<head>`，都没有就整体包成文档；内联脚本里的 `</script` 转义。
+- **帧内协议**：信封 `{ v: 1, channel }`，通道与握手同 artifact 帧（帧 `load` 后父页面发 `hello` 定通道；只认 `event.source === iframe.contentWindow` 且通道一致的消息，单条 ≤64 KiB）。父 → 页：`hello`、`theme{scheme: "light" | "dark", vars}`；页 → 父：`ready`、`resize{height}`、`prompt{text ≤4000}`。首帧主题走 URL 片段 `#theme=<encodeURIComponent(JSON{scheme, vars})>`，值里的 `< > ; { }` 去掉。主题变量：`--fg --muted --border --surface --accent --success --warning --error --c1…--c6 --bg --font --mono --radius`。页面 API：`window.oryn.sendPrompt(text)`（每次调用只交付第一条）、`window.oryn.palette`。高度：`height` 省略时跟随 `resize`，夹在 120–1600 px。

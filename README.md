@@ -156,6 +156,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 
 - **收件箱分诊台**：按紧急程度列出等你处理、出错、已完成未读与运行中的线程，每行写明在等你什么，选项题在行内直接作答。
 - **Artifacts**：Agent 产出的页面、画布、文档与幻灯片在沙箱里渲染；有版本历史、评论、画布编辑器、演示模式，可导出 Word / PowerPoint / PDF，也可发布成链接。真实的 Word / Excel / PowerPoint / PDF 文件本身也是带版本的 artifact：浏览器内预览、按页或单元格区域评论、上传新版本、下载原件；部署可选的 Collabora 引擎后还能在浏览器里直接编辑并高保真转换。
+- **[视图](docs/features.md#视图)**：Agent 直接在对话里给出可交互的界面——表单、选项按钮、KPI、表格、图表、示意图，或沙箱里运行的 HTML 小工具；你的操作回到 Agent，可以作为下一条消息，也可以作为这次调用的结果让它当场继续。设置里一个开关即可关闭。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/project-palette-dark.png">
