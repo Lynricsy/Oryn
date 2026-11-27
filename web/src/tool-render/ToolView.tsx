@@ -3,7 +3,7 @@
  * the `<omp-tool-view>` web component embedded in HTML session exports.
  */
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Icon, type IconName } from "../components/ui/icons";
 import { useExpand } from "../lib/use-expand";
@@ -202,8 +202,9 @@ export function ToolView(props: ToolViewProps): ReactNode {
 		setUserOpen(null);
 	}
 	const open = userOpen ?? props.defaultOpen ?? false;
-	// 展开体开合做高度过渡；收起动画期间仍挂着（aria-expanded 已经是收起）
-	const body = useExpand<HTMLDivElement>(open);
+	// 展开体开合：卡片整体按裁切露出 / 收起，下方内容跟着平移（见 lib/use-expand）；收起动画期间仍挂着（aria-expanded 已经是收起）
+	const cardRef = useRef<HTMLDivElement | null>(null);
+	const body = useExpand<HTMLDivElement>(open, cardRef);
 	const { args: outerArgs, intent: argIntent } = normalizeArgs(
 		props.name === "ask" && typeof props.args === "string"
 			? { html: props.args }
@@ -266,7 +267,10 @@ export function ToolView(props: ToolViewProps): ReactNode {
 
 	return (
 		<div
-			ref={props.rootRef}
+			ref={(el) => {
+				cardRef.current = el;
+				props.rootRef?.(el);
+			}}
 			className={`tv-card${isError ? " tv-card--error" : ""}${status === "run" ? " tv-card--running" : ""}`}
 		>
 			<button

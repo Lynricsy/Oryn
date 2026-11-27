@@ -817,6 +817,10 @@ export const Transcript = memo(function Transcript({
 	const onReadRef = useRef(onReadDirection);
 	onReadRef.current = onReadDirection;
 	const count = rows.length + 1; // 末尾一项放 footer（工作中指示等）
+	// 行高变了（测高、展开收起、流式增长）：虚拟列表在 ResizeObserver 回调里直接改写行的 top 与总高
+	// （directDomUpdates，同一帧生效、不经 React 重渲染；只有可见范围变了才重渲染），贴底跟随在这里接上
+	const onResize = useRef(() => {});
+	const lastTotal = useRef(0);
 	const virtualizer = useVirtualizer({
 		count,
 		getScrollElement: () => scrollRef.current,
@@ -825,8 +829,15 @@ export const Transcript = memo(function Transcript({
 		paddingStart: insetTop + (hasEarlier ? EARLIER_H : 0),
 		paddingEnd: insetBottom,
 		getItemKey: (i) => (i < rows.length ? (rows[i]?.key ?? i) : "__footer__"),
+		directDomUpdates: true,
+		directDomUpdatesMode: "position",
+		onChange: (v) => {
+			const size = v.getTotalSize();
+			if (size === lastTotal.current) return;
+			lastTotal.current = size;
+			onResize.current();
+		},
 	});
-	const total = virtualizer.getTotalSize();
 
 	// 贴底跟随：snap 直接到底；follow 平滑追到底（逐帧指数逼近，每帧重读目标，内容边长边追）；
 	// jump（「回到底部」）远处先跳近再滑。用户一接手（滚轮 / 触摸 / 拖滚动条）、退出跟随或选区暂停就停下。
@@ -892,6 +903,14 @@ export const Transcript = memo(function Transcript({
 		[scrollToEnd],
 	);
 	const contentRef = useRef<HTMLDivElement>(null);
+	// 内层尺寸容器：总高由虚拟列表直接写（directDomUpdates）
+	const setContentEl = useCallback(
+		(el: HTMLDivElement | null) => {
+			contentRef.current = el;
+			virtualizer.containerRef(el);
+		},
+		[virtualizer],
+	);
 	const selection = useQuoteSelection({
 		rootRef: scrollRef,
 		contentRef,
@@ -1034,16 +1053,19 @@ export const Transcript = memo(function Transcript({
 		};
 	}, []);
 
-	// 内容增长（新条目 / 流式增量 / 高度重测 / 输入坞变高）时，贴底则跟随。
+	// 内容增长（新条目 / 流式增量 / 输入坞变高）时，贴底则跟随；行高重测走上面的 onResize。
 	// 输入坞变高（多行输入、软键盘）直接贴底：滑动的那几帧里最新内容会被输入坞盖住
+	onResize.current = () => {
+		if (stick.current && !hold.current && !rewind) scrollToEnd("follow");
+	};
 	const lastInset = useRef(insetBottom);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 与 insetBottom 变化即需要重新贴底
+	// biome-ignore lint/correctness/useExhaustiveDependencies: items 与 insetBottom 变化即需要重新贴底
 	useLayoutEffect(() => {
 		const docked = lastInset.current !== insetBottom;
 		lastInset.current = insetBottom;
 		if (stick.current && !hold.current && !rewind)
 			scrollToEnd(docked ? "snap" : "follow");
-	}, [items, total, insetBottom, scrollToEnd, rewind]);
+	}, [items, insetBottom, scrollToEnd, rewind]);
 
 	// 向前翻页：点击时记下距底距离，更早的条目并入后恢复它（内容从上方长出，阅读位置不动）
 	const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -1063,14 +1085,13 @@ export const Transcript = memo(function Transcript({
 			})
 			.finally(() => setLoadingEarlier(false));
 	}, [onLoadEarlier, items.length]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: items、total 变化即需要检查是否该恢复位置
 	useLayoutEffect(() => {
 		const r = restore.current;
 		const el = scrollRef.current;
 		if (!r || !el || items.length === r.count) return;
 		restore.current = null;
 		el.scrollTop = el.scrollHeight - r.fromBottom;
-	}, [items, total]);
+	}, [items]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时定一次起始位置
 	useEffect(() => {
@@ -1218,7 +1239,7 @@ export const Transcript = memo(function Transcript({
 					// 行是 inline-size 容器：助手正文的表格按行宽（100cqw）伸出正文列
 					className={`@container absolute left-0 w-full px-3 focus-within:z-10 hover:z-10 sm:px-5 ${rewindSelected ? "z-10" : ""}`}
 					style={{
-						transform: `translateY(${v.start}px)`,
+						// 纵向位置（top）由虚拟列表直接写，不经 React
 						// 行间距只来自本行上边距（见 rowGaps）；末尾的 footer 行再留一点底
 						paddingTop: item ? gaps[v.index] : GAP_FLOW,
 						paddingBottom: item ? 0 : 6,
@@ -1361,11 +1382,7 @@ export const Transcript = memo(function Transcript({
 				}}
 				data-testid="transcript"
 			>
-				<div
-					ref={contentRef}
-					className="relative w-full"
-					style={{ height: total }}
-				>
+				<div ref={setContentEl} className="relative w-full">
 					{hasEarlier && (
 						<div
 							className="absolute left-0 flex w-full items-center justify-center"

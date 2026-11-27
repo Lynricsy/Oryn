@@ -190,9 +190,8 @@ function anchor() {
 	const el = scroller();
 	const top = el.scrollTop;
 	for (const row of el.querySelectorAll<HTMLElement>("[data-index]")) {
-		const start = Number(
-			/translateY\(([-\d.]+)px\)/.exec(row.style.transform)?.[1],
-		);
+		// 行的纵向位置由虚拟列表直接写成 top（directDomUpdates）
+		const start = Number.parseFloat(row.style.top);
 		const i = Number(row.dataset.index);
 		if (start <= top && top < start + rowHeight(i))
 			return { index: i, offset: start - top };

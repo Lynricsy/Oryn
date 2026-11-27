@@ -333,7 +333,7 @@ describe("思考块随思考开合", () => {
 		expect(container.querySelector('[data-ask-scope="thinking"]')).toBeNull();
 	});
 
-	it("允许动效时 thinking_end 触发收起动画：先缩到 0 再卸载", () => {
+	it("允许动效时 thinking_end 触发收起动画：裁切到 0 高、淡出，动画结束才卸载", () => {
 		vi.stubGlobal("matchMedia", () => ({ matches: false }));
 		const anim = { cancel: vi.fn(), onfinish: null as null | (() => void) };
 		const animate = vi.fn(() => anim);
@@ -361,6 +361,9 @@ describe("思考块随思考开合", () => {
 			vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
 				new DOMRect(0, 0, 100, 40),
 			);
+			vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(
+				40,
+			);
 			rerender(
 				liveRow(
 					upd(live, { type: "thinking_end", contentIndex: 0, content: "想" }),
@@ -368,11 +371,16 @@ describe("思考块随思考开合", () => {
 			);
 			const body = () => container.querySelector('[data-ask-scope="thinking"]');
 			expect(body()).not.toBeNull();
+			// 排版保持到动画结束：外框（思考块正文）从底边裁掉 0 → 40px，透明度 1 → 0
 			expect(animate).toHaveBeenCalledWith(
 				[
-					{ height: "40px", opacity: 1 },
-					{ height: "0px", opacity: 0 },
+					{ clipPath: "inset(0 0 0px 0 round 0px)" },
+					{ clipPath: "inset(0 0 40px 0 round 0px)" },
 				],
+				expect.objectContaining({ fill: "forwards" }),
+			);
+			expect(animate).toHaveBeenCalledWith(
+				[{ opacity: 1 }, { opacity: 0 }],
 				expect.anything(),
 			);
 			act(() => anim.onfinish?.());
