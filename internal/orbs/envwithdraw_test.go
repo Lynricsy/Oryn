@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,13 +27,14 @@ const groqEnv = "ORYN_MODEL_KEY_GROQ"
 type envFixture struct {
 	h      *harness
 	drv    *fakeDriver
+	vault  *secrets.Vault
 	orb    db.Orb
 	o      *fakeOrbd
 	legacy *atomic.Bool
 }
 
-// newEnvFixture 建好夹具。legacy 为真时同意判定一律放行，模拟 a024f3fc 之前不看同意就注入的旧版本；consented 为真时
-// 主人已同意 model:groq。
+// newEnvFixture 建好夹具。legacy 为真时同意判定（setup 与控制面）一律放行，模拟 a024f3fc 之前不看同意就注入的旧版本；
+// consented 为真时主人已同意 model:groq。
 func newEnvFixture(t *testing.T, legacy, consented bool) *envFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -50,11 +50,9 @@ func newEnvFixture(t *testing.T, legacy, consented bool) *envFixture {
 	require.NoError(t, err)
 	require.NoError(t, h.st.Q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: "o", UserHandle: []byte("h"), CreatedAt: 1}))
 	if consented {
-		at := int64(1)
-		_, err = h.st.Q.SetOwnerAiConsent(ctx, db.SetOwnerAiConsentParams{ConsentedAt: &at, Recipients: `["model:groq"]`})
-		require.NoError(t, err)
+		grantGroq(t, h)
 	}
-	f := &envFixture{h: h, drv: drv, legacy: &atomic.Bool{}}
+	f := &envFixture{h: h, drv: drv, vault: vault, legacy: &atomic.Bool{}}
 	f.legacy.Store(legacy)
 	gate := aiconsent.NewGate(h.st.Q)
 	d.Store, d.Home, d.Vault = h.st, home, vault
@@ -64,6 +62,7 @@ func newEnvFixture(t *testing.T, legacy, consented bool) *envFixture {
 		}
 		return gate.Check(ctx, recipient)
 	})
+	h.svc.SetAIConsent(d.AIConsent)
 
 	f.orb, err = h.svc.Create(ctx, CreateParams{})
 	require.NoError(t, err)
@@ -74,6 +73,27 @@ func newEnvFixture(t *testing.T, legacy, consented bool) *envFixture {
 		Kind: "work", ID: "T-env", OrbID: &f.orb.ID, TitleSource: "auto", State: "idle", SessionDir: "/s/T-env", CreatedAt: 1, UpdatedAt: 1,
 	}))
 	return f
+}
+
+func grantGroq(t *testing.T, h *harness) {
+	t.Helper()
+	at := time.Now().UnixMilli()
+	_, err := h.st.Q.SetOwnerAiConsent(context.Background(), db.SetOwnerAiConsentParams{ConsentedAt: &at, Recipients: `["model:groq"]`})
+	require.NoError(t, err)
+}
+
+func (f *envFixture) revoke(t *testing.T) {
+	t.Helper()
+	_, err := f.h.st.Q.ClearOwnerAiConsent(context.Background())
+	require.NoError(t, err)
+}
+
+// held 返回 orbs.env_fallback（nil = NULL，不知道）。
+func (f *envFixture) held(t *testing.T) *string {
+	t.Helper()
+	orb, err := f.h.st.Q.GetOrb(context.Background(), f.orb.ID)
+	require.NoError(t, err)
+	return orb.EnvFallback
 }
 
 // setupParams 返回假 orbd 收到的全部 method（setup.run / resume.run）参数。
@@ -108,21 +128,21 @@ func (f *envFixture) stoppedThreads(t *testing.T) []string {
 	return out
 }
 
-// forgetHeld 清掉本进程记下的「已下发的降级密钥」，模拟 orynd 重启：新进程不知道旧进程往 orbd 环境里放过什么。
-func (f *envFixture) forgetHeld() {
-	f.h.svc.mu.Lock()
-	clear(f.h.svc.envHeld)
-	f.h.svc.mu.Unlock()
+// waitResumedReady 等到 orb 恰好 n 次 resuming → ready。
+func (f *envFixture) waitResumedReady(t *testing.T, n int) {
+	t.Helper()
+	require.Eventually(t, func() bool { return countEvent(f.h.eventSeq(f.orb.ID), "resuming>ready") == n },
+		10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
 }
 
 // assertWithdrawn 断言 orb 已重走 resume：最后一次 resume.run 的环境与 models.yml 都不含降级密钥，agent.stop 停了线程，
-// 且排在这次 resume.run 之后（新环境生效之后才重启 agent）。
+// 且排在这次 resume.run 之后（新环境生效之后才重启 agent）；env_fallback 收窄为空。
 func (f *envFixture) assertWithdrawn(t *testing.T) {
 	t.Helper()
 	resumes := f.setupParams(t, "resume.run")
 	require.NotEmpty(t, resumes)
 	last := resumes[len(resumes)-1]
-	assert.NotContains(t, last.Env, groqEnv, "重新下发的环境里没有被扣下的密钥")
+	assert.NotContains(t, last.Env, groqEnv, "重新下发的环境里没有不被同意的密钥")
 	for _, file := range last.OmpHome {
 		if file.Path == agentcfg.ModelsFile {
 			b, err := base64.StdEncoding.DecodeString(file.ContentB64)
@@ -133,7 +153,17 @@ func (f *envFixture) assertWithdrawn(t *testing.T) {
 	}
 	assert.Equal(t, []string{"T-env"}, f.stoppedThreads(t))
 	methods := f.o.methods()
-	assert.Greater(t, slices.Index(methods, "agent.stop"), slices.Index(methods, "resume.run"), "agent 在新环境生效之后才停：%v", methods)
+	lastOf := func(m string) int {
+		for i := len(methods) - 1; i >= 0; i-- {
+			if methods[i] == m {
+				return i
+			}
+		}
+		return -1
+	}
+	assert.Greater(t, lastOf("agent.stop"), lastOf("resume.run"), "agent 在新环境生效之后才停：%v", methods)
+	require.NotNil(t, f.held(t))
+	assert.Equal(t, "[]", *f.held(t))
 }
 
 func countEvent(seq []string, ev string) int {
@@ -146,9 +176,9 @@ func countEvent(seq []string, ev string) int {
 	return n
 }
 
-// TestWithdrawEnvKeysAtStartup：升级前的旧版本不看同意就把降级密钥注入了 orb。升级后 orynd 启动时 link 都还没连上：
-// 启动对账之后记下待收回，orbd 重连 hello 时 ready 的 orb 退回 connecting 重走 resume，新环境里没有密钥，随后停掉其上的
-// agent；之后再调用不会再动它（本进程已按新同意下发过）。
+// TestWithdrawEnvKeysAtStartup：升级前的旧版本不看同意就把降级密钥注入了 orb，迁移把 env_fallback 置为 NULL（不知道）。
+// 升级后 orynd 启动时 link 都还没连上：不动状态；orbd 重连 hello 时 ready 的 orb 退回 connecting 重走 resume，新环境
+// 里没有密钥，随后停掉其上的 agent，env_fallback 变为已知的空；之后再调用不会再动它。
 func TestWithdrawEnvKeysAtStartup(t *testing.T) {
 	ctx := context.Background()
 	f := newEnvFixture(t, true, false)
@@ -156,46 +186,41 @@ func TestWithdrawEnvKeysAtStartup(t *testing.T) {
 	require.Len(t, setups, 1)
 	require.Equal(t, "gsk-literal-0123456789abcdef", setups[0].Env[groqEnv], "旧版本注入了降级的密钥")
 
-	// 升级：控制面重启（link 断开、内存状态清空），新版本按同意判定
+	// 升级：控制面重启（link 断开），迁移 0075 把已有 orb 记为不知道，新版本按同意判定
 	f.legacy.Store(false)
-	f.forgetHeld()
+	require.NoError(t, f.h.st.Q.SetOrbEnvFallback(ctx, db.SetOrbEnvFallbackParams{ID: f.orb.ID}))
 	f.o.disconnect()
 	require.Eventually(t, func() bool { return !f.h.svc.Connected(f.orb.ID) }, 5*time.Second, 20*time.Millisecond)
 	runCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	go f.h.svc.Run(runCtx)
-	require.Eventually(t, func() bool { return len(f.h.svc.pendingEnvWithdraw(f.orb.ID)) > 0 }, 5*time.Second, 20*time.Millisecond)
-	assert.Equal(t, []string{"groq"}, f.h.svc.pendingEnvWithdraw(f.orb.ID))
+	time.Sleep(200 * time.Millisecond)
 	assert.Equal(t, StateReady, f.h.waitState(f.orb.ID, StateReady, time.Second).State, "link 不在时不改状态（不触发 connect 超时）")
 	assert.Empty(t, f.stoppedThreads(t))
 
 	// orbd 重连
 	require.NoError(t, f.o.connect())
-	require.Eventually(t, func() bool {
-		seq := f.h.eventSeq(f.orb.ID)
-		return countEvent(seq, "ready>connecting") == 1 && countEvent(seq, "resuming>ready") == 1
-	}, 10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
+	f.waitResumedReady(t, 1)
+	assert.Equal(t, 1, countEvent(f.h.eventSeq(f.orb.ID), "ready>connecting"))
 	f.assertWithdrawn(t)
-	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
 
-	// 已按新同意下发过：再次收回（如之后的同意变化）不再动它
+	// 已知不持有任何降级密钥：再次收回（如之后的同意变化）不再动它
 	f.h.svc.WithdrawEnvKeys(ctx, "consent")
 	assert.Equal(t, 1, countEvent(f.h.eventSeq(f.orb.ID), "ready>connecting"))
-	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
 }
 
-// TestWithdrawEnvKeysConsented：主人已同意 model:groq 时启动收回什么也不做：不改状态、不停 agent。
+// TestWithdrawEnvKeysConsented：主人已同意 model:groq、orb 已知持有它时收回什么也不做：不改状态、不停 agent。
 func TestWithdrawEnvKeysConsented(t *testing.T) {
 	ctx := context.Background()
 	f := newEnvFixture(t, false, true)
 	setups := f.setupParams(t, "setup.run")
 	require.Len(t, setups, 1)
 	require.Equal(t, "gsk-literal-0123456789abcdef", setups[0].Env[groqEnv])
+	require.NotNil(t, f.held(t))
+	assert.Equal(t, `["groq"]`, *f.held(t))
 
-	f.forgetHeld()
 	f.h.svc.recover(ctx)
 	f.h.svc.WithdrawEnvKeys(ctx, "startup")
-	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
 	assert.Equal(t, 0, countEvent(f.h.eventSeq(f.orb.ID), "ready>connecting"))
 	assert.Empty(t, f.setupParams(t, "resume.run"))
 	assert.Empty(t, f.stoppedThreads(t))
@@ -212,13 +237,9 @@ func TestWithdrawEnvKeysOnRevoke(t *testing.T) {
 	f.h.svc.WithdrawEnvKeys(ctx, "consent")
 	assert.Equal(t, 0, countEvent(f.h.eventSeq(f.orb.ID), "ready>connecting"), "同意仍在：不动")
 
-	_, err := f.h.st.Q.ClearOwnerAiConsent(ctx)
-	require.NoError(t, err)
+	f.revoke(t)
 	f.h.svc.WithdrawEnvKeys(ctx, "consent")
-	require.Eventually(t, func() bool {
-		seq := f.h.eventSeq(f.orb.ID)
-		return countEvent(seq, "ready>connecting") == 1 && countEvent(seq, "resuming>ready") == 1
-	}, 10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
+	f.waitResumedReady(t, 1)
 	f.assertWithdrawn(t)
 	evs, err := f.h.st.Q.ListOrbEvents(ctx, f.orb.ID)
 	require.NoError(t, err)
@@ -232,8 +253,30 @@ func TestWithdrawEnvKeysOnRevoke(t *testing.T) {
 	assert.Contains(t, reason, `"groq"`)
 }
 
+// TestWithdrawEnvKeysAfterVaultKeyDeleted：已同意 groq、orb 带着它的密钥在跑；主人先在设置里删掉这个密钥（只删记录，
+// 不停进程），再撤回同意。收回按 orb 记下的 provider 直接查同意，不从当前密钥库或 models.yml 反推：orb 重走 resume，
+// 参数因密钥已删而生成失败、进 failed 之前也要停掉还带着旧密钥的 agent。
+func TestWithdrawEnvKeysAfterVaultKeyDeleted(t *testing.T) {
+	ctx := context.Background()
+	f := newEnvFixture(t, false, true)
+	require.Equal(t, "gsk-literal-0123456789abcdef", f.setupParams(t, "setup.run")[0].Env[groqEnv])
+
+	ok, err := f.vault.Delete(ctx, agentcfg.ModelKeySecretName("groq"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	f.revoke(t)
+	f.h.svc.WithdrawEnvKeys(ctx, "consent")
+
+	require.Eventually(t, func() bool { return countEvent(f.h.eventSeq(f.orb.ID), "resuming>failed") == 1 },
+		10*time.Second, 20*time.Millisecond, "events: %v", f.h.eventSeq(f.orb.ID))
+	assert.Equal(t, []string{"T-env"}, f.stoppedThreads(t), "进 failed 之前停掉带着旧密钥的 agent")
+	assert.Empty(t, f.setupParams(t, "resume.run"))
+	require.NotNil(t, f.held(t))
+	assert.Equal(t, `["groq"]`, *f.held(t), "orbd 环境没有换掉：记录不收窄")
+}
+
 // TestWithdrawEnvKeysStopFailureHoldsReady：撤回后重走 resume，但 link 一直在线、agent.stop 返回错误（agent 可能还带着
-// 旧密钥在跑）：orb 不进 ready、待收回状态不消费，按退避重试 agent.stop；停下之后才进入 ready。
+// 旧密钥在跑）：orb 不进 ready、env_fallback 不收窄，按退避重试 agent.stop；停下之后才进入 ready。
 func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {
 	retry, retryMax := envAgentStopRetry, envAgentStopRetryMax
 	envAgentStopRetry, envAgentStopRetryMax = 20*time.Millisecond, 40*time.Millisecond
@@ -252,8 +295,7 @@ func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {
 	}
 	f.o.mu.Unlock()
 
-	_, err := f.h.st.Q.ClearOwnerAiConsent(ctx)
-	require.NoError(t, err)
+	f.revoke(t)
 	f.h.svc.WithdrawEnvKeys(ctx, "consent")
 	require.Eventually(t, func() bool { return len(f.stoppedThreads(t)) >= 3 }, 10*time.Second, 10*time.Millisecond, "agent.stop 失败后重试")
 	assert.True(t, f.h.svc.Connected(f.orb.ID), "link 一直在线")
@@ -263,26 +305,27 @@ func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {
 	got, err := f.h.svc.Get(ctx, f.orb.ID)
 	require.NoError(t, err)
 	assert.Equal(t, StateResuming, got.State)
+	require.NotNil(t, f.held(t))
+	assert.Equal(t, `["groq"]`, *f.held(t))
 
 	stopFails.Store(false)
-	require.Eventually(t, func() bool { return countEvent(f.h.eventSeq(f.orb.ID), "resuming>ready") == 1 }, 10*time.Second, 10*time.Millisecond,
-		"events: %v", f.h.eventSeq(f.orb.ID))
-	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
+	f.waitResumedReady(t, 1)
 	assert.Len(t, f.setupParams(t, "resume.run"), 1, "只重试停止，不重走 resume")
 	assert.NotContains(t, f.setupParams(t, "resume.run")[0].Env, groqEnv)
+	assert.Equal(t, "[]", *f.held(t))
 }
 
-// TestWithdrawEnvKeysRevokedDuringResume：orb 上次下发时没有降级密钥（envHeld 已知为空）；同意之后一次 resume 生成了
-// 带密钥的参数，在 orbd 应答之前撤回。撤回时 WithdrawEnvKeys 按旧的空记录不会记下它；应答之后、进 ready 之前按最新同意
-// 复查：不进 ready，退回 connecting 重走 resume，新参数里没有密钥，随后才 ready。
+// TestWithdrawEnvKeysRevokedDuringResume：orb 已知不持有降级密钥；同意之后一次 resume 生成了带密钥的参数，在 orbd 应答
+// 之前撤回（WithdrawEnvKeys 那时看到的不是 ready，不动它）。应答之后、进 ready 之前按最新同意复查：不进 ready，退回
+// connecting 重走 resume，新参数里没有密钥、停掉 agent，随后才 ready。
 func TestWithdrawEnvKeysRevokedDuringResume(t *testing.T) {
 	ctx := context.Background()
 	f := newEnvFixture(t, false, false)
 	require.NotContains(t, f.setupParams(t, "setup.run")[0].Env, groqEnv)
+	require.NotNil(t, f.held(t))
+	require.Equal(t, "[]", *f.held(t))
 
-	at := int64(2)
-	_, err := f.h.st.Q.SetOwnerAiConsent(ctx, db.SetOwnerAiConsentParams{ConsentedAt: &at, Recipients: `["model:groq"]`})
-	require.NoError(t, err)
+	grantGroq(t, f.h)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var first atomic.Bool
@@ -304,11 +347,10 @@ func TestWithdrawEnvKeysRevokedDuringResume(t *testing.T) {
 		t.Fatal("resume.run 没有发出")
 	}
 	require.Equal(t, "gsk-literal-0123456789abcdef", f.setupParams(t, "resume.run")[0].Env[groqEnv], "同意之后的参数带着密钥")
+	assert.Equal(t, `["groq"]`, *f.held(t), "发出之前已记下并集")
 
-	_, err = f.h.st.Q.ClearOwnerAiConsent(ctx)
-	require.NoError(t, err)
+	f.revoke(t)
 	f.h.svc.WithdrawEnvKeys(ctx, "consent")
-	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID), "旧的 envHeld 为空：撤回时记不下")
 	close(release)
 
 	require.Eventually(t, func() bool {
@@ -317,5 +359,4 @@ func TestWithdrawEnvKeysRevokedDuringResume(t *testing.T) {
 	seq := f.h.eventSeq(f.orb.ID)
 	assert.Equal(t, 1, countEvent(seq, "resuming>connecting"), "带着已撤回密钥的那次 resume 不进 ready：%v", seq)
 	f.assertWithdrawn(t)
-	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
 }

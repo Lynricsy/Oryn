@@ -288,6 +288,8 @@ type Rendered struct {
 	Routes map[string]egress.Route
 	// Env 是环境变量降级时注入 agent 进程的真实密钥。
 	Env map[string]string
+	// EnvProviders 是以环境变量降级下发了密钥的 provider 键（与 Env 一一对应，按出现顺序）。
+	EnvProviders []string
 	// Warnings 是改写过程中的提示。
 	Warnings []string
 }
@@ -395,6 +397,7 @@ func renderModels(content []byte, r Resolver, opts RenderOptions, out *Rendered)
 				ak.Value = env
 				ak.Style = 0
 				out.Env[env] = value
+				out.EnvProviders = append(out.EnvProviders, key)
 				out.Warnings = append(out.Warnings, fmt.Sprintf("provider %s 没有 baseUrl 且不在内置表中，真实密钥以环境变量 %s 进入 orb", key, env))
 			default:
 				local, origin, err := rewriteBase(base, key, egressAddr)

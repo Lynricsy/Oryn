@@ -273,11 +273,6 @@ type Service struct {
 
 	// omp 是 omp 配置立即下发（M13，见 apply.go；受 mu 保护，nil = 未开启）。
 	omp *ompApplier
-
-	// envHeld / envWithdraw 是环境变量降级密钥的收回状态（AI 数据同意，见 envwithdraw.go；受 mu 保护）：各 orb 最近一次
-	// 成功 setup / resume 下发的降级密钥变量名，与待收回的 provider 键。
-	envHeld     map[string][]string
-	envWithdraw map[string][]string
 }
 
 // QuiesceFunc 是冻结 / 停机闸门（Threads 提供）：持有该 orb 全部线程的锁，确认全部 settled、无待发命令、
@@ -313,7 +308,6 @@ func New(cfg Config, st *store.Store, q *jobs.Queue, setup SetupSource, secrets 
 		userTouched: map[string]*userTouch{},
 		poolKick:    make(chan struct{}, 1), poolBackoff: map[string]time.Time{},
 		runnerOffline: map[string]*runnerTimer{}, runnerWithheld: map[string]string{},
-		envHeld: map[string][]string{}, envWithdraw: map[string][]string{},
 	}
 	s.reqs[string(apigen.MethodProjectScriptsGet)] = s.onProjectScriptsGet
 	s.reqs[string(apigen.MethodProjectScriptsSet)] = s.onProjectScriptsSet

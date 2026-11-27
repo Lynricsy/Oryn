@@ -120,6 +120,10 @@ ORDER BY created_at DESC LIMIT 1;
 -- name: SetOrbConfigHash :exec
 UPDATE orbs SET config_hash = CAST(@config_hash AS TEXT) WHERE id = @id;
 
+-- Env-fallback model providers whose real keys the orb's processes may hold (JSON array; NULL = unknown). See 0075.
+-- name: SetOrbEnvFallback :exec
+UPDATE orbs SET env_fallback = sqlc.narg(env_fallback) WHERE id = @id;
+
 -- The provider fell back to the base image (spawn result snapshotUsed = false): the orb no longer comes from the
 -- project snapshot. 0 rows = snapshot_of already moved.
 -- name: ClearOrbSnapshot :execrows

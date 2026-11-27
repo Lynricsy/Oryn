@@ -474,13 +474,15 @@ func (s *Service) onHello(l *orbLink) {
 			}
 		}
 	}
-	if pending := s.pendingEnvWithdraw(orb.ID); !l.runner && orb.State == StateReady && len(pending) > 0 {
-		// 有待收回的环境变量降级密钥（AI 数据同意，见 envwithdraw.go）：退回 connecting，由本 link 重走 resume
-		if _, _, err := s.transition(ctx, orb.ID, StateReady, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": pending}); err != nil {
-			slog.Warn("收回环境变量降级密钥时状态更新失败", "orb", orb.ID, "err", err)
-		}
-		if orb, err = s.Get(ctx, l.orbID); err != nil {
-			return
+	if orb.State == StateReady && !l.runner {
+		if stale := s.envStale(ctx, orb); len(stale) > 0 {
+			// 可能持有主人没有同意的环境变量降级密钥（AI 数据同意，见 envwithdraw.go）：退回 connecting，由本 link 重走 resume
+			if _, _, err := s.transition(ctx, orb.ID, StateReady, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": stale}); err != nil {
+				slog.Warn("收回环境变量降级密钥时状态更新失败", "orb", orb.ID, "err", err)
+			}
+			if orb, err = s.Get(ctx, l.orbID); err != nil {
+				return
+			}
 		}
 	}
 	if orb.State == StateConnecting {
@@ -553,21 +555,17 @@ func (s *Service) runPhase(l *orbLink) {
 	if err != nil || !moved {
 		return
 	}
-	// 待收回的环境变量降级密钥（见 envwithdraw.go）在生成参数之前取走：此后的同意变化另行记下，由进入 ready 时的复查接手。
-	// 没能收回（中途失败、link 断开）就放回，由下一次 runPhase 再收。
-	withdraw := s.takeEnvWithdraw(l.orbID)
-	withdrawn := len(withdraw) == 0
-	defer func() {
-		if !withdrawn {
-			s.restoreEnvWithdraw(l.orbID, withdraw)
-		}
-	}()
+	// orb 上可能持有的环境变量降级 provider（AI 数据同意，见 envwithdraw.go）
+	tracked := envTracked(orb)
+	prevHeld, heldKnown := envHeldOf(orb)
 	gen := s.policyGeneration() // 读配置之前取代际：期间项目门禁被改时不写回旧策略（由 policyFor 按需重建）
 	var plan SetupPlan
 	if s.setup != nil {
 		plan, err = s.setup.Plan(ctx, orb)
 		if err != nil {
 			slog.Warn("生成 setup 参数失败", "orb", l.orbID, "err", err)
+			// 换不了环境：还带着不被同意密钥的 agent 先停掉（如降级密钥已从密钥库删除、模型配置因此渲染失败）
+			s.stopEnvOnFailure(ctx, l, tracked, prevHeld, heldKnown)
 			_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
 			return
 		}
@@ -592,6 +590,12 @@ func (s *Service) runPhase(l *orbLink) {
 			s.advance(l.orbID)
 		}
 	}
+	// orbd 收到参数就会替换 setup 环境（应答丢失、脚本失败也一样），还没停掉的 agent 带着之前的环境：发出之前先把 orb 上
+	// 可能持有的降级 provider 记成之前的与本次下发的并集（不知道之前的就仍是不知道）。
+	held := append(slices.Clone(prevHeld), plan.EnvFallback...)
+	if tracked && heldKnown {
+		s.setEnvHeld(ctx, l.orbID, held, true)
+	}
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.SetupTimeout)
 	defer cancel()
 	var res apigen.LinkCtlSetupRunResult
@@ -602,11 +606,10 @@ func (s *Service) runPhase(l *orbLink) {
 			return
 		}
 		slog.Warn("setup / resume 失败", "orb", l.orbID, "phase", phase, "err", err)
+		s.stopEnvOnFailure(ctx, l, tracked, held, heldKnown)
 		_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
 		return
 	}
-	// orbd 已用这份参数替换 setup 环境（脚本失败也一样，环境在脚本之前写入）
-	s.noteEnvHeld(l.orbID, plan.EnvFallback)
 	if method == apigen.MethodSetupRun && res.Ok && res.SetupRan {
 		// CP-5：只有真正跑过并成功的 setup 才改变环境已应用的配置；resume 与跳过的 setup 不算
 		s.recordAppliedHash(ctx, l.orbID, hash)
@@ -646,27 +649,29 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 		detail["resumeOk"] = rres.Ok
 	}
-	if hit, ok := s.envDeliveredWithheld(ctx, plan.EnvFallback); !ok || len(hit) > 0 {
-		// 本次参数生成之后、orbd 应答之前同意被撤回（或无法判定）：orbd 环境里带着现在不被同意的密钥，不进 ready，
-		// 退回 connecting 按最新同意重走一遍（重走时停掉 agent）。无法判定时稍后再试，期间连接超时则进 failed。
-		s.restoreEnvWithdraw(l.orbID, hit)
-		slog.Warn("orbs: 下发的环境变量降级密钥已不被同意，重走本阶段", "orb", l.orbID, "phase", phase, "providers", hit, "judged", ok)
-		if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": hit}); moved {
-			if ok {
+	if tracked {
+		// 按最新的同意直接查（不从当前配置反推）：本次下发的 provider 在参数生成之后被撤回的，不进 ready，退回 connecting
+		// 按新同意重走一遍（重走时并集里仍有它，会停掉 agent）。
+		if hit := s.envUnconsented(ctx, plan.EnvFallback); len(hit) > 0 {
+			slog.Warn("orbs: 下发的环境变量降级密钥已不被同意，重走本阶段", "orb", l.orbID, "phase", phase, "providers", hit)
+			if _, moved, _ := s.transition(ctx, l.orbID, phase, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": hit}); moved {
 				s.advance(l.orbID)
-			} else {
-				time.AfterFunc(envAgentStopRetry, func() { s.advance(l.orbID) })
 			}
-		}
-		return
-	}
-	if !withdrawn {
-		// 新环境已生效：停掉还带着旧环境的 agent，进入 ready 后由线程服务重新拉起
-		if !s.stopEnvAgents(ctx, l, withdraw) {
-			linkLost("停止 agent ")
 			return
 		}
-		withdrawn = true
+		stale := []string{envUnknown}
+		if heldKnown {
+			stale = s.envUnconsented(ctx, held)
+		}
+		if len(stale) > 0 {
+			// 之前的环境里有现在不被同意的密钥：新环境已生效，停掉还带着旧环境的 agent，进入 ready 后由线程服务重新拉起。
+			// 全部停下之后，orb 上只剩本次下发的。
+			if !s.stopEnvAgents(ctx, l, stale) {
+				linkLost("停止 agent ")
+				return
+			}
+			s.setEnvHeld(ctx, l.orbID, plan.EnvFallback, true)
+		}
 	}
 	if h := s.desktopHooksFor(l); h != nil {
 		// Profile 必须在 agent 启动（ready）之前定下来。期间 link 断开则 Profile 可能没定好：
@@ -690,9 +695,13 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 		return err
 	})
-	if pending := s.pendingEnvWithdraw(l.orbID); ready && len(pending) > 0 {
-		// 本阶段生成参数之后同意又有变化（参数里可能还带着刚被撤回的密钥）：再走一遍
-		s.reprepareForEnv(ctx, l.orbID, pending)
+	if ready && tracked {
+		// 复查到进 ready 之间同意又被撤回：WithdrawEnvKeys 那时看到的不是 ready，不会动它；这里按最新的同意再查一次
+		if cur, err := s.Get(ctx, l.orbID); err == nil && cur.State == StateReady {
+			if stale := s.envStale(ctx, cur); len(stale) > 0 {
+				s.reprepareForEnv(ctx, l.orbID, stale)
+			}
+		}
 	}
 }
 

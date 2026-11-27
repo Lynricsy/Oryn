@@ -2,38 +2,37 @@ package orbs
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"slices"
 	"sync"
 	"time"
 
-	"github.com/Lynricsy/Oryn/internal/agentcfg"
+	"github.com/Lynricsy/Oryn/internal/aiconsent"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // AI 数据同意（App Store 5.1.2(i)）：以环境变量降级的模型密钥让 omp 直连上游，出站代理管不到，只能不放进 orb 的环境。
 // setup 只给已同意的 provider 注入（DefaultSetup.envConsent），但 orbd 的环境只在 setup.run / resume.run 时整体替换，
-// 在跑的 agent 进程（及 orbd 崩溃自重启沿用的启动参数）一直带着启动时的环境。所以在两种时机收回：
-//   - orynd 启动时（Run 对账之后）：旧版本不看同意一律注入，升级前已 ready 的 orb 不会再跑 setup；
-//   - 同意记录变化后（PUT / DELETE ai-data-consent）：撤回不会让在跑的 orb 重新 setup。
+// 在跑的 agent 进程（及 orbd 崩溃自重启沿用的启动参数）一直带着启动时的环境。
 //
-// 收回 = 让 orb 重新走 connecting → resuming → ready：新的 resume.run 参数里没有被扣下的密钥，orbd 用它整体替换
-// setup 环境（orbdrt runSetupLocked：setupEnv = p.Env）并重写 models.yml（占位符）；随后停掉这台 orb 上的全部 agent
-// （agent.stop 结束监督器，崩溃自重启也不再沿用旧环境），orb 进入 ready 后线程服务照常重新拉起（open_session 续上原会话）。
+// orbs.env_fallback 记下 orb 上可能持有的降级 provider（见迁移 0075）：新的 setup / resume 只并入本次下发的，停掉 orb 上
+// 全部 agent 之后才收窄为本次下发的那组；NULL = 不知道（升级前已在跑的 orb）。收回时按这里的 provider 直接以接收方身份
+// `model:<key>` 查同意（envStale），不从当前 models.yml 或密钥库反推：密钥被删、配置被改之后，已经下发的密钥仍在进程里。
 //
-// 不落库，只在内存里记两样东西（受 Service.mu 保护）：
-//   - envHeld：本进程最近一次成功的 setup / resume 下发到各 orb 的降级密钥变量名。没有记录 = 不知道（升级前的旧进程或
-//     本进程启动前的 setup），按「被扣下的全都在」处理——启动时会把仍在用的 orb 都过一遍（只在有被扣下的 provider 时）；
-//   - envWithdraw：待收回的 provider 键。机器在跑但现在不能马上重走 setup 的 orb（link 不在、冻结、正在 setup 等）先记下，
-//     由它下一次 runPhase（或 ready 状态下重新 hello 时）收回。
+// 收回 = 让 orb 重新走 connecting → resuming → ready：新的 resume.run 参数里没有不被同意的密钥，orbd 用它整体替换 setup
+// 环境（orbdrt runSetupLocked：setupEnv = p.Env）并重写 models.yml；随后停掉这台 orb 上的全部 agent（agent.stop 结束
+// 监督器，崩溃自重启也不再沿用旧环境），orb 进入 ready 后线程服务照常重新拉起（open_session 续上原会话）。触发时机：
+//   - ready 且 link 在线的 orb：同意记录变化后（PUT / DELETE ai-data-consent）与 orynd 启动时（WithdrawEnvKeys）；
+//   - ready 的 orb 重新 hello 时（onHello，含升级后第一次重连）；
+//   - 每次 runPhase：生成参数之前按记录判定要不要停 agent，orbd 应答之后、进 ready 之前与进 ready 之后各按最新同意复查。
 //
 // 协调宿主不在此列：planCoordinator 丢弃降级的环境变量，orbd 的协调宿主模式也不给 agent 带 setup 环境；runner 关闭
 // 环境变量降级（NoEnvFallback）；沙箱不经 setup。
 
-// EnvWithholder 由能算出「被同意记录扣下的环境变量降级 provider」的 SetupSource 实现（DefaultSetup）。
-type EnvWithholder interface {
-	WithheldEnvKeys(ctx context.Context) ([]string, error)
-}
+// envUnknown 是 envStale 对「不知道 orb 上有哪些降级密钥」的标记。
+const envUnknown = "?"
 
 // envWithdrawReason 是收回降级密钥时 orb 事件的原因。
 const envWithdrawReason = "ai consent: env key withdrawn"
@@ -47,72 +46,81 @@ var (
 	envAgentStopRetryMax = time.Minute
 )
 
-// WithdrawEnvKeys 收回 orb 环境里主人已不同意的环境变量降级密钥（见文件头）。trigger 只进日志（"startup" / "consent"）。
-// 没有被扣下的 provider 时（常见情形）什么都不做；否则对机器可能还带着这些密钥的工作 orb：ready 且 link 在的立即退回
-// connecting 重走 resume，其余记下待收回。可重复调用：本进程已按新同意重新下发过的 orb 不再受影响。
+// envTracked 报告 orb 是否走环境变量降级（工作 orb；协调宿主、runner、沙箱不经这条路）。
+func envTracked(orb db.Orb) bool {
+	return !orb.Coordinator && !IsRunner(orb) && !IsSandbox(orb)
+}
+
+// envHeldOf 解析 orbs.env_fallback；known 为假表示不知道（NULL 或无法解析）。
+func envHeldOf(orb db.Orb) (keys []string, known bool) {
+	if orb.EnvFallback == nil || json.Unmarshal([]byte(*orb.EnvFallback), &keys) != nil {
+		return nil, false
+	}
+	return keys, true
+}
+
+// envUnconsented 返回 keys 里主人现在没有同意的第三方 provider（直接查 `model:<key>`；查询出错按未同意处理）。
+func (s *Service) envUnconsented(ctx context.Context, keys []string) []string {
+	var out []string
+	for _, k := range keys {
+		id, third := aiconsent.ModelRecipient(k, "")
+		if third && aiconsent.Check(ctx, s.aiConsent, id) != nil {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// envStale 返回 orb 上可能持有、主人现在没有同意的降级 provider；不知道持有什么时为 [envUnknown]。
+func (s *Service) envStale(ctx context.Context, orb db.Orb) []string {
+	if !envTracked(orb) {
+		return nil
+	}
+	held, known := envHeldOf(orb)
+	if !known {
+		return []string{envUnknown}
+	}
+	return s.envUnconsented(ctx, held)
+}
+
+// setEnvHeld 写 orbs.env_fallback（known 为假写 NULL）。
+func (s *Service) setEnvHeld(ctx context.Context, orbID string, keys []string, known bool) {
+	var v *string
+	if known {
+		keys = slices.Compact(slices.Sorted(slices.Values(keys)))
+		if keys == nil {
+			keys = []string{}
+		}
+		b, _ := json.Marshal(keys)
+		v = new(string(b))
+	}
+	if err := s.st.Q.SetOrbEnvFallback(ctx, db.SetOrbEnvFallbackParams{EnvFallback: v, ID: orbID}); err != nil {
+		slog.Warn("orbs: 记录 orb 持有的环境变量降级密钥失败", "orb", orbID, "err", err)
+	}
+}
+
+// WithdrawEnvKeys 收回 orb 上主人已不同意的环境变量降级密钥（见文件头）。trigger 只进日志（"startup" / "consent"）。
+// ready 且 link 在线、可能持有不被同意密钥的工作 orb 立即退回 connecting 重走 resume；其余由它们下一次 hello 或
+// runPhase 按 orbs.env_fallback 处理。
 func (s *Service) WithdrawEnvKeys(ctx context.Context, trigger string) {
-	w, ok := s.setup.(EnvWithholder)
-	if !ok {
-		return
-	}
-	keys, err := w.WithheldEnvKeys(ctx)
-	if err != nil {
-		slog.Warn("orbs: 计算被扣下的环境变量降级密钥失败", "trigger", trigger, "err", err)
-		return
-	}
-	if len(keys) == 0 {
-		// 没有要收回的：此前记下、还没收回的也不必再收（它们的 provider 现在已同意）
-		s.mu.Lock()
-		clear(s.envWithdraw)
-		s.mu.Unlock()
-		return
-	}
 	orbs, err := s.st.Q.ListLiveOrbs(ctx)
 	if err != nil {
 		slog.Warn("orbs: 收回环境变量降级密钥时读取 orb 失败", "trigger", trigger, "err", err)
 		return
 	}
 	for _, orb := range orbs {
-		if orb.Coordinator || IsRunner(orb) || IsSandbox(orb) {
-			continue
-		}
-		switch orb.State {
-		case StateRequested, StateStopping, StateStopped, StateDeleting:
-			// 机器还没建或已停：没有在跑的进程，下次拉起时 resume 用的是新参数
-			continue
-		}
-		hit := s.markEnvWithdraw(orb.ID, keys)
-		if len(hit) == 0 {
-			continue
-		}
 		if orb.State != StateReady || !s.Connected(orb.ID) {
-			slog.Info("orbs: 记下待收回的环境变量降级密钥，orb 下次 setup / resume 后停掉 agent", "orb", orb.ID, "state", orb.State, "providers", hit, "trigger", trigger)
 			continue
 		}
-		s.reprepareForEnv(ctx, orb.ID, hit)
-	}
-}
-
-// markEnvWithdraw 记下 orb 待收回的 provider（与已记下的合并），返回这台 orb 可能持有的那部分：本进程下发过的以 envHeld
-// 为准，没有记录时就是 keys 全部。
-func (s *Service) markEnvWithdraw(orbID string, keys []string) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	held, known := s.envHeld[orbID]
-	var hit []string
-	for _, k := range keys {
-		if !known || slices.Contains(held, agentcfg.EnvFallbackName(k)) {
-			hit = append(hit, k)
+		if stale := s.envStale(ctx, orb); len(stale) > 0 {
+			slog.Info("orbs: orb 可能持有未同意的环境变量降级密钥，重走 resume", "orb", orb.ID, "providers", stale, "trigger", trigger)
+			s.reprepareForEnv(ctx, orb.ID, stale)
 		}
 	}
-	if len(hit) > 0 {
-		s.envWithdraw[orbID] = mergeKeys(s.envWithdraw[orbID], hit)
-	}
-	return hit
 }
 
-// reprepareForEnv 把 ready 的 orb 退回 connecting，由现有 link 重走 resume（runPhase 收回记下的 provider）。状态已变时
-// 不动：记下的 provider 由那次 runPhase 或之后的 hello 处理。
+// reprepareForEnv 把 ready 的 orb 退回 connecting，由现有 link 重走 resume（runPhase 按 env_fallback 停 agent）。
+// 状态已变时不动：由那次 runPhase 或之后的 hello 处理。
 func (s *Service) reprepareForEnv(ctx context.Context, orbID string, providers []string) bool {
 	_, moved, err := s.transition(ctx, orbID, StateReady, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": providers})
 	if err != nil {
@@ -120,64 +128,25 @@ func (s *Service) reprepareForEnv(ctx context.Context, orbID string, providers [
 		return false
 	}
 	if moved {
-		slog.Info("orbs: 收回环境变量降级密钥，orb 重走 resume 并重启 agent", "orb", orbID, "providers", providers)
 		s.advance(orbID)
 	}
 	return moved
 }
 
-// envDeliveredWithheld 在 orbd 应答 setup / resume 之后、进入 ready 之前按最新的同意复查本次实际下发的降级密钥（names
-// 为变量名，plan.EnvFallback）：生成参数之后、应答之前被撤回的 provider，WithdrawEnvKeys 看到的还是旧的 envHeld，
-// 不会记下。返回其中现在已被扣下的 provider；ok 为假表示无法判定（读同意或配置失败），调用方按「不能进 ready」处理。
-func (s *Service) envDeliveredWithheld(ctx context.Context, names []string) (hit []string, ok bool) {
-	if len(names) == 0 {
-		return nil, true
+// stopEnvOnFailure 在 setup / resume 失败（参数生成失败、orbd 报错）、orb 将进入 failed 时调用：orbd 的环境没能按最新同意
+// 替换，orb 上还带着不被同意密钥的 agent 至少要停掉（failed 不进 ready，线程不会再拉起）。env_fallback 不收窄。
+func (s *Service) stopEnvOnFailure(ctx context.Context, l *orbLink, tracked bool, held []string, known bool) {
+	if !tracked {
+		return
 	}
-	w, isW := s.setup.(EnvWithholder)
-	if !isW {
-		return nil, true
+	stale := []string{envUnknown}
+	if known {
+		stale = s.envUnconsented(ctx, held)
 	}
-	keys, err := w.WithheldEnvKeys(ctx)
-	if err != nil {
-		slog.Warn("orbs: 复查已下发的环境变量降级密钥失败", "err", err)
-		return nil, false
+	if len(stale) > 0 {
+		slog.Warn("orbs: setup / resume 失败，先停掉可能带着未同意降级密钥的 agent", "orb", l.orbID, "providers", stale)
+		s.stopEnvAgents(ctx, l, stale)
 	}
-	for _, k := range keys {
-		if slices.Contains(names, agentcfg.EnvFallbackName(k)) {
-			hit = append(hit, k)
-		}
-	}
-	return hit, true
-}
-
-// takeEnvWithdraw 取走 orb 待收回的 provider（runPhase 在生成参数之前调用：此后的同意变化另行记下）。
-func (s *Service) takeEnvWithdraw(orbID string) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	keys := s.envWithdraw[orbID]
-	delete(s.envWithdraw, orbID)
-	return keys
-}
-
-// restoreEnvWithdraw 把没能收回的 provider 放回（runPhase 中途失败或 link 断开），由下一次 runPhase 再收。
-func (s *Service) restoreEnvWithdraw(orbID string, keys []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.envWithdraw[orbID] = mergeKeys(s.envWithdraw[orbID], keys)
-}
-
-// pendingEnvWithdraw 返回 orb 待收回的 provider（没有时为空）。
-func (s *Service) pendingEnvWithdraw(orbID string) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return slices.Clone(s.envWithdraw[orbID])
-}
-
-// noteEnvHeld 记下 setup / resume 成功后 orbd 环境里的降级密钥变量名。
-func (s *Service) noteEnvHeld(orbID string, names []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.envHeld[orbID] = slices.Clone(names)
 }
 
 // stopEnvAgents 在新的 setup / resume 替换了 orbd 的环境之后停掉这台 orb 上的 agent：归属它的线程，以及本 link 的
@@ -186,7 +155,7 @@ func (s *Service) noteEnvHeld(orbID string, names []string) {
 //
 // 任何一个线程停止失败（超时、RPC 错误）都不放行：那个 agent 可能还带着旧环境里的密钥直连上游。orb 留在当前阶段
 // （不进 ready，线程不会往这台 orb 派新 agent），按 envAgentStopRetry 起的退避重试，直到全部停下；link 断开时返回 false
-// （调用方退回 connecting，记下的 provider 放回，由新 link 重来）。
+// （调用方退回 connecting；env_fallback 没有收窄，由新 link 重来）。
 func (s *Service) stopEnvAgents(ctx context.Context, l *orbLink, providers []string) bool {
 	delay := envAgentStopRetry
 	for {
@@ -243,11 +212,4 @@ func (s *Service) stopEnvAgentsOnce(ctx context.Context, l *orbLink) (ids, faile
 	wg.Wait()
 	slices.Sort(failed)
 	return ids, failed
-}
-
-// mergeKeys 合并两组 provider 键（排序、去重）。
-func mergeKeys(a, b []string) []string {
-	out := append(slices.Clone(a), b...)
-	slices.Sort(out)
-	return slices.Compact(out)
 }

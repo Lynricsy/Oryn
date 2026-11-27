@@ -795,6 +795,7 @@ type Orb struct {
 	Automation            bool    `json:"automation"`
 	Box                   int64   `json:"box"`
 	SandboxNetwork        *string `json:"sandboxNetwork"`
+	EnvFallback           *string `json:"envFallback"`
 }
 
 type OrbDesktop struct {
