@@ -43,6 +43,8 @@ export const READY_WAIT_MS = 1000;
 export type FramePost = (body: ParentMessageBody) => void;
 /** 页面报来的选中变化或定位应答。 */
 export type PageSelectMessage = Extract<PageMessage, { kind: "select" }>;
+/** 类型化 artifact 的查看器在评论模式下报来的点选。 */
+export type AnchorPickMessage = Extract<PageMessage, { kind: "anchor-pick" }>;
 
 export interface PageFrameProps {
 	artifactId: string;
@@ -60,6 +62,8 @@ export interface PageFrameProps {
 	onLink?(post: FramePost | null): void;
 	/** 页面的 `select` 消息。 */
 	onSelect?(msg: PageSelectMessage): void;
+	/** 查看器的 `anchor-pick` 消息（评论模式下的点选）。 */
+	onAnchorPick?(msg: AnchorPickMessage): void;
 }
 
 export function PageFrame({
@@ -71,6 +75,7 @@ export function PageFrame({
 	onPresent,
 	onLink,
 	onSelect,
+	onAnchorPick,
 }: PageFrameProps): ReactNode {
 	// 帧被判定失效时递增，重新申请
 	const [attempt, setAttempt] = useState(0);
@@ -86,6 +91,7 @@ export function PageFrame({
 			onPresent={onPresent}
 			onLink={onLink}
 			onSelect={onSelect}
+			onAnchorPick={onAnchorPick}
 			onReady={() => {
 				retried.current = false;
 			}}
@@ -113,6 +119,7 @@ function FrameSession({
 	onPresent,
 	onLink,
 	onSelect,
+	onAnchorPick,
 	onReady,
 	onStale,
 	onRetry,
@@ -124,6 +131,7 @@ function FrameSession({
 	onPresent?(on: boolean): void;
 	onLink?(post: FramePost | null): void;
 	onSelect?(msg: PageSelectMessage): void;
+	onAnchorPick?(msg: AnchorPickMessage): void;
 	onReady(): void;
 	onStale(): void;
 	onRetry(): void;
@@ -168,6 +176,7 @@ function FrameSession({
 					onPresent={onPresent}
 					onLink={onLink}
 					onSelect={onSelect}
+					onAnchorPick={onAnchorPick}
 					onReady={onReady}
 					onStale={onStale}
 				/>
@@ -214,6 +223,7 @@ function LiveFrame({
 	onPresent,
 	onLink,
 	onSelect,
+	onAnchorPick,
 	onReady,
 	onStale,
 }: {
@@ -225,6 +235,7 @@ function LiveFrame({
 	onPresent?(on: boolean): void;
 	onLink?(post: FramePost | null): void;
 	onSelect?(msg: PageSelectMessage): void;
+	onAnchorPick?(msg: AnchorPickMessage): void;
 	onReady(): void;
 	onStale(): void;
 }): ReactNode {
@@ -236,10 +247,19 @@ function LiveFrame({
 		onPresent,
 		onLink,
 		onSelect,
+		onAnchorPick,
 		onReady,
 		onStale,
 	});
-	cb.current = { onBlocked, onPresent, onLink, onSelect, onReady, onStale };
+	cb.current = {
+		onBlocked,
+		onPresent,
+		onLink,
+		onSelect,
+		onAnchorPick,
+		onReady,
+		onStale,
+	};
 
 	useEffect(() => {
 		const timer = setTimeout(() => setVisible(true), REVEAL_AFTER_MS);
@@ -264,6 +284,7 @@ function LiveFrame({
 			link.on("blocked", (m) => cb.current.onBlocked(m.url)),
 			link.on("present", (m) => cb.current.onPresent?.(m.on)),
 			link.on("select", (m) => cb.current.onSelect?.(m)),
+			link.on("anchor-pick", (m) => cb.current.onAnchorPick?.(m)),
 			link.on("ready", () => {
 				ready = true;
 				clearTimeout(readyTimer);

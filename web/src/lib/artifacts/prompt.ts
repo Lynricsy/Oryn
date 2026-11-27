@@ -12,6 +12,7 @@ import type {
 	ArtifactCommentThread,
 } from "../../api/artifact-queries";
 import { type CanvasNote, type CanvasPage, noteBox } from "./canvas-doc";
+import { typedAnchorKind } from "./typed-anchor";
 
 /** 边界行的前缀；后接 16 位十六进制。 */
 export const MARK_PREFIX = "oryn-data-";
@@ -53,9 +54,11 @@ function titleLine(title: string): string {
 
 /**
  * 锚点在数据块里的位置描述：`{path}, page {n} "{页名}", <{tag}> at offset {offset}: "{text}"`；设计画布的元素
- * 另接 `, source {loc}`（`src/frames/x.tsx:行:列`）。
+ * 另接 `, source {loc}`（`src/frames/x.tsx:行:列`）。类型化锚点为
+ * `{path}, page {n} "{名}"[, at x {百分比}% y {百分比}%][, range {区域}][, block {n}][: "{text}"]`。
  */
 function located(a: ArtifactCommentAnchor): string {
+	if (typedAnchorKind(a.path) !== null) return typedLocated(a);
 	const parts = [oneLine(a.path)];
 	if (a.page) parts.push(`page ${a.page.number} "${oneLine(a.page.name)}"`);
 	if (a.tag === null) parts.push("whole page");
@@ -71,6 +74,17 @@ function located(a: ArtifactCommentAnchor): string {
 	}
 	if (a.loc) parts.push(`source ${oneLine(a.loc)}`);
 	return parts.join(", ");
+}
+
+function typedLocated(a: ArtifactCommentAnchor): string {
+	const parts = [oneLine(a.path)];
+	if (a.page) parts.push(`page ${a.page.number} "${oneLine(a.page.name)}"`);
+	if (typeof a.x === "number" && typeof a.y === "number")
+		parts.push(`at x ${Math.round(a.x * 100)}% y ${Math.round(a.y * 100)}%`);
+	if (a.range) parts.push(`range ${oneLine(a.range)}`);
+	if (typeof a.block === "number") parts.push(`block ${a.block}`);
+	const text = a.text ? `: "${oneLine(a.text)}"` : "";
+	return parts.join(", ") + text;
 }
 
 /** 说明行在前，然后是数据说明与夹在两行 `mark` 之间的数据块。 */

@@ -66,6 +66,30 @@ export const FRAME_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** `ready.design.links` 的条数上限。 */
 export const MAX_DESIGN_LINKS = 256;
 
+/** 表格单元格区域（如 `B2:C3`），与服务端的评论锚点 `range` 校验一致。 */
+export const RANGE_PATTERN =
+	/^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/;
+
+/**
+ * 类型化 artifact 查看器里的评论锚点：页（幻灯片 / 工作表；Markdown 文档为 `null`）、页内归一化坐标
+ * （同为 `null` 表示整页）、表格的单元格区域、Markdown 的块序号（从 0 起）与点选处的文本片段。
+ */
+export interface ViewerAnchor {
+	page: { number: number; name: string } | null;
+	x: number | null;
+	y: number | null;
+	range: string | null;
+	block: number | null;
+	text: string;
+}
+
+/** 查看器里的评论图钉：`n` 是评论串编号，agent 回复过的 `answered`。 */
+export interface AnchorPin {
+	n: number;
+	answered: boolean;
+	anchor: ViewerAnchor;
+}
+
 /** 设计画布 dev 帧的帧信息：当前帧与它链接到的帧（引擎从 `<Link>` 推出）。 */
 export interface DesignFrameInfo {
 	frame: string;
@@ -114,6 +138,10 @@ export type ParentMessage = Envelope &
 		/** 选中这个偏移的元素并回 `select`（找不到回 `selection: null`）；`null` 只清掉选中，不回消息。 */
 		| { kind: "select-source"; src: number | null }
 		| { kind: "select-pins"; pins: SelectPin[] }
+		/** 查看器：画评论图钉（类型化锚点）。 */
+		| { kind: "anchor-pins"; pins: AnchorPin[] }
+		/** 查看器：滚动到这个锚点。 */
+		| { kind: "anchor-locate"; anchor: ViewerAnchor }
 		/** 问这个偏移的元素的包围盒，回 `select`（带 `located`，`selection` 是当前选中、不变）。 */
 		| { kind: "select-locate"; src: number }
 		/** 预览样式：只含通过校验的属性（解析时已丢掉不合规的项）。 */
@@ -147,6 +175,12 @@ export type PageMessage = Envelope &
 		| { kind: "present"; on: boolean }
 		/** 设计画布：页面现在显示的帧（每次带 `design` 的 `ready` 之后紧跟一条，帧内跳转后即新帧）。 */
 		| { kind: "navigated"; frame: string }
+		/** 查看器在评论模式下的点选：`anchor` 为 `null` 表示点在可评论的内容之外；`at` 是点击处的视口坐标。 */
+		| {
+				kind: "anchor-pick";
+				anchor: ViewerAnchor | null;
+				at: { x: number; y: number };
+		  }
 		/** 选中变化或回应 `select-source` / `select-locate`；`at` 是点击处的视口坐标。 */
 		| {
 				kind: "select";
@@ -247,6 +281,68 @@ function parsePins(x: unknown): SelectPin[] | null {
 	return out;
 }
 
+function unitOrNull(x: unknown): number | null | undefined {
+	if (x === null) return null;
+	return typeof x === "number" && x >= 0 && x <= 1 ? x : undefined;
+}
+
+/** 校验并重建查看器锚点（逐个字段）；不合规时返回 `null`。 */
+export function parseViewerAnchor(x: unknown): ViewerAnchor | null {
+	if (!isFields(x)) return null;
+	const { page, range, block, text } = x;
+	if (typeof text !== "string" || runeCount(text) > SELECTION_TEXT_CHARS) {
+		return null;
+	}
+	let pg: ViewerAnchor["page"] = null;
+	if (page !== null) {
+		if (
+			!isFields(page) ||
+			typeof page.number !== "number" ||
+			!Number.isSafeInteger(page.number) ||
+			page.number < 1 ||
+			typeof page.name !== "string" ||
+			runeCount(page.name) > SELECTION_TEXT_CHARS
+		) {
+			return null;
+		}
+		pg = { number: page.number, name: page.name };
+	}
+	const px = unitOrNull(x.x);
+	const py = unitOrNull(x.y);
+	if (px === undefined || py === undefined || (px === null) !== (py === null)) {
+		return null;
+	}
+	let rng: string | null = null;
+	if (range !== null) {
+		if (typeof range !== "string" || !RANGE_PATTERN.test(range)) return null;
+		rng = range;
+	}
+	const blk = offsetOrNull(block);
+	if (blk === undefined) return null;
+	return { page: pg, x: px, y: py, range: rng, block: blk, text };
+}
+
+function parseAnchorPins(x: unknown): AnchorPin[] | null {
+	if (!Array.isArray(x) || x.length > MAX_SELECT_PINS) return null;
+	const out: AnchorPin[] = [];
+	for (let i = 0; i < x.length; i++) {
+		const p: unknown = x[i];
+		if (!isFields(p)) return null;
+		const anchor = parseViewerAnchor(p.anchor);
+		if (
+			typeof p.n !== "number" ||
+			!Number.isSafeInteger(p.n) ||
+			p.n < 1 ||
+			typeof p.answered !== "boolean" ||
+			!anchor
+		) {
+			return null;
+		}
+		out[i] = { n: p.n, answered: p.answered, anchor };
+	}
+	return out;
+}
+
 function parseSelectRequest(head: Envelope, m: Checked): ParentMessage | null {
 	switch (m.kind) {
 		case "select-mode":
@@ -272,6 +368,14 @@ function parseSelectRequest(head: Envelope, m: Checked): ParentMessage | null {
 		case "select-pins": {
 			const pins = parsePins(m.pins);
 			return pins ? { ...head, kind: m.kind, pins } : null;
+		}
+		case "anchor-pins": {
+			const pins = parseAnchorPins(m.pins);
+			return pins ? { ...head, kind: m.kind, pins } : null;
+		}
+		case "anchor-locate": {
+			const anchor = parseViewerAnchor(m.anchor);
+			return anchor ? { ...head, kind: m.kind, anchor } : null;
 		}
 		case "preview-style":
 			return isFields(m.style)
@@ -397,6 +501,8 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
 		case "select-source":
 		case "select-pins":
 		case "select-locate":
+		case "anchor-pins":
+		case "anchor-locate":
 		case "preview-style":
 		case "preview-text":
 		case "preview-reset":
@@ -451,6 +557,13 @@ export function parsePageMessage(data: unknown): PageMessage | null {
 				: null;
 		case "select":
 			return parseSelect(head, m);
+		case "anchor-pick": {
+			const anchor = m.anchor === null ? null : parseViewerAnchor(m.anchor);
+			if (m.anchor !== null && anchor === null) return null;
+			const at = m.at;
+			if (!isFields(at) || !isCoord(at.x) || !isCoord(at.y)) return null;
+			return { ...head, kind: m.kind, anchor, at: { x: at.x, y: at.y } };
+		}
 		default:
 			return null;
 	}

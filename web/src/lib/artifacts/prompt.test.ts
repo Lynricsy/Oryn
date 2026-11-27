@@ -199,6 +199,51 @@ describe("commentsPrompt", () => {
 			'3. page-x.html, page 2 "首页", <div> at offset 12: "卡片"',
 		);
 	});
+
+	it("类型化锚点：页、坐标百分比、单元格区域、块序号与文本", () => {
+		const typed = { offset: null, tag: null } as const;
+		const msg = commentsPrompt(
+			{ id: ID, title: "报告" },
+			2,
+			[
+				thread("act_A", ["a"], {
+					...typed,
+					path: "document.docx",
+					page: { number: 1, name: "" },
+					x: 0.254,
+					y: 0.5,
+					text: "季度报告",
+				}),
+				thread("act_B", ["b"], {
+					...typed,
+					path: "workbook.xlsx",
+					page: { number: 2, name: "明细" },
+					range: "B2:C3",
+					text: "",
+				}),
+				thread("act_C", ["c"], {
+					...typed,
+					path: "document.md",
+					block: 1,
+					text: "第二段",
+				}),
+				thread("act_D", ["d"], {
+					...typed,
+					path: "presentation.pptx",
+					page: { number: 3, name: "总结" },
+					text: "",
+				}),
+			],
+			t,
+		);
+		const { inside } = split(msg);
+		expect(inside).toContain(
+			'1. document.docx, page 1 "", at x 25% y 50%: "季度报告"',
+		);
+		expect(inside).toContain('2. workbook.xlsx, page 2 "明细", range B2:C3\n');
+		expect(inside).toContain('3. document.md, block 1: "第二段"');
+		expect(inside.split("\n")).toContain('4. presentation.pptx, page 3 "总结"');
+	});
 });
 
 describe("selectionPrompt", () => {

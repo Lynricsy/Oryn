@@ -5,6 +5,8 @@ import i18n from "../../i18n";
 import {
 	anchorLabel,
 	anchorOf,
+	anchorOfViewer,
+	anchorPinsOf,
 	isAnswered,
 	orderThreads,
 	pinsOf,
@@ -171,5 +173,106 @@ describe("orderThreads / pinsOf", () => {
 		const pins = pinsOf(many, "index.html");
 		expect(pins).toHaveLength(200);
 		expect(pins[199]?.n).toBe(200);
+	});
+});
+
+describe("类型化锚点（M31）", () => {
+	const pick = {
+		page: { number: 2, name: "" },
+		x: 0.25,
+		y: 0.5,
+		range: null,
+		block: null,
+		text: "季度报告",
+	};
+
+	it("anchorOfViewer：点选带页与坐标；空点选是整篇", () => {
+		expect(anchorOfViewer(pick, { version: 3, path: "document.docx" })).toEqual(
+			{
+				version: 3,
+				path: "document.docx",
+				page: { number: 2, name: "" },
+				offset: null,
+				tag: null,
+				text: "季度报告",
+				missing: false,
+				x: 0.25,
+				y: 0.5,
+				range: null,
+				block: null,
+			},
+		);
+		expect(anchorOfViewer(null, { version: 1, path: "document.md" })).toEqual({
+			version: 1,
+			path: "document.md",
+			page: null,
+			offset: null,
+			tag: null,
+			text: "",
+			missing: false,
+			x: null,
+			y: null,
+			range: null,
+			block: null,
+		});
+	});
+
+	it("anchorLabel：页、张、工作表区域、工作表、段", () => {
+		const shown = (path: string) => ({ version: 1, path });
+		expect(anchorLabel(anchorOfViewer(pick, shown("document.pdf")), t)).toBe(
+			t("artifacts.comments.pageAt", { n: 2 }),
+		);
+		expect(
+			anchorLabel(anchorOfViewer(pick, shown("presentation.pptx")), t),
+		).toBe(t("artifacts.comments.slideAt", { n: 2 }));
+		expect(anchorLabel(anchorOfViewer(pick, shown("slides.json")), t)).toBe(
+			t("artifacts.comments.slideAt", { n: 2 }),
+		);
+		const sheet = {
+			...pick,
+			page: { number: 1, name: "明细" },
+			x: null,
+			y: null,
+		};
+		expect(
+			anchorLabel(
+				anchorOfViewer({ ...sheet, range: "B2:C3" }, shown("workbook.xlsx")),
+				t,
+			),
+		).toBe(
+			t("artifacts.comments.sheetRange", { sheet: "明细", range: "B2:C3" }),
+		);
+		expect(anchorLabel(anchorOfViewer(sheet, shown("workbook.xlsm")), t)).toBe(
+			t("artifacts.comments.sheetOnly", { sheet: "明细" }),
+		);
+		const block = { ...pick, page: null, x: null, y: null, block: 1 };
+		expect(anchorLabel(anchorOfViewer(block, shown("document.md")), t)).toBe(
+			t("artifacts.comments.blockAt", { n: 2 }),
+		);
+		expect(anchorLabel(anchorOfViewer(null, shown("document.md")), t)).toBe(
+			t("artifacts.comments.wholePage"),
+		);
+	});
+
+	it("anchorPinsOf：只画入口上未解决、没有 missing 的类型化锚点", () => {
+		const typed = (patch: Partial<ArtifactCommentThread["anchor"]> = {}) =>
+			thread({
+				anchor: {
+					...anchorOfViewer(pick, { version: 1, path: "document.docx" }),
+					...patch,
+				},
+			});
+		const a = typed();
+		const done = thread({
+			resolvedAt: 9,
+			anchor: anchorOfViewer(pick, { version: 1, path: "document.docx" }),
+		});
+		const gone = typed({ missing: true });
+		const other = typed({ path: "document.pdf" });
+		const html = thread();
+		expect(anchorPinsOf([a, done, gone, other, html], "document.docx")).toEqual(
+			[{ n: 1, answered: false, anchor: pick }],
+		);
+		expect(anchorPinsOf([a], "index.html")).toEqual([]);
 	});
 });

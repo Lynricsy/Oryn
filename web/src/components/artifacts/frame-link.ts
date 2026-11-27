@@ -38,6 +38,10 @@ export class FrameLink {
 		null;
 	private pins: Extract<ParentMessageBody, { kind: "select-pins" }> | null =
 		null;
+	private anchorPins: Extract<
+		ParentMessageBody,
+		{ kind: "anchor-pins" }
+	> | null = null;
 	private source: Extract<
 		ParentMessageBody,
 		{ kind: "select-source" } | { kind: "select-loc" }
@@ -65,6 +69,7 @@ export class FrameLink {
 		this.post({ kind: "hello" });
 		if (this.mode) this.post(this.mode);
 		if (this.pins) this.post(this.pins);
+		if (this.anchorPins) this.post(this.anchorPins);
 		if (this.source) this.post(this.source);
 		for (const cb of [...this.loadHandlers]) cb();
 	};
@@ -77,7 +82,7 @@ export class FrameLink {
 		frame.addEventListener("load", this.onLoad);
 	}
 
-	/** 发给帧里的页面；帧还没有窗口或消息超限时丢弃。最近一次的 `select-mode`、`select-pins`、选中（`select-source` / `select-loc`）在帧每次加载后重发。 */
+	/** 发给帧里的页面；帧还没有窗口或消息超限时丢弃。最近一次的 `select-mode`、`select-pins`、`anchor-pins`、选中（`select-source` / `select-loc`）在帧每次加载后重发。 */
 	post(body: ParentMessageBody): void {
 		switch (body.kind) {
 			case "select-mode":
@@ -87,6 +92,9 @@ export class FrameLink {
 				break;
 			case "select-pins":
 				this.pins = body;
+				break;
+			case "anchor-pins":
+				this.anchorPins = body;
 				break;
 			case "select-source":
 				this.source = body.src === null ? null : body;

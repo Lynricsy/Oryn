@@ -13,6 +13,7 @@ import {
 } from "./messages";
 import { installParams, type PageParams } from "./params";
 import { installSelection } from "./select";
+import { createViewerBridge } from "./viewer";
 
 /** 服务端随页面注入的配置：`__orynStart(<配置 JSON>)`。 */
 export interface RuntimeConfig {
@@ -27,6 +28,8 @@ export interface RuntimeConfig {
 	runtime: boolean;
 	/** 设计画布 dev 帧的帧信息（引擎入口给出，静态产物没有）；不合法时丢弃。 */
 	design?: DesignFrameInfo;
+	/** 类型化 artifact 的查看器页：不装选择模式，改装 `window.__orynViewer` 评论桥。 */
+	viewer?: boolean;
 }
 
 /** 设计画布静态产物的页面路径 `dist/<帧 id>.html`。 */
@@ -93,6 +96,7 @@ export function readConfig(raw: unknown): RuntimeConfig {
 			valid && typeof c.root === "string" && c.root.endsWith("/") ? c.root : "",
 		runtime: valid && c.runtime === true,
 		...(design ? { design } : {}),
+		...(valid && c.viewer === true ? { viewer: true } : {}),
 	};
 }
 
@@ -146,10 +150,15 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 		if (designFrame !== null) send({ kind: "navigated", frame: designFrame });
 	};
 
-	// 选择与评论模式只在跟随最新版本的帧上有；捕获阶段的指针监听要先于下面的链接拦截注册
-	const selection = config.runtime
-		? installSelection(captureDom(win), config, send)
+	// 选择与评论模式只在跟随最新版本的帧上有；捕获阶段的指针监听要先于下面的链接拦截注册。
+	// 查看器页不装选择模式，点选与图钉由查看器自己做，经 `__orynViewer` 桥与父页面往来
+	const viewer = config.viewer
+		? createViewerBridge(natives.freeze, send)
 		: null;
+	const selection =
+		config.runtime && !viewer
+			? installSelection(captureDom(win), config, send)
+			: null;
 
 	win.addEventListener(
 		"message",
@@ -188,7 +197,9 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 					break;
 				}
 				default:
-					selection?.handle(msg);
+					if (viewer) {
+						if (config.runtime) viewer.handle(msg);
+					} else selection?.handle(msg);
 					break;
 			}
 		},
@@ -238,6 +249,15 @@ export function install(win: Window, parent: Window, raw: unknown): void {
 		configurable: false,
 		enumerable: false,
 	});
+	if (viewer) {
+		// 查看器 bundle 的评论桥；冻结、不可枚举、不可改写
+		natives.defineProperty(win, "__orynViewer", {
+			value: viewer.bridge,
+			writable: false,
+			configurable: false,
+			enumerable: false,
+		});
+	}
 	natives.defineProperty(win, "oryn", {
 		value: natives.freeze({ version: 1, use }),
 		writable: false,

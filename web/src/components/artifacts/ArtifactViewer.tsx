@@ -42,6 +42,7 @@ import {
 import { ApiError } from "../../api/client";
 import { kindIcon } from "../../lib/artifacts/kinds";
 import type { ArtifactSelectionRef } from "../../lib/artifacts/prompt";
+import { typedAnchorKind, typedEntry } from "../../lib/artifacts/typed-anchor";
 import { formatRelative } from "../../lib/format";
 import { useBreakpoint } from "../../lib/viewport";
 import { watchArtifact } from "../../realtime/socket";
@@ -51,7 +52,13 @@ import { ChromeLead } from "../layout/WindowControls";
 import { Icon } from "../ui/icons";
 import { Button, describeError, IconButton, tabClass } from "../ui/primitives";
 import { ArtifactMenu } from "./ArtifactMenu";
-import { anchorOf, pinsOf } from "./anchors";
+import {
+	anchorOf,
+	anchorOfViewer,
+	anchorPinsOf,
+	pinsOf,
+	viewerAnchorOf,
+} from "./anchors";
 import { CommentBox } from "./CommentBox";
 import { CommentsPanel } from "./CommentsPanel";
 import {
@@ -60,7 +67,12 @@ import {
 	type PresentRequest,
 } from "./canvas/CanvasEditor";
 import { EditPanel } from "./EditPanel";
-import { type FramePost, PageFrame, type PageSelectMessage } from "./PageFrame";
+import {
+	type AnchorPickMessage,
+	type FramePost,
+	PageFrame,
+	type PageSelectMessage,
+} from "./PageFrame";
 import { PresenceFaces } from "./PresenceFaces";
 import { Presenter } from "./Presenter";
 import { ShareControl } from "./SharePopover";
@@ -240,11 +252,16 @@ export function ArtifactViewer({
 	const canSelect = !!live && !pinnedVersion && artifact?.kind === "web";
 	const canCanvasSelect =
 		!!live && !pinnedVersion && artifact?.kind === "canvas" && !!onSelection;
+	// 类型化 artifact 的查看器：只有评论模式（点选与图钉由查看器经 `__orynViewer` 桥做），锚点的 path 恒为入口
+	const entry = typedEntry(artifact?.type);
+	const canAnchor = !!live && !pinnedVersion && typed && entry !== null;
 	const activeMode = canSelect
 		? mode
-		: canCanvasSelect && mode === "select"
-			? "select"
-			: null;
+		: canAnchor && mode === "comment"
+			? "comment"
+			: canCanvasSelect && mode === "select"
+				? "select"
+				: null;
 	const commentsTab = variant === "page" && !!live;
 	const comments = useArtifactComments(artifactId, !!live);
 	const commentThreads = comments.data?.threads ?? [];
@@ -255,11 +272,14 @@ export function ArtifactViewer({
 		side !== null && !!live && (side === "history" || commentsTab);
 	const sideOnly = showSide && compact && segment === "side";
 	const pinsShown =
-		canSelect &&
+		(canSelect || canAnchor) &&
 		(activeMode === "comment" || (showSide && side === "comments"));
 	// 内容不变就不重发（JSON 作依赖键）
 	const pinsKey = JSON.stringify(
-		pinsShown ? pinsOf(commentThreads, pagePath) : [],
+		pinsShown && canSelect ? pinsOf(commentThreads, pagePath) : [],
+	);
+	const anchorPinsKey = JSON.stringify(
+		pinsShown && canAnchor && entry ? anchorPinsOf(commentThreads, entry) : [],
 	);
 	// 画布的评论工具在编辑器里，跟随最新且不在回收站时可以评论
 	const canvasComments =
@@ -278,6 +298,9 @@ export function ArtifactViewer({
 	useEffect(() => {
 		post?.({ kind: "select-pins", pins: JSON.parse(pinsKey) });
 	}, [post, pinsKey]);
+	useEffect(() => {
+		if (typed) post?.({ kind: "anchor-pins", pins: JSON.parse(anchorPinsKey) });
+	}, [post, typed, anchorPinsKey]);
 
 	function toggleMode(m: Exclude<SelectMode, null>) {
 		const entering = activeMode !== m;
@@ -322,6 +345,10 @@ export function ArtifactViewer({
 	modeKeyRef.current = (m) => {
 		if (canSelect) {
 			toggleMode(m);
+			return true;
+		}
+		if (canAnchor && m === "comment") {
+			toggleMode("comment");
 			return true;
 		}
 		if (canCanvasSelect && m === "select") {
@@ -376,6 +403,20 @@ export function ArtifactViewer({
 			?.getBoundingClientRect();
 		if (!frame) return;
 		startComment(anchorOf(msg.selection, { version: head, path }), {
+			x: frame.left + msg.at.x,
+			y: frame.top + msg.at.y,
+		});
+	};
+
+	// 查看器在评论模式下的点选；点在内容之外（`anchor` 为空）只对 Markdown 文档算整篇，其余类型锚点必须带页
+	const onAnchorPick = (msg: AnchorPickMessage) => {
+		if (activeMode !== "comment" || !entry) return;
+		if (msg.anchor === null && typedAnchorKind(entry) !== "block") return;
+		const frame = frameBoxRef.current
+			?.querySelector("iframe")
+			?.getBoundingClientRect();
+		if (!frame) return;
+		startComment(anchorOfViewer(msg.anchor, { version: head, path: entry }), {
 			x: frame.left + msg.at.x,
 			y: frame.top + msg.at.y,
 		});
@@ -565,6 +606,7 @@ export function ArtifactViewer({
 					if (!p) setSelection(null);
 				}}
 				onSelect={onPageSelect}
+				onAnchorPick={canAnchor ? onAnchorPick : undefined}
 			/>
 		);
 
@@ -656,7 +698,7 @@ export function ArtifactViewer({
 								onClick={() => toggleMode("select")}
 							/>
 						)}
-						{canSelect && (
+						{(canSelect || canAnchor) && (
 							<span className="relative inline-flex shrink-0">
 								<IconButton
 									icon="message"
@@ -950,7 +992,7 @@ export function ArtifactViewer({
 								<CommentsPanel
 									artifactId={artifactId}
 									threads={detail.data?.threads ?? []}
-									canComment={canSelect || canvasComments}
+									canComment={canSelect || canAnchor || canvasComments}
 									onAnchor={
 										artifact?.kind === "canvas"
 											? (a) => {
@@ -960,7 +1002,16 @@ export function ArtifactViewer({
 													}));
 													if (compact) setSegment("page");
 												}
-											: undefined
+											: canAnchor
+												? (a) => {
+														if (a.missing || a.path !== entry) return;
+														post?.({
+															kind: "anchor-locate",
+															anchor: viewerAnchorOf(a),
+														});
+														if (compact) setSegment("page");
+													}
+												: undefined
 									}
 								/>
 							) : (

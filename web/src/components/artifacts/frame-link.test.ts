@@ -69,6 +69,30 @@ describe("FrameLink 的选择状态重发", () => {
 		]);
 	});
 
+	it("查看器的 anchor-pins 也在每次 load 后重发", () => {
+		const { link, load } = setup();
+		link.post({ kind: "select-mode", mode: "comment", accent: "" });
+		const anchor = {
+			page: { number: 1, name: "" },
+			x: 0.5,
+			y: 0.5,
+			range: null,
+			block: null,
+			text: "",
+		};
+		link.post({
+			kind: "anchor-pins",
+			pins: [{ n: 1, answered: false, anchor }],
+		});
+		const msgs = load();
+		expect(msgs.map((m) => m.kind)).toEqual([
+			"hello",
+			"select-mode",
+			"anchor-pins",
+		]);
+		expect(msgs[2]).toMatchObject({ pins: [{ n: 1, anchor }] });
+	});
+
 	it("页面里点选的元素成为重载后要重选的那个；没有源码偏移或清掉选中就不重发", () => {
 		const { link, load, fromPage } = setup();
 		link.post({ kind: "select-mode", mode: "select", accent: "" });

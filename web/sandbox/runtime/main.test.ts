@@ -2,12 +2,24 @@ import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
 	MAX_MESSAGE_BYTES,
+	MAX_SELECT_PINS,
 	parsePageMessage,
 	parseParentMessage,
 	utf8Length,
+	type ViewerAnchor,
 } from "./messages";
 import "./main";
 import { install, readConfig } from "./start";
+import type { ViewerBridge } from "./viewer";
+
+const ANCHOR: ViewerAnchor = {
+	page: { number: 1, name: "" },
+	x: 0.25,
+	y: 0.5,
+	range: null,
+	block: null,
+	text: "季度报告",
+};
 
 const CHANNEL = "0123456789abcdef";
 const OTHER = "fedcba9876543210";
@@ -228,6 +240,90 @@ describe("页面运行时", () => {
 		]);
 	});
 
+	it("查看器页装 __orynViewer：重放模式与图钉，评论模式下报点选", () => {
+		const { page, posted, deliver } = setup({
+			v: 1,
+			mark: "",
+			path: "document.docx",
+			root: "/",
+			runtime: true,
+			viewer: true,
+		});
+		deliver({ v: 1, channel: CHANNEL, kind: "hello" });
+		const w = page as unknown as { __orynViewer?: ViewerBridge };
+		const bridge = w.__orynViewer;
+		expect(bridge).toBeDefined();
+		if (!bridge) return;
+		expect(Object.keys(page)).not.toContain("__orynViewer");
+		expect(Object.isFrozen(bridge)).toBe(true);
+		expect(() => {
+			Reflect.set(page, "__orynViewer", null) ||
+				Reflect.deleteProperty(page, "__orynViewer");
+		}).not.toThrow();
+		expect(w.__orynViewer).toBe(bridge);
+
+		const pin = { n: 1, answered: false, anchor: ANCHOR };
+		deliver({
+			v: 1,
+			channel: CHANNEL,
+			kind: "select-mode",
+			mode: "comment",
+			accent: "",
+		});
+		deliver({ v: 1, channel: CHANNEL, kind: "anchor-pins", pins: [pin] });
+		const modes: unknown[] = [];
+		const pins: unknown[] = [];
+		const located: unknown[] = [];
+		bridge.onMode((m) => modes.push(m));
+		bridge.onPins((p) => pins.push(p));
+		const off = bridge.onLocate((a) => located.push(a));
+		expect(modes).toEqual(["comment"]);
+		expect(pins).toEqual([[pin]]);
+		deliver({ v: 1, channel: CHANNEL, kind: "anchor-locate", anchor: ANCHOR });
+		off();
+		deliver({ v: 1, channel: CHANNEL, kind: "anchor-locate", anchor: ANCHOR });
+		expect(located).toEqual([ANCHOR]);
+
+		posted.mockClear();
+		bridge.pick(ANCHOR, { x: 10, y: 20 });
+		bridge.pick({ ...ANCHOR, x: 2 }, { x: 10, y: 20 });
+		bridge.pick(null, { x: 1, y: 2 });
+		expect(sent(posted)).toEqual([
+			{
+				v: 1,
+				channel: CHANNEL,
+				kind: "anchor-pick",
+				anchor: ANCHOR,
+				at: { x: 10, y: 20 },
+			},
+			{
+				v: 1,
+				channel: CHANNEL,
+				kind: "anchor-pick",
+				anchor: null,
+				at: { x: 1, y: 2 },
+			},
+		]);
+		deliver({
+			v: 1,
+			channel: CHANNEL,
+			kind: "select-mode",
+			mode: null,
+			accent: "",
+		});
+		expect(modes).toEqual(["comment", null]);
+		posted.mockClear();
+		bridge.pick(ANCHOR, { x: 10, y: 20 });
+		expect(posted).not.toHaveBeenCalled();
+	});
+
+	it("非查看器页没有 __orynViewer", () => {
+		const { page } = setup();
+		expect(
+			(page as unknown as { __orynViewer?: unknown }).__orynViewer,
+		).toBeUndefined();
+	});
+
 	it("readConfig 接受空标记与帧根，帧根不以 / 结尾时丢弃", () => {
 		expect(
 			readConfig({
@@ -275,6 +371,107 @@ describe("消息协议", () => {
 		).toEqual({ v: 1, channel: CHANNEL, kind: "blocked", url: "x" });
 		expect(
 			parsePageMessage({ v: 1, channel: CHANNEL, kind: "present", on: "yes" }),
+		).toBe(null);
+	});
+
+	it("查看器锚点逐字段校验", () => {
+		const env = { v: 1, channel: CHANNEL };
+		const pick = (anchor: unknown) =>
+			parsePageMessage({
+				...env,
+				kind: "anchor-pick",
+				anchor,
+				at: { x: 1, y: 2 },
+				extra: 1,
+			});
+		expect(pick({ ...ANCHOR, extra: true })).toEqual({
+			...env,
+			kind: "anchor-pick",
+			anchor: ANCHOR,
+			at: { x: 1, y: 2 },
+		});
+		expect(pick(null)).toEqual({
+			...env,
+			kind: "anchor-pick",
+			anchor: null,
+			at: { x: 1, y: 2 },
+		});
+		const sheet = {
+			page: { number: 2, name: "明细" },
+			x: null,
+			y: null,
+			range: "B2:C3",
+			block: null,
+			text: "",
+		};
+		expect(pick(sheet)).not.toBe(null);
+		const doc = {
+			page: null,
+			x: null,
+			y: null,
+			range: null,
+			block: 3,
+			text: "第一段",
+		};
+		expect(pick(doc)).not.toBe(null);
+		for (const bad of [
+			{ ...ANCHOR, x: 0.5, y: null },
+			{ ...ANCHOR, x: 1.2 },
+			{ ...ANCHOR, x: Number.NaN },
+			{ ...ANCHOR, y: undefined },
+			{ ...ANCHOR, range: "b2" },
+			{ ...ANCHOR, range: "A0" },
+			{ ...ANCHOR, block: -1 },
+			{ ...ANCHOR, block: 1.5 },
+			{ ...ANCHOR, text: "字".repeat(121) },
+			{ ...ANCHOR, page: { number: 0, name: "" } },
+			{ ...ANCHOR, page: { number: 1, name: "名".repeat(121) } },
+			{ ...ANCHOR, page: { number: 1 } },
+			"anchor",
+		]) {
+			expect(pick(bad)).toBe(null);
+		}
+		expect(
+			parsePageMessage({
+				...env,
+				kind: "anchor-pick",
+				anchor: ANCHOR,
+				at: { x: "1", y: 2 },
+			}),
+		).toBe(null);
+		expect(
+			parseParentMessage({ ...env, kind: "anchor-locate", anchor: ANCHOR }),
+		).toEqual({ ...env, kind: "anchor-locate", anchor: ANCHOR });
+		expect(
+			parseParentMessage({
+				...env,
+				kind: "anchor-locate",
+				anchor: { ...ANCHOR, x: -1 },
+			}),
+		).toBe(null);
+		const pins = [{ n: 1, answered: true, anchor: ANCHOR }];
+		expect(parseParentMessage({ ...env, kind: "anchor-pins", pins })).toEqual({
+			...env,
+			kind: "anchor-pins",
+			pins,
+		});
+		expect(
+			parseParentMessage({
+				...env,
+				kind: "anchor-pins",
+				pins: [{ n: 0, answered: true, anchor: ANCHOR }],
+			}),
+		).toBe(null);
+		expect(
+			parseParentMessage({
+				...env,
+				kind: "anchor-pins",
+				pins: Array.from({ length: MAX_SELECT_PINS + 1 }, (_, i) => ({
+					n: i + 1,
+					answered: false,
+					anchor: ANCHOR,
+				})),
+			}),
 		).toBe(null);
 	});
 
