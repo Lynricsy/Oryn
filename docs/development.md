@@ -64,7 +64,7 @@ bun run accept:m33 -- --only T1,T8          # 只跑指定条目
 
 环境变量：`M33_BIN`、`M33_PORT`、`M33_COORD_EGRESS`（缺省 7983）、`M33_COORD_DIR`（协调宿主目录的父目录，缺省 `/var/tmp`）、`M33_BASE_IMAGE`、`M33_MODELS`、`M33_MODEL`（缺省 `claude-pro/claude-sonnet-5-5`）、`M33_SHOTS`、`CHROMIUM`、`M33_KEEP`、`M33_HOLD=1`（条目跑完后保持环境运行并打印设备令牌与会话 Cookie，Ctrl-C 再收尾，排查用）。线程停在 error（例如上游模型拒绝）时等待立即结束并带出错误原文。
 
-可能的 SKIP：本机访问不了公网时 T5 的 https 图片加载未验证（fetch 被拒、帧读不到父页面照常断言）；T11 依次要模型给出三种需要 Core 修复的参数（`blocks` 二次编码、`blocks` 写成单个对象、`progress.value` 写成字符串），模型都给了合法参数时 Core 的参数修复没有被触发。T7 依赖 T1、T4，T10 依赖 T1，前置没过时判 FAIL。T6 与 T9 的主会话工具表取自 omp `get_active_tools`（确定性）；子 agent 与 `/tan` 克隆的 `session_init.tools` 是 Core 在扩展 `session_start` 之前写的，不反映扩展去掉视图工具的结果，所以发给模型的工具表看子 agent 的自述（先用 `session_init` 核对自述里的名字都真实存在），系统提示词看 `session_init` 记录的基线。
+可能的 SKIP：本机访问不了公网时 T5 的 https 图片加载未验证（fetch 被拒、帧读不到父页面照常断言）；T11 依次要模型给出三种需要 Core 修复的参数（`blocks` 二次编码、`blocks` 写成单个对象、`progress.value` 写成字符串），模型都给了合法参数时 Core 的参数修复没有被触发。T7 依赖 T1、T4，T10 依赖 T1，前置没过时判 FAIL。T6 与 T9 的主会话工具表取自 omp `get_active_tools`（确定性）；子 agent 与 `/tan` 克隆的 `session_init.tools` 是 Core 在扩展 `session_start` 之前写的、`session_init.systemPrompt` 是 `before_agent_start` 的输入，都不反映扩展的调整，所以发给模型的工具表与系统提示词看子 agent 的自述（`TOOLS=… GUIDE=… ORB=…`，先用 `session_init` 核对自述里的工具名都真实存在；`/tan` 克隆的 orb 指引应只有一段）。上游网关拒答（`policy_blocked`）时该条立即 FAIL 并带出原文，可用 `M33_MODEL` 换一个提供方重跑。
 
 ## 界面截图
 

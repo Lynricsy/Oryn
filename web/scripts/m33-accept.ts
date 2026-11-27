@@ -1772,7 +1772,7 @@ function sessionInits(marker: string): SubSession[] {
 async function T9() {
 	const n = nonce();
 	const work = (kind: string) =>
-		`Acceptance probe T9-${kind}-${n}. Do not call any tool. Reply with exactly one line: TOOLS=<comma-separated exact names of every tool you can call> GUIDE=<yes if your system prompt contains a section headed "Views (render_ui / render_html)", otherwise no>.`;
+		`Acceptance probe T9-${kind}-${n}. Do not call any tool. Reply with exactly one line: TOOLS=<comma-separated exact names of every tool you can call> GUIDE=<yes if your system prompt contains a section headed "Views (render_ui / render_html)", otherwise no> ORB=<how many separate sections headed "# Oryn orb 环境" your system prompt contains>.`;
 	const tid = await newThread(
 		`${PREFIX}Use the \`task\` tool exactly once to run ONE subagent with the default agent type and no tool restrictions, giving it exactly this assignment:\n\n${work("task")}\n\nWhen it returns, reply with exactly one line: \`T9-TASK <the subagent's reply line>\`.`,
 		"T9",
@@ -1797,8 +1797,11 @@ async function T9() {
 	);
 	// session_init.tools 是 Core 在扩展 session_start 之前写下的（task/executor.ts 先 appendSessionInit、后 initializeExtensions），
 	// 不反映扩展在 session_start 里 setActiveTools 的结果；发给模型的工具表只能看子 agent 自己报的那一行。用 session_init
-	// 核对自述可信（报出的名字都在里面），再断言报出的工具里没有视图工具、自述 GUIDE=no，系统提示词基线里也没有指引。
-	const verify = (kind: string, inits: SubSession[]) => {
+	// 核对自述可信（报出的名字都在里面），再断言报出的工具里没有视图工具、自述 GUIDE=no、ORB=1。
+	// session_init.systemPrompt 记的是 before_agent_start 的输入（基线）：task 子 agent 的基线里本就不该有视图指引；/tan 克隆
+	// 的基线是父会话当时的系统提示词（含父会话追加的 orb 段与视图指引），由扩展在 before_agent_start 去掉后再追加自己的一段，
+	// 所以克隆只断言基线里确有继承来的段（前提成立），发给模型的结果看自述：没有视图指引、orb 段只有一段（未修复时是两段）。
+	const verify = (kind: string, inits: SubSession[], inherits: boolean) => {
 		check(
 			inits.length > 0,
 			`找到 ${kind} 的子会话 session_init（${inits.map((i) => i.file).join("、")}）`,
@@ -1807,11 +1810,22 @@ async function T9() {
 			note(
 				`${kind} session_init.tools（${i.tools.length}，session_start 之前）${i.tools.includes("render_ui") ? "含" : "不含"} render_ui`,
 			);
-			const said = /TOOLS=([^\n]*?)\s+GUIDE=(\w+)/.exec(i.assistant);
-			check(said !== null, `${kind} 在子会话里给出了 TOOLS=… GUIDE=… 自述`);
+			const said = /TOOLS=([^\n]*?)\s+GUIDE=(\w+)(?:\s+ORB=(\d+))?/.exec(
+				i.assistant,
+			);
+			check(
+				said !== null,
+				`${kind} 在子会话里给出了 TOOLS=… GUIDE=… ORB=… 自述`,
+			);
 			const reported = (said?.[1] ?? "")
 				.split(",")
-				.map((s) => s.trim())
+				// 有的模型网关把工具名加上 `mcp__` 前缀再发给模型：去掉前缀后在 session_init 里的按原名算
+				.map((s) => {
+					const t = s.trim();
+					return t.startsWith("mcp__") && i.tools.includes(t.slice(5))
+						? t.slice(5)
+						: t;
+				})
 				.filter(Boolean);
 			note(`${kind} 自述的工具（${reported.length}）：${reported.join(",")}`);
 			const known = reported.filter((t) => i.tools.includes(t)).length;
@@ -1828,12 +1842,21 @@ async function T9() {
 				`${kind} 系统提示词里没有视图指引（自述 GUIDE=${said?.[2]}）`,
 			);
 			check(
-				!i.systemPrompt.includes(GUIDE_HEAD),
-				`${kind} session_init 的系统提示词基线里没有视图指引`,
+				said?.[3] === "1",
+				`${kind} 系统提示词里只有一段 orb 指引（自述 ORB=${said?.[3]}）`,
 			);
+			if (inherits)
+				note(
+					`${kind} session_init 的基线${i.systemPrompt.includes(GUIDE_HEAD) ? "含" : "不含"}父会话继承来的视图指引（before_agent_start 的输入）`,
+				);
+			else
+				check(
+					!i.systemPrompt.includes(GUIDE_HEAD),
+					`${kind} session_init 的系统提示词基线里没有视图指引`,
+				);
 		}
 	};
-	verify("task 子 agent", sessionInits(`T9-task-${n}`));
+	verify("task 子 agent", sessionInits(`T9-task-${n}`), false);
 
 	// /tan：与 Web 的斜杠命令同一帧
 	await waitIdle(tid);
@@ -1848,7 +1871,7 @@ async function T9() {
 		TURN,
 		5_000,
 	).catch(() => sessionInits(`T9-tan-${n}`));
-	verify("/tan 克隆", inits);
+	verify("/tan 克隆", inits, true);
 }
 
 /** T10：第二台设备打开同一线程，看到同样的锁定状态。 */
