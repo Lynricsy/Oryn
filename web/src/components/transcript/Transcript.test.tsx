@@ -18,7 +18,12 @@ import {
 	MOCK_ROLE_AVATARS,
 } from "../../mock/fixtures";
 import type { SessionState } from "../../omp/types";
-import type { JsonRecord } from "../../state/message-builder";
+import {
+	applyMessageUpdate,
+	type JsonRecord,
+	type LiveMessage,
+	startLiveMessage,
+} from "../../state/message-builder";
 import { getThreadStore, indexStore } from "../../state/stores";
 import { buildTranscript, type TranscriptItem } from "../../state/transcript";
 import { TranscriptContext, type TranscriptContextValue } from "./context";
@@ -257,6 +262,128 @@ const ctx: TranscriptContextValue = {
 	rewindTo: () => {},
 	labelEntry: () => {},
 };
+
+describe("思考块随思考开合", () => {
+	/** 在途消息只经 message_update 帧推进，再经 buildTranscript 得到转录行（与线程页同一路径）。 */
+	function liveRow(live: LiveMessage) {
+		const row = buildTranscript({
+			entries: [],
+			leafEntryId: undefined,
+			liveMessage: live,
+			liveTools: {},
+			liveToolOrder: [],
+			notices: [],
+		}).items.at(-1);
+		if (row?.kind !== "message") throw new Error("缺少在途消息行");
+		return (
+			<TranscriptContext.Provider value={ctx}>
+				<MessageView
+					message={row.message}
+					live={row.live}
+					endedBlocks={row.endedBlocks}
+				/>
+			</TranscriptContext.Provider>
+		);
+	}
+	const upd = (live: LiveMessage, ev: JsonRecord) =>
+		applyMessageUpdate(live, {
+			type: "message_update",
+			messageId: "m1",
+			message: { role: "assistant" },
+			assistantMessageEvent: ev,
+		});
+
+	it("思考中自动展开；只收到 thinking_end、下一块还没来时就合上", () => {
+		let live = startLiveMessage({
+			type: "message_start",
+			messageId: "m1",
+			message: { role: "assistant", content: [] },
+		});
+		live = upd(live, {
+			type: "thinking_start",
+			contentIndex: 0,
+			block: { type: "thinking", thinking: "" },
+		});
+		live = upd(live, {
+			type: "thinking_delta",
+			contentIndex: 0,
+			delta: "先看内核版本",
+		});
+		const { container, rerender } = render(liveRow(live));
+		expect(screen.getByRole("button", { name: /思考中/ })).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
+		expect(
+			container.querySelector('[data-ask-scope="thinking"]')?.textContent,
+		).toBe("先看内核版本");
+
+		rerender(
+			liveRow(
+				upd(live, {
+					type: "thinking_end",
+					contentIndex: 0,
+					content: "先看内核版本",
+				}),
+			),
+		);
+		const head = screen.getByRole("button", { name: /思考/ });
+		expect(head).toHaveAttribute("aria-expanded", "false");
+		expect(head.textContent).not.toContain("思考中");
+		expect(container.querySelector('[data-ask-scope="thinking"]')).toBeNull();
+	});
+
+	it("允许动效时 thinking_end 触发收起动画：先缩到 0 再卸载", () => {
+		vi.stubGlobal("matchMedia", () => ({ matches: false }));
+		const anim = { cancel: vi.fn(), onfinish: null as null | (() => void) };
+		const animate = vi.fn(() => anim);
+		Object.defineProperty(HTMLElement.prototype, "animate", {
+			configurable: true,
+			value: animate,
+		});
+		try {
+			let live = startLiveMessage({
+				type: "message_start",
+				messageId: "m1",
+				message: { role: "assistant", content: [] },
+			});
+			live = upd(live, {
+				type: "thinking_start",
+				contentIndex: 0,
+				block: { type: "thinking", thinking: "" },
+			});
+			live = upd(live, {
+				type: "thinking_delta",
+				contentIndex: 0,
+				delta: "想",
+			});
+			const { container, rerender } = render(liveRow(live));
+			vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+				new DOMRect(0, 0, 100, 40),
+			);
+			rerender(
+				liveRow(
+					upd(live, { type: "thinking_end", contentIndex: 0, content: "想" }),
+				),
+			);
+			const body = () => container.querySelector('[data-ask-scope="thinking"]');
+			expect(body()).not.toBeNull();
+			expect(animate).toHaveBeenCalledWith(
+				[
+					{ height: "40px", opacity: 1 },
+					{ height: "0px", opacity: 0 },
+				],
+				expect.anything(),
+			);
+			act(() => anim.onfinish?.());
+			expect(body()).toBeNull();
+		} finally {
+			Reflect.deleteProperty(HTMLElement.prototype, "animate");
+			vi.unstubAllGlobals();
+			vi.restoreAllMocks();
+		}
+	});
+});
 
 describe("MessageView 回合脚注与消息菜单", () => {
 	it("用量脚注只挂在传入 turn 的消息上；中间消息仍有自己的菜单", () => {

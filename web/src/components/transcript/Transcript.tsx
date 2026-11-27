@@ -211,6 +211,7 @@ function ItemView({
 					message={item.message}
 					entryId={item.entryId}
 					live={item.live}
+					endedBlocks={item.endedBlocks}
 					turn={turn}
 					turnStart={turnStart}
 				/>

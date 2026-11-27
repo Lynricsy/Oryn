@@ -16,6 +16,11 @@ export interface LiveMessage {
 	message: JsonRecord;
 	/** 每个 toolCall 块累计的参数 JSON 文本（按 contentIndex）。 */
 	partialJson: Record<number, string>;
+	/**
+	 * 已收到 `*_end` 的内容块（按 contentIndex）：块自己的流式结束了，即使下一块迟迟不来
+	 * （思考结束后模型还在准备正文），渲染也不再把它当作「进行中」。
+	 */
+	endedBlocks?: readonly number[];
 	ended: boolean;
 }
 
@@ -92,6 +97,14 @@ function contentOf(m: JsonRecord): unknown[] {
 	return m.content as unknown[];
 }
 
+/** 标志一个内容块流式结束的事件。 */
+const BLOCK_END: Record<string, true> = {
+	text_end: true,
+	thinking_end: true,
+	toolcall_end: true,
+	image_end: true,
+};
+
 /** 应用一条 `message_update`，返回新的 LiveMessage（不修改入参）。 */
 export function applyMessageUpdate(
 	live: LiveMessage,
@@ -101,22 +114,40 @@ export function applyMessageUpdate(
 		? frame.assistantMessageEvent
 		: null;
 	const frameMsg = isRecord(frame.message) ? frame.message : null;
+	const idx = ev && typeof ev.contentIndex === "number" ? ev.contentIndex : -1;
+	const endedBlocks =
+		ev &&
+		idx >= 0 &&
+		typeof ev.type === "string" &&
+		BLOCK_END[ev.type] === true &&
+		!live.endedBlocks?.includes(idx)
+			? [...(live.endedBlocks ?? []), idx]
+			: live.endedBlocks;
 	// 完整形态：帧里直接带了整条消息
 	if (frameMsg && Array.isArray(frameMsg.content) && (!ev || "partial" in ev)) {
 		const message = cloneMessage(frameMsg);
-		return { ...live, message, role: (message.role as string) ?? live.role };
+		return {
+			...live,
+			message,
+			role: (message.role as string) ?? live.role,
+			endedBlocks,
+		};
 	}
 	if (!ev) return live;
 	const message = cloneMessage(live.message);
 	const content = contentOf(message);
 	const partialJson = { ...live.partialJson };
-	const idx = typeof ev.contentIndex === "number" ? ev.contentIndex : -1;
 	const block =
 		idx >= 0 && isRecord(content[idx]) ? (content[idx] as JsonRecord) : null;
 	switch (ev.type) {
 		case "start":
 			if (isRecord(ev.message))
-				return { ...live, message: cloneMessage(ev.message), partialJson: {} };
+				return {
+					...live,
+					message: cloneMessage(ev.message),
+					partialJson: {},
+					endedBlocks: undefined,
+				};
 			return live;
 		case "text_start":
 			content[idx] = isRecord(ev.block)
@@ -199,7 +230,7 @@ export function applyMessageUpdate(
 		default:
 			return live;
 	}
-	return { ...live, message, partialJson };
+	return { ...live, message, partialJson, endedBlocks };
 }
 
 export function endLiveMessage(

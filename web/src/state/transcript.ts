@@ -29,6 +29,8 @@ export type TranscriptItem =
 			entryId?: string;
 			message: JsonRecord;
 			live: boolean;
+			/** 在途消息里已收到 `*_end` 的内容块（按 contentIndex）。 */
+			endedBlocks?: readonly number[];
 			/** 助手消息：走到它之前的模型来源轨迹（在途消息为分支末端的）。 */
 			trail?: SourceTrail;
 	  }
@@ -357,6 +359,7 @@ export function buildTranscript(
 			seq: lastSeq + 0.6,
 			message: live.message,
 			live: !live.ended,
+			endedBlocks: live.endedBlocks,
 			...(live.message.role === "assistant" ? { trail } : {}),
 		});
 		toolCallIdsOf(live.message, calledIds);

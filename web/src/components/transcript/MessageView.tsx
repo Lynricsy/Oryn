@@ -1447,11 +1447,13 @@ function AssistantMessage({
 	entryId,
 	live,
 	turn,
+	endedBlocks,
 }: {
 	message: JsonRecord;
 	entryId?: string;
 	live: boolean;
 	turn?: TurnUsage;
+	endedBlocks?: readonly number[];
 }) {
 	const { t } = useTranslation();
 	const ctx = useTranscriptContext();
@@ -1484,7 +1486,8 @@ function AssistantMessage({
 		const kind = blockKind(b);
 		if (kind === null || !isRecord(b)) return;
 		const key = `${i}-${String(b.type)}`;
-		const streaming = live && i === lastIdx;
+		// 在途消息的最后一块，且还没收到它的 `*_end`：思考块据此展开 / 合上，正文据此显示光标
+		const streaming = live && i === lastIdx && !endedBlocks?.includes(i);
 		const marginTop = prev === null ? 0 : flowGap(prev, kind);
 		prev = kind;
 		let node: ReactNode;
@@ -1768,6 +1771,7 @@ export function MessageView({
 	live,
 	turn,
 	turnStart,
+	endedBlocks,
 }: {
 	message: JsonRecord;
 	entryId?: string;
@@ -1776,6 +1780,8 @@ export function MessageView({
 	turn?: TurnUsage;
 	/** 这条消息是回合起点（用户：右侧放用户头像；助手的头像行由 Transcript 放在行首）。 */
 	turnStart?: boolean;
+	/** 在途消息里已收到 `*_end` 的内容块（按 contentIndex）：这些块不再算流式中。 */
+	endedBlocks?: readonly number[];
 }): ReactNode {
 	const { t } = useTranslation();
 	switch (message.role) {
@@ -1795,6 +1801,7 @@ export function MessageView({
 					entryId={entryId}
 					live={live}
 					turn={turn}
+					endedBlocks={endedBlocks}
 				/>
 			);
 		case "bashExecution":
