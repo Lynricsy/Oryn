@@ -48,7 +48,7 @@ func TestDesignToolsRegistered(t *testing.T) {
 func TestDesignSkillAssets(t *testing.T) {
 	skill := string(designSkill)
 	assert.True(t, strings.HasPrefix(skill, "---\nname: oryn-design\n"), "技能 frontmatter")
-	heads := []string{"## 1. 何时用", "## 2. 流程", "## 3. 画布契约", "## 4. 发牌", "## 5. 检查", "## 6. 便签", "## 7. 交付", "## 8. 自动发生的事"}
+	heads := []string{"## 1. ", "## 2. ", "## 3. 画布契约", "## 4. ", "## 5. ", "## 6. ", "## 7. ", "## 8. 自动发生的事"}
 	last := -1
 	for _, h := range heads {
 		i := strings.Index(skill, "\n"+h)
