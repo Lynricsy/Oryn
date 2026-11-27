@@ -170,6 +170,31 @@ func TestOfficeExport(t *testing.T) {
 	assert.Equal(t, CodeInvalid, code(err))
 }
 
+// 超过预览上限的 Word / PowerPoint：内置 PDF 导出直接拒绝并提示下载原件，不调用渲染器（查看器不会加载它，只会打出占位页）。
+func TestOfficeExportPDFTooLarge(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("[Content_Types].xml")
+	require.NoError(t, err)
+	fmt.Fprintf(w, `<Types><Override PartName="%s" ContentType="%s"/></Types>`, partPpt, ctPptx)
+	big, err := zw.CreateHeader(&zip.FileHeader{Name: "ppt/media/big.bin", Method: zip.Store})
+	require.NoError(t, err)
+	_, err = big.Write(make([]byte, MaxPreviewBytes+1))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	a, err := createTyped(t, e, TypePptx, putBytes(EntryPptx, buf.Bytes()))
+	require.NoError(t, err)
+
+	r := &fakeRenderer{}
+	withRenderer(e, r)
+	_, err = e.s.Export(ctx, a.ID, 0, ExportPDF)
+	require.Equal(t, CodeInvalid, code(err))
+	assert.Contains(t, err.Error(), "请下载原件")
+	assert.Zero(t, r.runs.Load(), "不调用渲染器")
+}
+
 func TestOfficeImportAndUpload(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

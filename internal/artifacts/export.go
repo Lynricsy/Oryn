@@ -176,6 +176,11 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 		case TypeSlides:
 			out, err = s.slidesPDF(ctx, a.ID, v.Version)
 		case TypeDocx, TypeDocm, TypePptx, TypePptm:
+			// 内置打印走查看器的 print 视图，超过预览上限的文件在查看器里不加载，打出来只会是占位页
+			if v.Size > MaxPreviewBytes {
+				return Export{}, opErr(CodeInvalid, "版本 %d 有 %.1f MiB，超过内置 PDF 导出的上限 %d MiB；请下载原件。",
+					v.Version, float64(v.Size)/(1<<20), MaxPreviewBytes>>20)
+			}
 			out, err = s.officePDF(ctx, a.ID, v.Version, a.Type)
 		case TypePDF:
 			return Export{}, opErr(CodeInvalid, "这已经是 PDF，直接导出原件。")
