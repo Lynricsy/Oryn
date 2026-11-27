@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -410,6 +411,10 @@ type BatchResult struct {
 // ErrExcludedPath / ErrInvalidContent；单文件、变更后整层的合计大小 / 文件数、两层下发预算超限 → ErrTooLarge；
 // 校验失败时不改任何文件。Delete 不匹配任何文件时忽略；目录删除只删 listLocked 列出、且不属于运行时数据的文件。
 // models.yml 做密钥抽取（同 Put）。
+//
+// 落盘分三步（见 commitBatchLocked）：新文件先全部写进与配置根同一文件系统的暂存目录（文件名过长、磁盘满等写入错误
+// 在这一步暴露，现有文件不动）；再把要删除与要覆盖的旧文件移进备份目录；最后把暂存文件逐个 rename 到位。
+// 后两步任一失败都按相反顺序撤回，旧文件原样回到原处。
 func (h *Home) Apply(ctx context.Context, b Batch, vault *secrets.Vault) (BatchResult, error) {
 	res := BatchResult{Files: []FileInfo{}, Deleted: []string{}, ExtractedSecrets: []string{}, Warnings: []Warning{}}
 	if len(b.Delete) == 0 && len(b.Files) == 0 {
@@ -510,18 +515,17 @@ func (h *Home) Apply(ctx context.Context, b Batch, vault *secrets.Vault) (BatchR
 		}
 	}
 
+	if err := h.commitBatchLocked(removed, paths, func(p string) ([]byte, fs.FileMode) {
+		return writes[p].content, writes[p].mode
+	}); err != nil {
+		return res, err
+	}
 	for _, p := range removed {
-		if err := h.removeLocked(p); err != nil {
-			return res, err
-		}
 		if _, ok := writes[p]; !ok {
 			res.Deleted = append(res.Deleted, p)
 		}
 	}
 	for _, p := range paths {
-		if err := writeFileAtomic(h.abs(p), writes[p].content, writes[p].mode); err != nil {
-			return res, err
-		}
 		fi, err := fileInfo(p, h.abs(p))
 		if err != nil {
 			return res, err
@@ -545,18 +549,99 @@ func (h *Home) batchDeletes(dels []string, rel string) bool {
 	return false
 }
 
+// commitBatchLocked 落盘一批已校验的变更：removed 是要删除的现有文件，paths 是要写入的文件（内容由 content 给出）。
+// 暂存 → 备份 → 就位；失败时撤回已就位的新文件并把备份移回原处，配置根回到调用前的样子。持写锁调用。
+func (h *Home) commitBatchLocked(removed, paths []string, content func(string) ([]byte, fs.FileMode)) error {
+	if len(paths) == 0 && len(removed) == 0 {
+		return nil
+	}
+	stage, err := os.MkdirTemp(h.parent, h.name+".batch-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	for _, p := range paths {
+		b, mode := content(p)
+		if err := writeFileAtomic(filepath.Join(stage, "new", filepath.FromSlash(p)), b, mode); err != nil {
+			return err
+		}
+	}
+
+	// 旧文件：要删除的，以及将被覆盖的
+	old := slices.Clone(removed)
+	inOld := make(map[string]struct{}, len(removed))
+	for _, p := range removed {
+		inOld[p] = struct{}{}
+	}
+	for _, p := range paths {
+		if _, ok := inOld[p]; ok {
+			continue
+		}
+		if st, err := os.Lstat(h.abs(p)); err == nil && st.Mode().IsRegular() {
+			old = append(old, p)
+		}
+	}
+	type move struct{ from, to string }
+	var backedUp []move
+	var placed []string
+	rollback := func() {
+		for i := len(placed) - 1; i >= 0; i-- {
+			_ = os.Remove(placed[i])
+			pruneEmptyParents(h.dir, placed[i])
+		}
+		for i := len(backedUp) - 1; i >= 0; i-- {
+			m := backedUp[i]
+			_ = os.MkdirAll(filepath.Dir(m.from), 0o700)
+			_ = os.Rename(m.to, m.from)
+		}
+	}
+	for _, p := range old {
+		from, to := h.abs(p), filepath.Join(stage, "old", filepath.FromSlash(p))
+		err := os.MkdirAll(filepath.Dir(to), 0o700)
+		if err == nil {
+			err = os.Rename(from, to)
+		}
+		if err != nil {
+			rollback()
+			return err
+		}
+		backedUp = append(backedUp, move{from: from, to: to})
+	}
+	for _, p := range paths {
+		to := h.abs(p)
+		err := os.MkdirAll(filepath.Dir(to), 0o700)
+		if err == nil {
+			err = os.Rename(filepath.Join(stage, "new", filepath.FromSlash(p)), to)
+		}
+		if err != nil {
+			rollback()
+			return err
+		}
+		placed = append(placed, to)
+	}
+	for _, p := range removed {
+		pruneEmptyParents(h.dir, h.abs(p))
+	}
+	return nil
+}
+
 // removeLocked 删除文件 rel，并顺手清掉变空的父目录。持写锁调用。
 func (h *Home) removeLocked(rel string) error {
 	abs := h.abs(rel)
 	if err := os.Remove(abs); err != nil {
 		return err
 	}
-	for d := filepath.Dir(abs); d != h.dir && strings.HasPrefix(d, h.dir); d = filepath.Dir(d) {
+	pruneEmptyParents(h.dir, abs)
+	return nil
+}
+
+// pruneEmptyParents 自 abs 的父目录向上删除空目录，止于 root（不含）。
+func pruneEmptyParents(root, abs string) {
+	for d := filepath.Dir(abs); d != root && strings.HasPrefix(d, root); d = filepath.Dir(d) {
 		if os.Remove(d) != nil {
 			break
 		}
 	}
-	return nil
 }
 
 // ImportTar 用 tar 包整体替换该配置根（不在包内的文件被删除）。只接受普通文件；

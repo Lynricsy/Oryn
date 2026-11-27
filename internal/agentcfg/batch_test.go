@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -183,4 +184,43 @@ func TestHomeApplyProjectQuota(t *testing.T) {
 	_, err = h.Apply(ctx, agentcfg.Batch{Files: []agentcfg.BatchFile{{Path: "rules/y.md", Content: []byte("y")}}}, nil)
 	assert.ErrorIs(t, err, agentcfg.ErrProjectRemoved)
 	assert.NoDirExists(t, h.Dir())
+}
+
+// 写入在落盘时才失败（文件名段超过文件系统的 255 字节上限，CleanPath 的 1024 字节路径校验放得过）：
+// 替换批次整体失败，被删除与将被覆盖的旧文件原样还在，没有半个新文件，也不留暂存目录。
+func TestHomeApplyWriteFailureKeepsOld(t *testing.T) {
+	ctx := context.Background()
+	h, v, _ := newHome(t)
+	old := map[string]string{
+		"skills/a/SKILL.md":       "old skill",
+		"skills/a/scripts/old.sh": "old script",
+		"skills/b/SKILL.md":       "other",
+	}
+	for p, c := range old {
+		_, err := h.Put(ctx, p, []byte(c), 0, v)
+		require.NoError(t, err)
+	}
+	long := strings.Repeat("x", 256) + ".md"
+	_, err := h.Apply(ctx, agentcfg.Batch{
+		Delete: []string{"skills/a"},
+		Files: []agentcfg.BatchFile{
+			{Path: "skills/a/SKILL.md", Content: []byte("new skill")},
+			{Path: "skills/a/new.md", Content: []byte("new")},
+			{Path: "skills/a/" + long, Content: []byte("too long")},
+		},
+	}, v)
+	require.Error(t, err)
+
+	all, err := h.LoadAll()
+	require.NoError(t, err)
+	got := map[string]string{}
+	for p, b := range all {
+		got[p] = string(b)
+	}
+	assert.Equal(t, old, got)
+	entries, err := os.ReadDir(filepath.Dir(h.Dir()))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".batch-", "暂存目录已清理")
+	}
 }
