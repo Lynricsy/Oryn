@@ -224,6 +224,8 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 		}
 	}
 	lang := s.ownerLanguage(ctx)
+	// M33：视图工具只给工作线程主 agent（协调档的助手由宿主工具表下发）
+	viewTools := prof == nil && s.ownerGenerativeUI(ctx)
 	t.mu.Lock()
 	params := apigen.LinkCtlAgentStartParams{ThreadID: t.id, SessionDir: t.sessionDir, Env: map[string]string{}, InitFrames: initFrames(t, prof, terminal)}
 	// runner 线程（M11b）：agent 在线程的工作目录里启动
@@ -258,6 +260,9 @@ func (s *Service) startAgent(ctx context.Context, threadID string) {
 				tools = []string{}
 			}
 			params.Tools = &tools
+		}
+		if viewTools {
+			params.ViewTools = &viewTools
 		}
 	}
 	t.mu.Unlock()
@@ -344,6 +349,15 @@ func (s *Service) ownerLanguage(ctx context.Context) apigen.LanguageCode {
 		return apigen.ZhCN
 	}
 	return lang
+}
+
+// ownerGenerativeUI 读取生成式 UI 总开关；尚未初始化所有者或读取异常时按开启处理（缺省开启）。
+func (s *Service) ownerGenerativeUI(ctx context.Context) bool {
+	if s.st == nil {
+		return true
+	}
+	v, err := s.st.Q.GetOwnerGenerativeUI(ctx)
+	return err != nil || v == 1
 }
 
 // coordinatorSyncTimeout 是协调线程启动前同步文件库的上限（首次同步可能要推送较多文件）。

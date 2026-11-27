@@ -885,6 +885,7 @@ type Owner struct {
 	GithubAutomationIdentity string  `json:"githubAutomationIdentity"`
 	SelectionActions         string  `json:"selectionActions"`
 	Language                 string  `json:"language"`
+	GenerativeUi             int64   `json:"generativeUi"`
 }
 
 type OwnerMemoryChunk struct {

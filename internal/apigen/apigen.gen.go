@@ -6748,6 +6748,12 @@ type FsRoots struct {
 	Workdir string `json:"workdir"`
 }
 
+// GenerativeUISettings defines model for GenerativeUISettings.
+type GenerativeUISettings struct {
+	// Enabled M33：agent 是否可以用 render_ui / render_html 在对话里给出视图（关闭后不注册工具、不注入指引）
+	Enabled bool `json:"enabled"`
+}
+
 // GitBase defines model for GitBase.
 type GitBase struct {
 	// Approximate merge-base 不可得（浅克隆 / 无共同祖先）时为真，`mergeBase` 取基线引用本身的 sha
@@ -7483,6 +7489,10 @@ type LinkCtlAgentStartParams struct {
 	// Variant M26：协调档的启动变体。`research_web` 公网研究员（`web_search` 与只读公网网址的 `read`）；`research_private` 私有研究员
 	// （没有内置工具、没有 `PI_PROXY`）；`main_restricted` 受限的主线（只有 `read`）。与 `web` 互斥。只有协调宿主接受；省略 = 改动前的行为。
 	Variant *LinkCtlAgentStartParamsVariant `json:"variant,omitempty"`
+
+	// ViewTools M33：是否给工作线程主 agent 视图工具（render_ui / render_html）。为真时 orbd 设 `ORYN_VIEW_TOOLS` 指向受管的
+	// view-tools.json；省略或为假时清掉该变量。只有普通工作线程接受（协调宿主不设）。
+	ViewTools *bool `json:"viewTools,omitempty"`
 
 	// Web M19：协调档是否打开第一层（内置 `web_search` 与 `generate_image`、`read` 读 URL、环境带 `PI_PROXY` 走 orynd 的正向代理）。
 	// 只给全局助手的对话；Space 协调者省略（= false），工具与环境同 M19 之前（D10）。只有协调宿主接受。
@@ -15544,6 +15554,9 @@ type PutAssistantIdentityJSONRequestBody = AgentIdentity
 // PutComposerPrefsJSONRequestBody defines body for PutComposerPrefs for application/json ContentType.
 type PutComposerPrefsJSONRequestBody = ComposerPrefs
 
+// PutGenerativeUISettingsJSONRequestBody defines body for PutGenerativeUISettings for application/json ContentType.
+type PutGenerativeUISettingsJSONRequestBody = GenerativeUISettings
+
 // PutGitIdentityJSONRequestBody defines body for PutGitIdentity for application/json ContentType.
 type PutGitIdentityJSONRequestBody = GitIdentity
 
@@ -19191,6 +19204,12 @@ type ServerInterface interface {
 	// PutComposerPrefs 设置新对话输入框的偏好（整体替换）
 	// (PUT /api/v1/settings/composer)
 	PutComposerPrefs(w http.ResponseWriter, r *http.Request)
+	// GetGenerativeUISettings 生成式 UI 设置
+	// (GET /api/v1/settings/generative-ui)
+	GetGenerativeUISettings(w http.ResponseWriter, r *http.Request)
+	// PutGenerativeUISettings 设置生成式 UI 总开关（整体替换）
+	// (PUT /api/v1/settings/generative-ui)
+	PutGenerativeUISettings(w http.ResponseWriter, r *http.Request)
 	// DeleteGitIdentity 清除 git 提交身份的全局默认值（已有 orb 的 git 配置保持不变）
 	// (DELETE /api/v1/settings/git-identity)
 	DeleteGitIdentity(w http.ResponseWriter, r *http.Request)
@@ -21372,6 +21391,18 @@ func (_ Unimplemented) GetComposerPrefs(w http.ResponseWriter, r *http.Request) 
 // PutComposerPrefs 设置新对话输入框的偏好（整体替换）
 // (PUT /api/v1/settings/composer)
 func (_ Unimplemented) PutComposerPrefs(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetGenerativeUISettings 生成式 UI 设置
+// (GET /api/v1/settings/generative-ui)
+func (_ Unimplemented) GetGenerativeUISettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutGenerativeUISettings 设置生成式 UI 总开关（整体替换）
+// (PUT /api/v1/settings/generative-ui)
+func (_ Unimplemented) PutGenerativeUISettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -31323,6 +31354,34 @@ func (siw *ServerInterfaceWrapper) PutComposerPrefs(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetGenerativeUISettings operation middleware
+func (siw *ServerInterfaceWrapper) GetGenerativeUISettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetGenerativeUISettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutGenerativeUISettings operation middleware
+func (siw *ServerInterfaceWrapper) PutGenerativeUISettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutGenerativeUISettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteGitIdentity operation middleware
 func (siw *ServerInterfaceWrapper) DeleteGitIdentity(w http.ResponseWriter, r *http.Request) {
 
@@ -34413,6 +34472,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/language", wrapper.PutLanguageSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/settings/generative-ui", wrapper.GetGenerativeUISettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/settings/generative-ui", wrapper.PutGenerativeUISettings)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/server/ops-settings", wrapper.GetOpsSettings)

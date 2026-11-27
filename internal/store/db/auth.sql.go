@@ -245,7 +245,7 @@ func (q *Queries) DeleteWebSessionsByPasskey(ctx context.Context, arg DeleteWebS
 
 const getOwner = `-- name: GetOwner :one
 
-SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image, agent_name, assistant_name, assistant_avatar_icon, assistant_avatar_image, new_thread_target, auto_publish_artifacts, github_automation_identity, selection_actions, language FROM owner WHERE id = 1
+SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image, agent_name, assistant_name, assistant_avatar_icon, assistant_avatar_image, new_thread_target, auto_publish_artifacts, github_automation_identity, selection_actions, language, generative_ui FROM owner WHERE id = 1
 `
 
 // Owner, passkeys, recovery codes, web sessions.
@@ -272,6 +272,7 @@ func (q *Queries) GetOwner(ctx context.Context) (Owner, error) {
 		&i.GithubAutomationIdentity,
 		&i.SelectionActions,
 		&i.Language,
+		&i.GenerativeUi,
 	)
 	return i, err
 }

@@ -322,6 +322,12 @@ func (s *Service) OnLanguageChanged(ctx context.Context) {
 	}
 }
 
+// OnGenerativeUIChanged 在生成式 UI 总开关变化后让全部未归档的助手对话在静止后重启（工具表与指引随之增减）。
+// 工作线程不重启：下次 agent 启动时按新值下发 viewTools。
+func (s *Service) OnGenerativeUIChanged(ctx context.Context) {
+	s.refreshConversations(ctx)
+}
+
 // webAccess 报告全局助手联网是否开启（读设置失败按开启处理：真正的放行由出站代理按同一行决定）。
 func (s *Service) webAccess(ctx context.Context) bool {
 	a, err := s.loadSettings(ctx)

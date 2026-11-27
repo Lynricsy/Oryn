@@ -288,7 +288,7 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// settings
 	set("settings", opRead, none, "getGitIdentity", "getAgentIdentity", "listRoleIdentities", "listAgentAvatars", "getComposerPrefs",
-		"getLanguageSettings", "getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices",
+		"getLanguageSettings", "getGenerativeUISettings", "getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices",
 		"getOpsSettings")
 	set("settings", opRead, opPolicy{Check: func(path map[string]string) error {
 		// 与 Home.Get 同一套规范化（agentcfg.CleanPath）：./mcp.json、x/../mcp.json 之类的等价路径同样拒绝。
@@ -299,7 +299,7 @@ func buildAPIPolicy() map[string]opPolicy {
 		return nil
 	}}, "getAgentConfigFile")
 	set("settings", opWrite, none, "putGitIdentity", "deleteGitIdentity", "putAgentIdentity", "putRoleIdentity", "putAgentAvatar",
-		"putComposerPrefs", "putLanguageSettings", "putSelectionActions", "putUserIdentity")
+		"putComposerPrefs", "putLanguageSettings", "putGenerativeUISettings", "putSelectionActions", "putUserIdentity")
 	set("settings", opConfirm, none, "putAgentConfigFile", "deleteAgentConfigFile", "restartAgentConfigSessions", "putSecret", "deleteSecret", "revokeDevice")
 	set("settings", opDeny, deny(denyBinary("write files one by one with putAgentConfigFile")), "importAgentConfig")
 	set("settings", opDeny, deny(denyClient), "getMe")

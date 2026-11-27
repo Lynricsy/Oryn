@@ -2480,6 +2480,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/generative-ui": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 生成式 UI 设置 */
+        get: operations["getGenerativeUISettings"];
+        /**
+         * 设置生成式 UI 总开关（整体替换）
+         * @description 尚未初始化所有者 → 409。工作线程在下次 agent 启动时生效（运行中的 agent 不重启）；全局助手的对话在静止后重启生效。
+         *     已有的视图照常显示。
+         */
+        put: operations["putGenerativeUISettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/server/ops-settings": {
         parameters: {
             query?: never;
@@ -8179,6 +8201,10 @@ export interface components {
         LanguageSettings: {
             language: components["schemas"]["LanguageCode"];
         };
+        GenerativeUISettings: {
+            /** @description M33：agent 是否可以用 render_ui / render_html 在对话里给出视图（关闭后不注册工具、不注入指引） */
+            enabled: boolean;
+        };
         SelectionAction: {
             id: string;
             name: string;
@@ -13096,6 +13122,11 @@ export interface components {
             /** @description 工作线程允许的工具白名单（省略 = 不限制；空数组 `[]` = 禁用全部内置工具；由 orbd 在启动时与实际注册工具取交集生效）；只有普通工作线程接受 */
             tools?: string[];
             language?: components["schemas"]["LanguageCode"];
+            /**
+             * @description M33：是否给工作线程主 agent 视图工具（render_ui / render_html）。为真时 orbd 设 `ORYN_VIEW_TOOLS` 指向受管的
+             *     view-tools.json；省略或为假时清掉该变量。只有普通工作线程接受（协调宿主不设）。
+             */
+            viewTools?: boolean;
         };
         LinkCtlAgentStartResult: {
             pid: number;
@@ -17283,6 +17314,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LanguageSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getGenerativeUISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前设置（尚未初始化所有者时为缺省值：开启） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerativeUISettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putGenerativeUISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerativeUISettings"];
+            };
+        };
+        responses: {
+            /** @description 写入后的设置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerativeUISettings"];
                 };
             };
             default: components["responses"]["Error"];

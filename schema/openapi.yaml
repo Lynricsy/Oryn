@@ -2914,6 +2914,42 @@ paths:
               schema: { $ref: '#/components/schemas/LanguageSettings' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/settings/generative-ui:
+    get:
+      tags: [settings]
+      operationId: getGenerativeUISettings
+      summary: 生成式 UI 设置
+      responses:
+        '200':
+          description: 当前设置（尚未初始化所有者时为缺省值：开启）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerativeUISettings' }
+        default: { $ref: '#/components/responses/Error' }
+    put:
+      tags: [settings]
+      operationId: putGenerativeUISettings
+      summary: 设置生成式 UI 总开关（整体替换）
+      description: |
+        尚未初始化所有者 → 409。工作线程在下次 agent 启动时生效（运行中的 agent 不重启）；全局助手的对话在静止后重启生效。
+        已有的视图照常显示。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerativeUISettings' }
+      responses:
+        '200':
+          description: 写入后的设置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerativeUISettings' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/server/ops-settings:
     get:
       tags: [settings]
@@ -10586,6 +10622,13 @@ components:
       required: [language]
       properties:
         language: { $ref: '#/components/schemas/LanguageCode' }
+    GenerativeUISettings:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: M33：agent 是否可以用 render_ui / render_html 在对话里给出视图（关闭后不注册工具、不注入指引）
     SelectionAction:
       type: object
       required: [id, name, prompt]
@@ -17327,6 +17370,11 @@ components:
           x-go-type-skip-optional-pointer: false
         # 全局语言设置（由控制面下发；orbd 以 ORYN_LANGUAGE 传入 omp，约束标题生成与工具调用 intent 的语言；省略时不设置）
         language: { $ref: '#/components/schemas/LanguageCode' }
+        viewTools:
+          type: boolean
+          description: |
+            M33：是否给工作线程主 agent 视图工具（render_ui / render_html）。为真时 orbd 设 `ORYN_VIEW_TOOLS` 指向受管的
+            view-tools.json；省略或为假时清掉该变量。只有普通工作线程接受（协调宿主不设）。
     LinkCtlAgentStartResult:
       type: object
       required: [pid]
