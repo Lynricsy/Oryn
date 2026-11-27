@@ -67,8 +67,11 @@ jobs:
           bash src-tauri/ci/ios-appicon.sh
           bash src-tauri/ci/ios-entitlements.sh
 
+      # 同 mobile.yml：beforeBuildCommand 的 `tsc -b` 峰值约 3 GB，超出 macOS 机器上 Node 的默认堆上限
       - name: 不签名编译模拟器包
         working-directory: web
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: bun run tauri ios build --debug --target aarch64-sim --no-sign --ci
 
       - name: 模拟器截图
