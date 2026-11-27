@@ -101,11 +101,23 @@ const TREND_ICON = {
 	flat: "minus",
 } as const satisfies Record<Trend, IconName>;
 
+/** 读数格的栏数按个数定，避免末行落单（4 个是 2×2 而不是 3+1）；够宽时才并成一行。按最近的视图容器宽度判断。 */
+const STATS_GRID: Record<number, string> = {
+	1: "grid-cols-1",
+	2: "grid-cols-2",
+	3: "grid-cols-1 @xs:grid-cols-3",
+	4: "grid-cols-2 @2xl:grid-cols-4",
+	5: "grid-cols-2 @lg:grid-cols-3",
+	6: "grid-cols-2 @lg:grid-cols-3",
+	7: "grid-cols-2 @2xl:grid-cols-4",
+	8: "grid-cols-2 @2xl:grid-cols-4",
+};
+
 export function StatsView({ block }: { block: StatsBlock }): ReactNode {
 	const { t } = useTranslation();
 	const fmt = useFormatValue();
 	return (
-		<dl className="m-0 grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-2">
+		<dl className={`m-0 grid gap-2 ${STATS_GRID[block.items.length]}`}>
 			{block.items.map((it, i) => (
 				<div
 					// biome-ignore lint/suspicious/noArrayIndexKey: 读数可能重名，顺序即身份
