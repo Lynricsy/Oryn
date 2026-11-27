@@ -2255,7 +2255,7 @@ function hasViewInput(blocks: unknown): boolean {
 
 /**
  * details.view.spec（C3）：Web 回放以它为准，因为转录里的 toolCall.arguments 是模型的原始输出，而这里拿到的是 Core 修复后的参数。
- * render_ui 是收到的参数去掉 await；render_html 只存 { libs, height }（html 不重复存，libs 兼容单个字符串）。
+ * render_ui 是收到的参数去掉 await 与 endTurn；render_html 只存 { libs, height }（html 不重复存，libs 兼容单个字符串）。
  */
 function viewSpec(name: string, params: Record<string, unknown>): Record<string, unknown> {
 	if (name === "render_html") {
@@ -2267,12 +2267,14 @@ function viewSpec(name: string, params: Record<string, unknown>): Record<string,
 					: [];
 		return typeof params.height === "number" ? { libs, height: params.height } : { libs };
 	}
-	const { await: _await, ...spec } = params;
+	const { await: _await, endTurn: _endTurn, ...spec } = params;
 	return spec;
 }
 
-function viewResult(text: string, view: Record<string, unknown>, isError?: boolean): AgentToolResult {
-	return { content: [{ type: "text", text }], details: { view }, ...(isError ? { isError: true } : {}) };
+// endTurn 为真时结果的 details 带 orynEndTurn：Core 把它当终止型结果，这批工具跑完就结束回合、不再请求模型。
+function viewResult(text: string, view: Record<string, unknown>, isError?: boolean, endTurn?: boolean): AgentToolResult {
+	const details: Record<string, unknown> = endTurn ? { view, orynEndTurn: true } : { view };
+	return { content: [{ type: "text", text }], details, ...(isError ? { isError: true } : {}) };
 }
 
 /** 阻塞应答的 value（C4）：Web 发 {v:1, answer, text}；不是这种 JSON 时（旧客户端、IM 渠道手打的回答）整段当作 text。 */
@@ -2322,10 +2324,15 @@ function registerViews(pi: ExtensionAPI): ((ctx: ExtensionContext) => string | u
 				const params: Record<string, unknown> = isObject(rawParams) ? rawParams : {};
 				const spec = viewSpec(tool.name, params);
 				const html = tool.name === "render_html";
-				// render_ui 没有交互块时忽略 await
+				// render_ui 没有交互块时忽略 await；真正挂起等作答时忽略 endTurn（作答要回到这次调用、同一回合继续）
 				const input = html || hasViewInput(params.blocks);
 				if (!input || params.await !== true) {
-					return viewResult(input && !html ? VIEW_RENDERED_INPUT : VIEW_RENDERED, { outcome: "rendered", spec });
+					return viewResult(
+						input && !html ? VIEW_RENDERED_INPUT : VIEW_RENDERED,
+						{ outcome: "rendered", spec },
+						false,
+						params.endTurn === true,
+					);
 				}
 				// 超时、取消、abort 都 resolve 为 undefined；靠 onTimeout 与 signal 区分
 				let timedOut = false;

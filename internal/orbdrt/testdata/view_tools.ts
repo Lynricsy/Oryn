@@ -185,16 +185,25 @@ const tabsActions = {
 		spec: { libs: [] },
 	});
 }
+// 3c. endTurn：结果 details 带 orynEndTurn（Core 据此结束回合），spec 去掉它；没标时不带
+{
+	const { ctx } = ctxWith("main", neverAsked);
+	const r = await ui.execute("tc-3c", { ...nestedForm, endTurn: true }, undefined, undefined, ctx);
+	expectResult("endTurn", r, RENDERED_INPUT, { outcome: "rendered", spec: nestedForm });
+	if (r.details?.orynEndTurn !== true) fail("endTurn 的结果应带 details.orynEndTurn");
+	const h = await html.execute("tc-3d", { html: "<p>x</p>", endTurn: true }, undefined, undefined, ctx);
+	if (h.details?.orynEndTurn !== true) fail("HTML 的 endTurn 结果应带 details.orynEndTurn");
+	const n = await ui.execute("tc-3e", statsOnly, undefined, undefined, ctx);
+	if (n.details && "orynEndTurn" in n.details) fail("没标 endTurn 时不应带 orynEndTurn");
+}
 // 4. await 已作答：{v:1, answer, text} → text 进结果、answer 进 details；请求的标题与标记
 {
 	const answer = { block: "0.t1.0", kind: "action", choice: 0 };
 	const { ctx, calls } = ctxWith("main", () => JSON.stringify({ v: 1, answer, text: "就这个" }));
-	expectResult(
-		"await 作答",
-		await ui.execute("tc-4", { ...tabsActions, await: true }, undefined, undefined, ctx),
-		"The user answered in the view:\n就这个",
-		{ outcome: "answered", spec: tabsActions, answer },
-	);
+	// 真正挂起等作答时 endTurn 被忽略：作答要回到这次调用、同一回合继续
+	const r = await ui.execute("tc-4", { ...tabsActions, await: true, endTurn: true }, undefined, undefined, ctx);
+	expectResult("await 作答", r, "The user answered in the view:\n就这个", { outcome: "answered", spec: tabsActions, answer });
+	if (r.details && "orynEndTurn" in r.details) fail("await 作答的结果不应带 orynEndTurn");
 	const c = calls[0] ?? fail("await 没有调用 ctx.ui.input");
 	if (c.title !== "选一个 方案") fail(`标题是 ${JSON.stringify(c.title)}`);
 	if (c.placeholder !== "oryn-view:tc-4") fail(`placeholder 是 ${JSON.stringify(c.placeholder)}`);

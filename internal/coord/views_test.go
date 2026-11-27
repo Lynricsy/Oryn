@@ -20,10 +20,12 @@ func viewOf(t *testing.T, res threads.HostToolResult) map[string]any {
 	t.Helper()
 	b, err := json.Marshal(res.Details)
 	require.NoError(t, err)
-	var d map[string]map[string]any
+	var d map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(b, &d))
 	require.Contains(t, d, "view")
-	return d["view"]
+	var v map[string]any
+	require.NoError(t, json.Unmarshal(d["view"], &v))
+	return v
 }
 
 // specJSON 返回 details.view.spec 的 JSON 文本。
@@ -127,6 +129,16 @@ func TestViewRenderedResults(t *testing.T) {
 	assert.JSONEq(t, `{"libs":["chartjs"],"height":300}`, specJSON(t, v))
 	assert.JSONEq(t, `{}`, specJSON(t, viewOf(t, e.call(asst, ToolRenderHTML, `{"html":"x"}`, true))))
 
+	// endTurn：结果带 orynEndTurn（Core 据此结束回合），spec 里去掉；没标时不带。没有交互块时 await 被忽略，endTurn 照常生效
+	res = e.call(asst, ToolRenderUI, `{"blocks":[{"type":"divider"}],"await":true,"endTurn":true}`, true)
+	require.False(t, res.IsError)
+	assert.Equal(t, true, res.Details.(map[string]any)["orynEndTurn"])
+	assert.JSONEq(t, `{"blocks":[{"type":"divider"}]}`, specJSON(t, viewOf(t, res)))
+	res = e.call(asst, ToolRenderHTML, `{"html":"x","endTurn":true}`, true)
+	assert.Equal(t, true, res.Details.(map[string]any)["orynEndTurn"])
+	assert.JSONEq(t, `{}`, specJSON(t, viewOf(t, res)))
+	assert.NotContains(t, e.call(asst, ToolRenderUI, `{"blocks":[{"type":"divider"}],"endTurn":false}`, true).Details, "orynEndTurn")
+
 	blocks41 := "[" + strings.TrimSuffix(strings.Repeat(`{"type":"divider"},`, 41), ",") + "]"
 	for _, bad := range []struct{ name, args string }{
 		{ToolRenderUI, `{"blocks":[]}`},
@@ -187,7 +199,8 @@ func TestViewAwait(t *testing.T) {
 	ce := newConfirmEnv(t)
 	e := ce.env
 	asst := e.assistant()
-	const form = `{"title":"Pick a plan","blocks":[{"type":"form","fields":[{"name":"plan","label":"Plan","kind":"text"}]}],"await":true}`
+	// endTurn 在真正挂起等作答时被忽略：spec 里没有它，结果也不带 orynEndTurn
+	const form = `{"title":"Pick a plan","blocks":[{"type":"form","fields":[{"name":"plan","label":"Plan","kind":"text"}]}],"await":true,"endTurn":true}`
 	respond := func(id string, body map[string]any) {
 		t.Helper()
 		body["type"], body["id"] = "extension_ui_response", id
@@ -220,6 +233,7 @@ func TestViewAwait(t *testing.T) {
 		assert.Equal(t, "answered", v["outcome"])
 		assert.Equal(t, map[string]any{"block": "0", "kind": "form", "values": map[string]any{"plan": "B"}}, v["answer"])
 		assert.JSONEq(t, `{"title":"Pick a plan","blocks":[{"type":"form","fields":[{"name":"plan","label":"Plan","kind":"text"}]}]}`, specJSON(t, v))
+		assert.NotContains(t, res.Details, "orynEndTurn")
 		assert.Empty(t, pending(t, e.th, asst.ID))
 	})
 

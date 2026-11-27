@@ -49,11 +49,12 @@
 
 | 工具 | 参数 |
 |---|---|
-| `render_ui` | `title?`（≤200）、`description?`（≤600）、`width?: "normal" \| "wide"`、`blocks`（1–40 个块，见 C2）、`await?: boolean` |
-| `render_html` | `title?`（≤200）、`html`（1–200 000 字符；完整文档或 body 片段，可带内联 `<style>` / `<script>`）、`libs?: ("tailwind" \| "chartjs")[]`、`height?`（120–1600，省略则随内容）、`await?: boolean` |
+| `render_ui` | `title?`（≤200）、`description?`（≤600）、`width?: "normal" \| "wide"`、`blocks`（1–40 个块，见 C2）、`await?: boolean`、`endTurn?: boolean` |
+| `render_html` | `title?`（≤200）、`html`（1–200 000 字符；完整文档或 body 片段，可带内联 `<style>` / `<script>`）、`libs?: ("tailwind" \| "chartjs")[]`、`height?`（≥120 的最小高度，省略则随内容）、`await?: boolean`、`endTurn?: boolean` |
 
 - 参数校验由 Core 在 `execute` 之前按 JSON Schema 完成（`agent-loop.ts:3259` → `validateToolArguments`）；失败时模型收到 `Validation failed for tool …` 并自行重试，`execute` 不被调用。对象一律写 `additionalProperties: false`：Core 遇到多余的键是删掉而不是判错（`validation.ts:1722-1735`）。
 - `render_ui` 不含 `form` / `actions` 时 `await` 被忽略。
+- `endTurn`（两个工具都有，默认 `false`）：视图是本回合最后一句。结果 `details` 加 `orynEndTurn: true`，Core 把它当终止型结果，这批工具跑完即结束回合、不再请求模型。真正挂起等作答（`await` 且有交互）时忽略。
 
 ### C2 组件词表（`render_ui.blocks`）
 
@@ -86,7 +87,7 @@
 
 ### C3 工具结果
 
-`content` 是一段英文文本（给模型），`details.view` 给 Web。`details.view` 除下表的字段外一律带 `spec`：`render_ui` 是 `execute` 实际收到的参数（去掉 `await`），`render_html` 是 `{ libs, height }`（不重复存 `html`）。
+`content` 是一段英文文本（给模型），`details.view` 给 Web。`details.view` 除下表的字段外一律带 `spec`：`render_ui` 是 `execute` 实际收到的参数（去掉 `await` 与 `endTurn`），`render_html` 是 `{ libs, height }`（不重复存 `html`）。`endTurn` 生效时 `details` 另带 `orynEndTurn: true`（与 `view` 同级）。
 
 为什么要 `spec`：Core 校验时会修复参数（字符串转数字、单值转数组、解开被二次编码的键，`agent-loop.ts:3255-3270`），修复后的值只进 `execute` 与 `tool_execution_start`；转录里的 `toolCall.arguments` 仍是模型的原始输出。回放以 `spec` 为准（C10）。
 
@@ -205,7 +206,7 @@ form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors <ancestors>
 - 首帧主题走 URL 片段：`<url>#theme=<encodeURIComponent(JSON{scheme, vars})>`，运行时在 `<head>` 里同步读出，不闪烁；之后主题变化（`oryn:themechange`）走 `theme` 消息。值里的 `< > ; { }` 一律去掉。
 - 主题变量（与 Core 的 SVG 约定、`AskFormView.tsx:56` 的映射同名）：`--fg --muted --border --surface --accent --success --warning --error --c1…--c6`，另加 `--bg --font --mono --radius`。父页面用 `getComputedStyle` 取解析后的值。
 - 页面 API：`window.oryn.sendPrompt(text)`、`window.oryn.palette`（`--c1…--c6` 的值）。
-- 高度：`height` 省略时跟随 `resize`，夹在 120–1600 px，超出的在帧内滚动；Web 按 `toolCallId` 记住上次高度，重新挂载时不跳动。
+- 高度：`height` 是最小高度；帧跟随 `resize` 长高，没有上限，内容不在帧内滚动。页面高度随帧高变化（`100vh`、`height: 100%` 一类）时，运行时连续 3 次看到「帧变高多少内容就跟着变高多少」即认定耦合，报一次 480 px 后停止上报，之后内容真的超出视口再继续。Web 按 `toolCallId` 记住上次高度，重新挂载时不跳动。参数流到第一个块之前（声明式）或帧挂载之前（HTML）显示 `ViewComposing` 占位。
 
 ### C10 Web 渲染契约
 

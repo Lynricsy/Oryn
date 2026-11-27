@@ -134,11 +134,15 @@ func (s *Service) toolView(ctx context.Context, c toolCtx) threads.HostToolResul
 	if err := json.Unmarshal(c.Args, &args); err != nil || args == nil {
 		return failResult(errf(CodeInvalid, "invalid arguments: expected an object"))
 	}
-	var await bool
+	var await, endTurn bool
 	if raw, ok := args["await"]; ok {
 		_ = json.Unmarshal(raw, &await)
 	}
+	if raw, ok := args["endTurn"]; ok {
+		_ = json.Unmarshal(raw, &endTurn)
+	}
 	delete(args, "await")
+	delete(args, "endTurn")
 	var (
 		spec        any
 		interactive bool
@@ -164,11 +168,18 @@ func (s *Service) toolView(ctx context.Context, c toolCtx) threads.HostToolResul
 		}
 		spec, interactive = hs, true
 	}
+	// 真正挂起等作答时忽略 endTurn：作答要回到这次调用、同一回合继续
 	if !await || !interactive || !viewCallAnswerable(c.ToolCallID) {
+		text := viewTextRendered
 		if interactive && c.Name == ToolRenderUI {
-			return viewResult(viewTextRenderedInteractive, "rendered", spec, nil)
+			text = viewTextRenderedInteractive
 		}
-		return viewResult(viewTextRendered, "rendered", spec, nil)
+		r := viewResult(text, "rendered", spec, nil)
+		if endTurn {
+			// Core 把带 orynEndTurn 的结果当终止型：这批工具跑完就结束回合，不再请求模型
+			r.Details = map[string]any{"view": viewDetails{Outcome: "rendered", Spec: spec}, "orynEndTurn": true}
+		}
+		return r
 	}
 	var title string
 	_ = json.Unmarshal(args["title"], &title)
