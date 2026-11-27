@@ -948,7 +948,7 @@ func TestRunnerLibraryPut(t *testing.T) {
 	var (
 		mu     sync.Mutex
 		seen   []apigen.LinkCtlLibraryPutParams
-		staged map[string]int
+		staged map[string][]int64
 	)
 	f.cp.extra = func(method string, params json.RawMessage) (any, bool, error) {
 		if method != string(apigen.MethodLibraryPut) {
@@ -999,7 +999,7 @@ func TestRunnerLibraryPut(t *testing.T) {
 	require.Len(t, seen, 1)
 	assert.Equal(t, report, seen[0].Path)
 	assert.Equal(t, thread1, seen[0].ThreadID)
-	assert.Equal(t, map[string]int{report: 1}, staged, "只登记这一个文件")
+	assert.Equal(t, map[string][]int64{report: {libraryMaxBytes}}, staged, "只登记这一个文件，上限是文件库的")
 	mu.Unlock()
 	f.rt.lib.mu.Lock()
 	assert.Empty(t, f.rt.lib.staged, "请求结束后撤销登记")

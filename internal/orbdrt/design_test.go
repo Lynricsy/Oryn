@@ -88,7 +88,7 @@ type cpFetch struct {
 	n   atomic.Int64
 }
 
-func (f *cpFetch) Fetch(ctx context.Context, _, path string) (io.ReadCloser, int64, error) {
+func (f *cpFetch) FetchLimit(ctx context.Context, _, path string, _ int64) (io.ReadCloser, int64, error) {
 	var res apigen.LinkCtlLibraryFetchResult
 	id := fmt.Sprintf("dsn-%d", f.n.Add(1))
 	if err := f.ctl().Call(ctx, string(apigen.MethodLibraryFetch), apigen.LinkCtlLibraryFetchParams{ID: id, Path: path}, &res); err != nil {

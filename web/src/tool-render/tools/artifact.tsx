@@ -56,6 +56,7 @@ export const ARTIFACT_TOOLS = [
 	"import_artifact",
 	"list_deleted_artifacts",
 	"restore_artifact",
+	"pull_artifact",
 ] as const;
 
 /** 会写入的工具（工具图标的类别色调用）。 */

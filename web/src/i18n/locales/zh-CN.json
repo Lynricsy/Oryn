@@ -4010,7 +4010,8 @@
 				"export_artifact": "导出 artifact",
 				"import_artifact": "导入 artifact",
 				"list_deleted_artifacts": "查看最近删除",
-				"restore_artifact": "恢复 artifact"
+				"restore_artifact": "恢复 artifact",
+				"pull_artifact": "取回文件"
 			}
 		},
 		"page": {

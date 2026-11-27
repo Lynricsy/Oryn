@@ -16,15 +16,16 @@ import type {
 	ExtensionAPI,
 	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { type FileHandle, mkdtemp, open, rename, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 const GUIDE = `# Oryn orb 环境
 你运行在 Oryn orb 中：一台 Arch Linux 系隔离机器（x64 官方 Arch，ARM64 为 Arch Linux ARM），用户 \`user\`（免密 sudo），仓库默认在 ~/workspace/repo。
-常见语言、编译工具、对应语言服务器（omp 的 lsp 工具可直接用）、网络诊断、数据处理，以及文档转换 / OCR / 图片 / 音视频 CLI（pandoc、LibreOffice、tesseract、ImageMagick、FFmpeg 等）和 numpy / pandas / matplotlib 等 Python 库已预装，先检查现有命令；系统包用 \`sudo pacman -Syu --needed --noconfirm <包名>\`，不要使用 apt 或 \`pacman -Sy\` 部分升级。已启用 BlackArch 源（安全工具，未预装；排在官方源之后，同名包取官方版本），其中的包同样这样安装。包版本清单在 \`/usr/local/share/oryn/packages.txt\`，从上游发行版安装的工具版本在 \`/usr/local/share/oryn/upstream-versions.txt\`。保留标准命令，不配置替换别名。
+常见语言、编译工具、对应语言服务器（omp 的 lsp 工具可直接用）、网络诊断、数据处理，以及文档转换 / OCR / 图片 / 音视频 CLI（pandoc、LibreOffice、tesseract、ImageMagick、FFmpeg 等）和 numpy / pandas / matplotlib / python-docx / openpyxl / python-pptx 等 Python 库已预装，先检查现有命令；系统包用 \`sudo pacman -Syu --needed --noconfirm <包名>\`，不要使用 apt 或 \`pacman -Sy\` 部分升级。已启用 BlackArch 源（安全工具，未预装；排在官方源之后，同名包取官方版本），其中的包同样这样安装。包版本清单在 \`/usr/local/share/oryn/packages.txt\`，从上游发行版安装的工具版本在 \`/usr/local/share/oryn/upstream-versions.txt\`。保留标准命令，不配置替换别名。
 orb 的环境由这些生命周期文件配置（仓库内 \`.agents/setup\`、\`.agents/resume\` 作为回退也会被读取）：
 - \`.oryn/setup\`：每台新 orb 首次就绪时运行一次。必须非交互、可重复执行（幂等）、结束时不留常驻进程，且不做任何认证。
 - \`.oryn/resume\`：首次激活与每次唤醒时运行，须在 10 秒内完成，只做快速、幂等的认证 / 重连 / 自检。
@@ -242,6 +243,7 @@ function registerDesktopRecord(pi: ExtensionAPI) {
 const ARTIFACT_GUIDE = `Artifacts：要给用户看的成品（报告、原型、设计稿、文档、幻灯片这类）做成 artifact，不要只写进回复或工作区文件。
 - 第一次做之前先调 read_artifact_guide（topic: "files"）读文件规则与限制。
 - 文档与幻灯片：create_artifact 带 type（"document" 写 document.md，"slides" 写 slides.json），不给 html；先读同名主题的教程。
+- Office 文件（Word / Excel / PowerPoint / PDF）：用户点名这些格式、要可下载的 Office 文件、或给了 Office 文件时，create_artifact 带 type（docx / xlsx / pptx / pdf，启用宏的用 docm / xlsm / pptm）并用 source 登记真实文件；表格数据一律 xlsx；其余文档与演示仍用 document / slides。动手前先读 oryn-office 技能。
 - 改已有的 artifact 之前先 read_artifact 读到当前内容与版本号，update_artifact 时带上 baseVersion；报 conflict 就重新读取，在新版本上再改。
 - 页面显示在隔离的沙箱里：不能用 localStorage / cookie / IndexedDB，访问不了你所在环境里的服务，外部资源只能来自教程里列出的 CDN。
 - 页面要保存用户产生的数据、读项目文件或向用户的模型提问时，用 capabilities 声明能力（db / files / sample），先读 read_artifact_guide（topic: "runtime"）；页面里的 oryn.use 可能返回 null，必须处理。页面的数据可以用 read_artifact_data / write_artifact_data 读写。
@@ -448,6 +450,121 @@ async function callArtifact(
 	} finally {
 		if (tmp.dir) {
 			await rm(tmp.dir, { recursive: true, force: true });
+		}
+	}
+}
+
+// PullPage 是 pull_artifact 操作一页结果的 text（JSON）：data 是 base64 的原始字节，next 为空串表示读完。
+interface PullPage {
+	id: string;
+	version: number;
+	path: string;
+	size: number;
+	sha256: string;
+	offset: number;
+	data: string;
+	next: string;
+}
+
+// pullArtifact 是扩展工具 pull_artifact：逐页调同名操作把文件写到 <to>.oryn-part，核对大小与 sha256 后改名为 to。
+// 第一页之后钉住第一页的版本与路径，取回中途有新版本也不会拼出混合的文件。to 已存在且没给 overwrite 时报错。
+async function pullArtifact(
+	sock: string,
+	params: Record<string, unknown>,
+	cwd: string,
+	signal: AbortSignal | undefined,
+): Promise<AgentToolResult> {
+	const op = "pull_artifact";
+	const fail = (code: string, message: string): AgentToolResult => ({
+		content: [{ type: "text", text: `${code}: ${message}` }],
+		isError: true,
+		details: { op, error: { code, message } },
+	});
+	const toParam = typeof params.to === "string" ? params.to.trim() : "";
+	if (toParam === "") {
+		return fail("invalid", "缺少 to：给出保存到本机的路径。");
+	}
+	const to = resolve(cwd, toParam);
+	if (params.overwrite !== true && existsSync(to)) {
+		return fail("invalid", `${to} 已存在；要覆盖就带 overwrite: true，或换一个路径。`);
+	}
+	const req: Record<string, unknown> = { id: params.id };
+	if (params.version !== undefined) {
+		req.version = params.version;
+	}
+	if (params.path !== undefined) {
+		req.path = params.path;
+	}
+	// 独占创建临时文件（"wx"）：已存在说明另一次取回正在写同一目标，或上次中断留下了残片；两种情况都不覆盖、不删除，
+	// 清理只针对这次创建成功的这个文件。
+	const part = `${to}.oryn-part`;
+	let file: FileHandle;
+	try {
+		file = await open(part, "wx", 0o644);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+			return fail("invalid", `临时文件 ${part} 已存在：另一次取回正在写同一目标，或上次取回中断留下了残片；确认没有取回在进行后删掉它再重试。`);
+		}
+		return fail("unavailable", `没能创建 ${part}（${err instanceof Error ? err.message : String(err)}）。`);
+	}
+	let fh: FileHandle | undefined = file;
+	let kept = false;
+	try {
+		const hash = createHash("sha256");
+		let first: PullPage | undefined;
+		let details: Record<string, unknown> = {};
+		let written = 0;
+		for (;;) {
+			const reply = await artifactSockCall(
+				sock,
+				{
+					method: "artifact.call",
+					params: { threadId: process.env.ORYN_THREAD_ID ?? "", op, params: req, ...(design.turn ? { turn: design.turn } : {}) },
+				},
+				signal,
+			);
+			if (!reply.ok) {
+				return fail(reply.code, reply.message);
+			}
+			const page = JSON.parse(reply.result.text) as PullPage;
+			if (!first) {
+				first = page;
+				details = reply.result.details ?? {};
+				req.version = page.version;
+				req.path = page.path;
+			}
+			if (page.offset !== written || page.version !== first.version || page.sha256 !== first.sha256) {
+				return fail("unavailable", `第 ${page.offset} 字节处的一页与前面的页对不上（已写 ${written} 字节），请重试。`);
+			}
+			const data = Buffer.from(page.data, "base64");
+			await file.write(data);
+			hash.update(data);
+			written += data.length;
+			if (page.next === "") {
+				break;
+			}
+			req.cursor = page.next;
+		}
+		await file.close();
+		fh = undefined;
+		const sum = hash.digest("hex");
+		if (!first) {
+			return fail("unavailable", "没有取到任何内容，请重试。");
+		}
+		if (written !== first.size || sum !== first.sha256) {
+			return fail("unavailable", `取回的文件与 artifact 不一致（${written} 字节、sha256 ${sum}；应为 ${first.size} 字节、${first.sha256}），请重试。`);
+		}
+		await rename(part, to);
+		kept = true;
+		const result = { id: first.id, version: first.version, path: first.path, to, size: written, sha256: sum };
+		return { content: [{ type: "text", text: JSON.stringify(result) }], details: { ...details, ...result, op } };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return fail("unavailable", `没能完成 ${op}（${message}）。`);
+	} finally {
+		await fh?.close().catch(() => {});
+		if (!kept) {
+			await rm(part, { force: true });
 		}
 	}
 }
@@ -907,7 +1024,7 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 			source: z
 				.string()
 				.optional()
-				.describe("你环境里一个文件的路径（相对路径按当前工作目录解析），用于大文件或二进制文件，单文件不超过 20 MiB；与 content 恰好给一个"),
+				.describe("你环境里一个文件的路径（相对路径按当前工作目录解析），用于大文件或二进制文件；Office 类型（docx 等）的入口文件不超过 256 MiB，其余单文件不超过 20 MiB；与 content 恰好给一个"),
 		};
 		// 参数逐字段对应控制面的解码结构（未知字段会被拒）。
 		const capabilities = z
@@ -920,11 +1037,16 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				name: "create_artifact",
 				label: "创建 artifact",
 				description:
-					"新建一个 artifact（给用户看的成品：页面、报告、原型、文档、幻灯片等），产生版本 1。单页给 html 即可；多文件用 files，并包含入口 index.html（画布是 canvas.json）。文档带 type: \"document\" 并在 files 里写 document.md，幻灯片带 type: \"slides\" 并写 slides.json，这两种不接受 html。返回 {id, version, pages, kind, url}。第一次做之前先读 read_artifact_guide（topic: files；文档、幻灯片读同名主题）。",
+					"新建一个 artifact（给用户看的成品：页面、报告、原型、文档、幻灯片、Office 文件等），产生版本 1。单页给 html 即可；多文件用 files，并包含入口 index.html（画布是 canvas.json）。文档带 type: \"document\" 并在 files 里写 document.md，幻灯片带 type: \"slides\" 并写 slides.json，这两种不接受 html。Office 文件带 type（docx / docm / xlsx / xlsm / pptx / pptm / pdf），files 恰好一项 {path: 入口文件名, source}（docx 是 document.docx，xlsx 是 workbook.xlsx，pptx 是 presentation.pptx，pdf 是 document.pdf），不给 html、content、capabilities。返回 {id, version, pages, kind, url}。第一次做之前先读 read_artifact_guide（topic: files；文档、幻灯片、Office 读同名主题）。",
 				parameters: z.object({
 					title: z.string().min(1).max(120).describe("标题（不超过 120 字）"),
-					type: z.enum(["document", "slides"]).optional().describe("类型化 artifact：document（Markdown 文档）或 slides（幻灯片）；普通页面与画布不给"),
-					html: z.string().optional().describe("入口 index.html 的内容；等价于 files 里的一项 {path: \"index.html\", content}；文档与幻灯片不能用"),
+					type: z
+						.enum(["document", "slides", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "pdf"])
+						.optional()
+						.describe(
+							"类型化 artifact：document（Markdown 文档）、slides（幻灯片），或 Office 文件 docx / docm（Word）、xlsx / xlsm（Excel）、pptx / pptm（PowerPoint）、pdf；普通页面与画布不给",
+						),
+					html: z.string().optional().describe("入口 index.html 的内容；等价于 files 里的一项 {path: \"index.html\", content}；文档、幻灯片与 Office 文件不能用"),
 					files: z.array(z.object(fileFields)).optional().describe("文件列表；html 与 files 至少给一个"),
 					capabilities,
 					note: z.string().max(200).optional().describe("这个版本的备注（不超过 200 字）"),
@@ -935,7 +1057,7 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				name: "read_artifact",
 				label: "读取 artifact",
 				description:
-					"读取 artifact 的元数据与一个文件的文本（缺省读入口文件，按字符分页）。结果第一行是 JSON（含 version、head、files、nextOffset），空一行后是文件文本。改之前先读，拿到 head 作为 update_artifact 的 baseVersion。",
+					"读取 artifact 的元数据与一个文件的文本（缺省读入口文件，按字符分页）。结果第一行是 JSON（含 version、head、files、nextOffset），空一行后是文件文本。改之前先读，拿到 head 作为 update_artifact 的 baseVersion。Office 文件只回元数据（binary: true），要处理内容用 pull_artifact 取回到本机。",
 				parameters: z.object({
 					id,
 					version: version.optional().describe("要读的版本，缺省最新"),
@@ -1032,9 +1154,9 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				name: "read_artifact_guide",
 				label: "artifact 教程",
 				description:
-					"读取做 artifact 的教程：files（文件规则、上限、可用的 CDN、沙箱限制、并发与冲突处理）、canvas（画布）、runtime（页面运行时 oryn.use 与 db / files / sample 能力）、document（Markdown 文档）、slides（幻灯片）。做第一个 artifact 之前先读 files。",
+					"读取做 artifact 的教程：files（文件规则、上限、可用的 CDN、沙箱限制、并发与冲突处理）、canvas（画布）、runtime（页面运行时 oryn.use 与 db / files / sample 能力）、document（Markdown 文档）、slides（幻灯片）、office（Word / Excel / PowerPoint / PDF 文件）。做第一个 artifact 之前先读 files。",
 				parameters: z.object({
-					topic: z.enum(["files", "canvas", "runtime", "document", "slides"]).describe("教程主题"),
+					topic: z.enum(["files", "canvas", "runtime", "document", "slides", "office"]).describe("教程主题"),
 				}),
 				loadMode: "essential",
 			},
@@ -1133,13 +1255,29 @@ function registerArtifacts(pi: ExtensionAPI): boolean {
 				}),
 				loadMode: "discoverable",
 			},
+			{
+				name: "pull_artifact",
+				label: "取回 artifact 文件",
+				description:
+					"把 artifact 的一个文件（缺省入口文件，例如 Office 文件本身）取回到你的环境：按页取回、核对大小与 sha256 后写到 to。修改 Office 文件之前先用它取回，在原文件上改，再用 update_artifact 的 source 写回。返回 {id, version, path, to, size, sha256}。",
+				parameters: z.object({
+					id,
+					version: version.optional().describe("要取的版本，缺省最新"),
+					path: z.string().optional().describe("要取的文件，缺省入口文件"),
+					to: z.string().min(1).describe("保存到的路径（相对路径按当前工作目录解析）"),
+					overwrite: z.boolean().optional().describe("为 true 时覆盖已存在的 to"),
+				}),
+				loadMode: "discoverable",
+			},
 		];
 		for (const tool of tools) {
 			pi.registerTool({
 				...tool,
 				approval: "read",
 				async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-					return callArtifact(sock, tool.name, params as Record<string, unknown>, ctx?.cwd || process.cwd(), signal);
+					const cwd = ctx?.cwd || process.cwd();
+					const p = params as Record<string, unknown>;
+					return tool.name === "pull_artifact" ? pullArtifact(sock, p, cwd, signal) : callArtifact(sock, tool.name, p, cwd, signal);
 				},
 			});
 		}

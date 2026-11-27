@@ -14,10 +14,11 @@ const (
 	GuideRuntime  = "runtime"
 	GuideDocument = "document"
 	GuideSlides   = "slides"
+	GuideOffice   = "office"
 )
 
 // guideTopics 是全部合法的主题（按说明顺序）。
-var guideTopics = []string{GuideFiles, GuideCanvas, GuideRuntime, GuideDocument, GuideSlides}
+var guideTopics = []string{GuideFiles, GuideCanvas, GuideRuntime, GuideDocument, GuideSlides, GuideOffice}
 
 // guides 是各主题的教程（guideTopics 的每个主题都有一篇）。
 var guides = map[string]string{
@@ -26,6 +27,7 @@ var guides = map[string]string{
 	GuideRuntime:  guideRuntime,
 	GuideDocument: guideDocument,
 	GuideSlides:   guideSlides,
+	GuideOffice:   guideOffice,
 }
 
 // guideFiles 是 files 主题：artifact 的文件、上限、沙箱与改动流程。

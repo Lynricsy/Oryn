@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -13,15 +14,16 @@ import (
 )
 
 const (
-	// artifactSourceMaxBytes 是 artifact 单个 source 文件的上限（同控制面 artifacts.MaxFileBytes）。
-	artifactSourceMaxBytes = 20 << 20
+	// artifactSourceMaxBytes 是 artifact 单个 source 文件的上限（同控制面 artifacts.MaxOfficeFileBytes；普通文件的
+	// 20 MiB 由控制面按目标文件再判）。
+	artifactSourceMaxBytes = 256 << 20
 	// artifactCallTimeout 是 artifact.call 的转发上限：控制面在这次请求里还要经 library.fetch 取回全部 source。
 	artifactCallTimeout = 10 * time.Minute
 )
 
 // artifactCall 处理 orbd.sock 的 artifact.call（M14）：校验 params.htmlSource 与 params.files[*].source（orb 内的
-// 绝对路径、不超过 20 MiB 的普通文件），转发期间把它们登记为可经 library.fetch 取回，再转成 ctl artifact.call。
-// 路径改写成 Clean 之后的形式，控制面取回时用的就是登记的那个。
+// 绝对路径、不超过 artifactSourceMaxBytes 的普通文件），转发期间把它们登记为可经 library.fetch 取回，再转成 ctl
+// artifact.call。路径改写成 Clean 之后的形式，控制面取回时用的就是登记的那个。
 func (r *Runtime) artifactCall(ctx context.Context, params json.RawMessage) (any, error) {
 	var p apigen.LinkCtlArtifactCallParams
 	if err := decodeSock(params, &p); err != nil {
@@ -31,7 +33,7 @@ func (r *Runtime) artifactCall(ctx context.Context, params json.RawMessage) (any
 	if err != nil {
 		return nil, err
 	}
-	defer r.stageLibraryPaths(sources)()
+	defer r.stageLibraryPaths(sources, artifactSourceMaxBytes)()
 	return r.ctlForwardFor(ctx, apigen.MethodArtifactCall, p, artifactCallTimeout)
 }
 
@@ -91,24 +93,32 @@ func artifactSource(where string, raw any) (string, error) {
 	return src, nil
 }
 
-// stageLibraryPaths 把 paths 登记为可经 library.fetch 取回（与 library.put 共用并发计数），返回撤销函数。
-func (r *Runtime) stageLibraryPaths(paths []string) func() {
+// stageLibraryPaths 把 paths 登记为可经 library.fetch 取回（与 library.put 共用登记），每条登记带取回时的大小上限
+// max；返回撤销函数。同一路径同时有几条登记时，取回按其中最大的上限。
+func (r *Runtime) stageLibraryPaths(paths []string, max int64) func() {
 	if len(paths) == 0 {
 		return func() {}
 	}
 	r.lib.mu.Lock()
 	if r.lib.staged == nil {
-		r.lib.staged = map[string]int{}
+		r.lib.staged = map[string][]int64{}
 	}
 	for _, p := range paths {
-		r.lib.staged[p]++
+		r.lib.staged[p] = append(r.lib.staged[p], max)
 	}
 	r.lib.mu.Unlock()
 	return func() {
 		r.lib.mu.Lock()
 		for _, p := range paths {
-			if r.lib.staged[p]--; r.lib.staged[p] <= 0 {
+			// 不就地改：免得改到别处还拿着的旧切片
+			limits := slices.Clone(r.lib.staged[p])
+			if i := slices.Index(limits, max); i >= 0 {
+				limits = slices.Delete(limits, i, i+1)
+			}
+			if len(limits) == 0 {
 				delete(r.lib.staged, p)
+			} else {
+				r.lib.staged[p] = limits
 			}
 		}
 		r.lib.mu.Unlock()

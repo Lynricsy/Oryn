@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,6 +38,7 @@ const (
 	OpScreenshot      = "screenshot_artifact"
 	OpReadData        = "read_artifact_data"
 	OpWriteData       = "write_artifact_data"
+	OpPull            = "pull_artifact"
 	listDefaultLimit  = 50
 	listMaxLimit      = 200
 	deletedThreadName = "已删除的线程"
@@ -121,6 +124,8 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 		return s.agentReadData(ctx, c, params)
 	case OpWriteData:
 		return s.agentWriteData(ctx, c, params)
+	case OpPull:
+		return s.agentPull(ctx, c, params)
 	case OpCheck:
 		return s.agentCheckArtifact(ctx, c, params)
 	case OpDesignDirections:
@@ -139,7 +144,7 @@ func (s *Service) Call(ctx context.Context, c Caller, op string, params json.Raw
 	default:
 		return Result{}, opErr(CodeInvalid, "没有操作 %q。可用的操作：%s。", op,
 			strings.Join([]string{OpCreate, OpRead, OpUpdate, OpList, OpDelete, OpListVersions, OpRestoreVersion, OpReadGuide,
-				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData, OpCheck,
+				OpReadComments, OpReplyComment, OpResolveComment, OpScreenshot, OpReadData, OpWriteData, OpPull, OpCheck,
 				OpDesignDirections, OpDesignDirection, OpDesignNotes, OpDesignResolveNote}, "、"))
 	}
 }
@@ -317,15 +322,49 @@ func inlineTooLarge(path string) *OpError {
 		path, MaxInlineBytes>>20, MaxFileBytes>>20)
 }
 
-func sourceTooLarge(path string) *OpError {
-	return opErr(CodeTooLarge, "source %s 超过单文件上限 %d MiB。请拆小或压缩后再写入。", path, MaxFileBytes>>20)
+func sourceTooLarge(path string, limit int64) *OpError {
+	return opErr(CodeTooLarge, "source %s 超过单文件上限 %d MiB。请拆小或压缩后再写入。", path, limit>>20)
+}
+
+// sourceLimit 是写到 artifact 文件 path 的 source 的上限：二进制（Office）类型的入口用 MaxOfficeFileBytes，其余 MaxFileBytes。
+func sourceLimit(typ, path string) int64 {
+	if IsBinaryType(typ) && path == TypeEntry(typ) {
+		return MaxOfficeFileBytes
+	}
+	return MaxFileBytes
+}
+
+// binaryArgsErr 检查二进制（Office）类型的写入参数：不接受 html 与 capabilities，files 只能是用 source 写入口这一项
+// （files 为空时不在这里报错）。不合规时返回指明正确写法的 invalid。
+func binaryArgsErr(typ string, html, caps bool, files []fileParam) error {
+	label, entry := typeLabel(typ), TypeEntry(typ)
+	how := fmt.Sprintf("先在你的环境里做好文件，再用 files: [{path: %q, source: \"<文件路径>\"}] 登记（见 read_artifact_guide 的 office 主题）。", entry)
+	switch {
+	case html:
+		return opErr(CodeInvalid, "%s artifact 不接受 html；%s", label, how)
+	case caps:
+		return opErr(CodeInvalid, "%s artifact 不接受 capabilities；%s", label, how)
+	case len(files) == 0:
+		return nil
+	case len(files) > 1 || files[0].Path != entry:
+		return opErr(CodeInvalid, "%s artifact 只能有 %s 这一个文件；%s", label, entry, how)
+	case files[0].Remove:
+		return opErr(CodeInvalid, "%s artifact 不能删除 %s；要换内容就用 source 写入新文件。", label, entry)
+	case files[0].Content != nil:
+		return opErr(CodeInvalid, "%s 是二进制 Office 文件，不能用 content 内联；%s", entry, how)
+	case files[0].Source == nil:
+		return opErr(CodeInvalid, "%s artifact 必须用 source 写入 %s；%s", label, entry, how)
+	}
+	return nil
 }
 
 // sourceReader 在第一次 Read 时才取回 source（写入是逐个文件流式落盘的，同一时刻只开一个），读完即关闭。
+// limit 是这个 source 的大小上限（见 sourceLimit）。
 type sourceReader struct {
 	ctx   context.Context
 	fetch func(ctx context.Context, path string) (io.ReadCloser, int64, error)
 	path  string
+	limit int64
 	rc    io.ReadCloser
 	done  bool
 }
@@ -340,10 +379,10 @@ func (r *sourceReader) Read(p []byte) (int, error) {
 			r.done = true
 			return 0, sourceErr(r.path, err)
 		}
-		if size > MaxFileBytes {
+		if size > r.limit {
 			_ = rc.Close()
 			r.done = true
-			return 0, sourceTooLarge(r.path)
+			return 0, sourceTooLarge(r.path, r.limit)
 		}
 		r.rc = rc
 	}
@@ -382,20 +421,20 @@ func fetchAll(ctx context.Context, c Caller, path string) ([]byte, error) {
 	}
 	defer rc.Close()
 	if size > MaxFileBytes {
-		return nil, sourceTooLarge(path)
+		return nil, sourceTooLarge(path, MaxFileBytes)
 	}
 	b, err := io.ReadAll(io.LimitReader(rc, MaxFileBytes+1))
 	if err != nil {
 		return nil, sourceErr(path, err)
 	}
 	if len(b) > MaxFileBytes {
-		return nil, sourceTooLarge(path)
+		return nil, sourceTooLarge(path, MaxFileBytes)
 	}
 	return b, nil
 }
 
-// changes 把待写文件变成 FileChange；返回的 closer 关闭全部还开着的 source。
-func changes(ctx context.Context, c Caller, ps []*pending) ([]FileChange, func()) {
+// changes 把待写文件变成 FileChange（typ 是 artifact 的类型，决定 source 的上限）；返回的 closer 关闭全部还开着的 source。
+func changes(ctx context.Context, c Caller, ps []*pending, typ string) ([]FileChange, func()) {
 	out := make([]FileChange, 0, len(ps))
 	var readers []*sourceReader
 	for _, p := range ps {
@@ -403,7 +442,7 @@ func changes(ctx context.Context, c Caller, ps []*pending) ([]FileChange, func()
 		case p.remove:
 			out = append(out, FileChange{Path: p.path, Remove: true})
 		case p.source != "":
-			r := &sourceReader{ctx: ctx, fetch: c.Fetch, path: p.source}
+			r := &sourceReader{ctx: ctx, fetch: c.Fetch, path: p.source, limit: sourceLimit(typ, p.path)}
 			readers = append(readers, r)
 			out = append(out, FileChange{Path: p.path, Data: r})
 		default:
@@ -432,7 +471,15 @@ func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMess
 	if err := decodeParams(params, &p); err != nil {
 		return Result{}, err
 	}
-	if p.Type != "" && TypeEntry(p.Type) != "" && p.given() {
+	if IsBinaryType(p.Type) {
+		if err := binaryArgsErr(p.Type, p.given(), p.Capabilities != nil, p.Files); err != nil {
+			return Result{}, err
+		}
+		if len(p.Files) == 0 {
+			return Result{}, opErr(CodeInvalid, "%s artifact 要用 files 恰好给一项 {path: %q, source: \"<文件路径>\"}（见 read_artifact_guide 的 office 主题）。",
+				typeLabel(p.Type), TypeEntry(p.Type))
+		}
+	} else if p.Type != "" && TypeEntry(p.Type) != "" && p.given() {
 		return Result{}, typedHTMLErr(p.Type)
 	}
 	if !p.given() && len(p.Files) == 0 {
@@ -456,7 +503,7 @@ func (s *Service) agentCreate(ctx context.Context, c Caller, params json.RawMess
 	if err != nil {
 		return Result{}, err
 	}
-	files, closeAll := changes(ctx, c, ps)
+	files, closeAll := changes(ctx, c, ps, p.Type)
 	defer closeAll()
 	a, err := s.Create(ctx, CreateParams{
 		Title: p.Title, Type: p.Type, ProjectID: deref(project), ThreadID: c.ThreadID, Origin: OriginAgent,
@@ -600,6 +647,79 @@ func pageRunes(b []byte, offset, limit int) (text string, next int, err error) {
 	return string(b[i:j]), next, nil
 }
 
+type pullArgs struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Path    string `json:"path"`
+	Cursor  string `json:"cursor"`
+}
+
+// agentPull 按字节分页取回 artifact 的一个文件（缺省入口）：每页不超过 PullPageBytes 原始字节，data 是它的 base64；
+// cursor 是十进制字节偏移（上一页的 next），读完时 next 为空串。访问范围同 read_artifact。
+func (s *Service) agentPull(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
+	var p pullArgs
+	if err := decodeParams(params, &p); err != nil {
+		return Result{}, err
+	}
+	if p.Version < 0 {
+		return Result{}, opErr(CodeInvalid, "version 不能是负数；不给表示最新版本。")
+	}
+	var off int64
+	if p.Cursor != "" {
+		n, err := strconv.ParseInt(p.Cursor, 10, 64)
+		if err != nil || n < 0 {
+			return Result{}, opErr(CodeInvalid, "cursor %q 不对：给上一页结果里的 next（十进制字节偏移），第一页不给。", p.Cursor)
+		}
+		off = n
+	}
+	a, err := s.lookup(ctx, c, p.ID, true)
+	if err != nil {
+		return Result{}, err
+	}
+	v, err := s.Version(ctx, a.ID, p.Version)
+	if err != nil {
+		return Result{}, err
+	}
+	if p.Path == "" {
+		p.Path = a.Entry()
+	}
+	rc, f, err := s.Open(ctx, a.ID, v.Version, p.Path)
+	if oe, ok := AsOpError(err); ok && oe.Code == CodeNotFound {
+		return Result{}, opErr(CodeInvalid, "版本 %d 里没有文件 %s。path 取 read_artifact 返回的 files 里的路径；不给表示入口文件。", v.Version, p.Path)
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	defer rc.Close()
+	if off > f.Size {
+		return Result{}, opErr(CodeInvalid, "cursor %d 超出了文件长度（%d 字节）。", off, f.Size)
+	}
+	if _, err := rc.Seek(off, io.SeekStart); err != nil {
+		return Result{}, err
+	}
+	buf := make([]byte, min(f.Size-off, PullPageBytes))
+	if _, err := io.ReadFull(rc, buf); err != nil {
+		return Result{}, fmt.Errorf("artifacts: 读 %s 版本 %d 的 %s: %w", a.ID, v.Version, p.Path, err)
+	}
+	next := ""
+	if end := off + int64(len(buf)); end < f.Size {
+		next = strconv.FormatInt(end, 10)
+	}
+	out := obj{
+		"id": a.ID, "version": v.Version, "path": p.Path, "size": f.Size, "sha256": f.Sha256, "offset": off,
+		"data": base64.StdEncoding.EncodeToString(buf), "next": next,
+	}
+	text, err := json.Marshal(out)
+	if err != nil {
+		return Result{}, err
+	}
+	// 转录卡片不带 data：字节只给模型或调用方
+	return Result{Text: string(text), Details: obj{
+		"op": OpPull, "id": a.ID, "title": a.Title, "kind": a.Kind, "version": v.Version, "path": p.Path,
+		"size": f.Size, "offset": off, "next": next,
+	}}, nil
+}
+
 type editArg struct {
 	Path    string `json:"path"`
 	OldText string `json:"oldText"`
@@ -642,6 +762,17 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if !content {
 		return Result{}, opErr(CodeInvalid, "没有任何改动。给 html、files、edits 或 capabilities；只改标题时给 title。")
 	}
+	if IsBinaryType(a.Type) {
+		switch {
+		case len(p.Edits) > 0:
+			return Result{}, opErr(CodeInvalid, "%s artifact 是二进制文件，不能用 edits：先 pull_artifact 取回到你的环境，在原文件上改好，再用 files: [{path: %q, source: \"<文件路径>\"}] 写回。", typeLabel(a.Type), a.Entry())
+		case hasCanvas:
+			return Result{}, opErr(CodeInvalid, "%s 不是画布 artifact，不能用 canvas 操作。改它请用 files: [{path: %q, source: \"<文件路径>\"}]。", a.ID, a.Entry())
+		}
+		if err := binaryArgsErr(a.Type, p.given(), hasCaps, p.Files); err != nil {
+			return Result{}, err
+		}
+	}
 	if hasCaps && hasCanvas {
 		return Result{}, opErr(CodeInvalid, "capabilities 不能和 canvas 操作一起给。先用 canvas 改布局，再另调一次 update_artifact 改能力声明。")
 	}
@@ -675,7 +806,7 @@ func (s *Service) agentUpdate(ctx context.Context, c Caller, params json.RawMess
 	if hasCanvas && slices.ContainsFunc(ps, func(f *pending) bool { return f.path == EntryCanvas }) {
 		return Result{}, opErr(CodeInvalid, "同一次调用里不能既给 canvas 操作又改 canvas.json（files 或 edits）。只用 canvas 操作改布局，或者分两次调用。")
 	}
-	files, closeAll := changes(ctx, c, ps)
+	files, closeAll := changes(ctx, c, ps, a.Type)
 	defer closeAll()
 	var r Artifact
 	if hasCanvas {
@@ -938,9 +1069,9 @@ type OrbLinks interface {
 	HandleRequest(method string, fn orbs.RequestFunc)
 }
 
-// SourceFetcher 经 library.fetch 从 orb 取回文件字节（*library.Syncer 实现）。
+// SourceFetcher 经 library.fetch 从 orb 取回文件字节（*library.Syncer 实现）；大于 max 字节的报 library.ErrTooLarge。
 type SourceFetcher interface {
-	Fetch(ctx context.Context, orbID, path string) (io.ReadCloser, int64, error)
+	FetchLimit(ctx context.Context, orbID, path string, max int64) (io.ReadCloser, int64, error)
 }
 
 // orbCallParams 是 artifact.call 的参数（params 保持原样，交给 Call 严格解码）。Turn 可选：orb 扩展每次调用都带
@@ -1034,10 +1165,11 @@ func (s *Service) orbCaller(ctx context.Context, fetch SourceFetcher, orbID, thr
 	}
 	return Caller{
 		ThreadID: t.ID, Label: label, ProjectID: t.ProjectID, Scope: scope, Internal: !orbs.IsRunner(o),
+		// 上限取 Office 文件的上限：source 按它要写到的文件逐个再判（sourceLimit），普通文件仍是 MaxFileBytes。
 		Fetch: func(ctx context.Context, path string) (io.ReadCloser, int64, error) {
-			rc, size, err := fetch.Fetch(ctx, orbID, path)
+			rc, size, err := fetch.FetchLimit(ctx, orbID, path, MaxOfficeFileBytes)
 			if errors.Is(err, library.ErrTooLarge) {
-				return nil, 0, sourceTooLarge(path)
+				return nil, 0, sourceTooLarge(path, MaxOfficeFileBytes)
 			}
 			var ce *link.CtlError
 			if errors.As(err, &ce) {
@@ -1045,10 +1177,6 @@ func (s *Service) orbCaller(ctx context.Context, fetch SourceFetcher, orbID, thr
 			}
 			if err != nil {
 				return nil, 0, err
-			}
-			if size > MaxFileBytes {
-				_ = rc.Close()
-				return nil, 0, sourceTooLarge(path)
 			}
 			return rc, size, nil
 		},

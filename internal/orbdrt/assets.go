@@ -43,6 +43,28 @@ var designNotice []byte
 //go:embed assets/oryn-design/SKILL-runner.md
 var runnerDesignSkill []byte
 
+// officeSkill 与 runnerOfficeSkill 是 Office 文件技能 oryn-office（M31）：orb 写到 $HOME/.agents/skills/oryn-office/，
+// runner 写到 $HOME/.oryn/omp/agent/skills/oryn-office/（SKILL-runner.md 作 SKILL.md，开头先检查本机工具）。
+// scripts/ 下的脚本两边共用，以 0644 落盘，技能里一律写成 bash …/render.sh、python …/recalc.py 这样经解释器调用。
+//
+//go:embed assets/oryn-office/SKILL.md
+var officeSkill []byte
+
+//go:embed assets/oryn-office/SKILL-runner.md
+var runnerOfficeSkill []byte
+
+//go:embed assets/oryn-office/scripts/render.sh
+var officeRenderScript []byte
+
+//go:embed assets/oryn-office/scripts/recalc.py
+var officeRecalcScript []byte
+
+//go:embed assets/oryn-office/scripts/unpack.py
+var officeUnpackScript []byte
+
+//go:embed assets/oryn-office/scripts/pack.py
+var officePackScript []byte
+
 // openboxRC 是写到 $HOME/.oryn/desktop/openbox-rc.xml 的窗口管理器配置（M8，仅桌面启用时）。
 //
 //go:embed assets/openbox-rc.xml

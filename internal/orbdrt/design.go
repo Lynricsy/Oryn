@@ -1321,7 +1321,7 @@ func (r *Runtime) designCall(ctx context.Context, threadID string, turn *designT
 	if err != nil {
 		return err
 	}
-	defer r.stageLibraryPaths(sources)()
+	defer r.stageLibraryPaths(sources, artifactSourceMaxBytes)()
 	raw, err := r.ctlForwardFor(ctx, apigen.MethodArtifactCall, p, artifactCallTimeout)
 	if err != nil {
 		return err

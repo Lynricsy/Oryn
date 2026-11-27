@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/library"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -342,10 +343,13 @@ func (f fakeLinks) HandleRequest(method string, fn orbs.RequestFunc) { f[method]
 // fakeSource 按 orb 与路径取字节。
 type fakeSource map[string]string
 
-func (f fakeSource) Fetch(_ context.Context, orbID, path string) (io.ReadCloser, int64, error) {
+func (f fakeSource) FetchLimit(_ context.Context, orbID, path string, max int64) (io.ReadCloser, int64, error) {
 	s, ok := f[orbID+":"+path]
 	if !ok {
 		return nil, 0, &link.CtlError{Code: "not_found", Message: "no such file"}
+	}
+	if int64(len(s)) > max {
+		return nil, 0, library.ErrTooLarge
 	}
 	return io.NopCloser(strings.NewReader(s)), int64(len(s)), nil
 }

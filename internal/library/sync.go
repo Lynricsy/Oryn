@@ -209,9 +209,14 @@ func (y *Syncer) push(ctx context.Context, orbID string, f File) error {
 	return nil
 }
 
-// Fetch 让 orbID 经 library.fetch 回传 path 的字节。返回的读取器恰好给出 size 字节（流提前结束时报
-// io.ErrUnexpectedEOF），调用方必须关闭。orbd 拒绝时返回其 *link.CtlError（invalid_params、not_found…）。
+// Fetch 让 orbID 经 library.fetch 回传 path 的字节，上限是文件库的单文件上限（attachments.MaxBytes），见 FetchLimit。
 func (y *Syncer) Fetch(ctx context.Context, orbID, path string) (io.ReadCloser, int64, error) {
+	return y.FetchLimit(ctx, orbID, path, attachments.MaxBytes)
+}
+
+// FetchLimit 让 orbID 经 library.fetch 回传 path 的字节；大于 max 字节时报 ErrTooLarge。返回的读取器恰好给出 size 字节
+// （流提前结束时报 io.ErrUnexpectedEOF），调用方必须关闭。orbd 拒绝时返回其 *link.CtlError（invalid_params、not_found…）。
+func (y *Syncer) FetchLimit(ctx context.Context, orbID, path string, max int64) (io.ReadCloser, int64, error) {
 	ctl, ok := y.links.Ctl(orbID)
 	if !ok {
 		return nil, 0, ErrHostUnavailable
@@ -242,9 +247,9 @@ func (y *Syncer) Fetch(ctx context.Context, orbID, path string) (io.ReadCloser, 
 	select {
 	case f := <-w.ch:
 		r := &fetchReader{f: f, r: io.LimitReader(f.st, res.Size), want: res.Size}
-		if res.Size > attachments.MaxBytes || f.st.Header.Size != res.Size {
+		if res.Size > max || f.st.Header.Size != res.Size {
 			_ = r.Close()
-			if res.Size > attachments.MaxBytes {
+			if res.Size > max {
 				return nil, 0, ErrTooLarge
 			}
 			return nil, 0, fmt.Errorf("library: stream size %d does not match %d", f.st.Header.Size, res.Size)

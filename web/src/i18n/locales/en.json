@@ -4010,7 +4010,8 @@
 				"export_artifact": "Export artifact",
 				"import_artifact": "Import artifact",
 				"list_deleted_artifacts": "List recently deleted",
-				"restore_artifact": "Restore artifact"
+				"restore_artifact": "Restore artifact",
+				"pull_artifact": "Pull file"
 			}
 		},
 		"page": {

@@ -48,8 +48,8 @@ type libraryState struct {
 	wanted map[string]apigen.LinkCtlLibrarySyncFile
 	// stamps 记下本进程写入或校验过的文件（相对路径 → 大小、修改时间与摘要），同步时未变的文件不再重算摘要。
 	stamps map[string]libStamp
-	// staged 是普通 orbd 上正在经 library.put 存入的绝对路径（→ 并发计数）。
-	staged map[string]int
+	// staged 是普通 orbd 上正在经 library.put（或 artifact.call 的 source）登记为可取回的绝对路径 → 每条登记的大小上限。
+	staged map[string][]int64
 }
 
 type libStamp struct {
@@ -337,6 +337,7 @@ func (r *Runtime) libraryFetch(ctx context.Context, c *conn, p apigen.LinkCtlLib
 		return apigen.LinkCtlLibraryFetchResult{}, ctlErr(link.CodeInvalidParams, "invalid id")
 	}
 	var path string
+	max := int64(libraryMaxBytes)
 	if r.cfg.Coordinator {
 		var err error
 		if path, err = r.libraryFetchPath(p.Path); err != nil {
@@ -344,12 +345,12 @@ func (r *Runtime) libraryFetch(ctx context.Context, c *conn, p apigen.LinkCtlLib
 		}
 	} else {
 		r.lib.mu.Lock()
-		staged := r.lib.staged[p.Path] > 0
+		limits := r.lib.staged[p.Path]
 		r.lib.mu.Unlock()
-		if !staged {
+		if len(limits) == 0 {
 			return apigen.LinkCtlLibraryFetchResult{}, ctlErr("not_found", "%s is not being saved to the library", p.Path)
 		}
-		path = p.Path
+		path, max = p.Path, slices.Max(limits)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -360,9 +361,9 @@ func (r *Runtime) libraryFetch(ctx context.Context, c *conn, p apigen.LinkCtlLib
 		f.Close()
 		return apigen.LinkCtlLibraryFetchResult{}, ctlErr("not_found", "%s is not a regular file", p.Path)
 	}
-	if fi.Size() > libraryMaxBytes {
+	if fi.Size() > max {
 		f.Close()
-		return apigen.LinkCtlLibraryFetchResult{}, ctlErr(link.CodeInvalidParams, "%s exceeds %d bytes", p.Path, libraryMaxBytes)
+		return apigen.LinkCtlLibraryFetchResult{}, ctlErr(link.CodeInvalidParams, "%s exceeds %d bytes", p.Path, max)
 	}
 	octx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	st, err := c.sess.Open(octx, link.StreamHeader{T: link.StreamLibrary, ID: p.ID, Size: fi.Size()})
@@ -410,7 +411,7 @@ func (r *Runtime) libraryPut(ctx context.Context, params json.RawMessage) (any, 
 	if fi.Size() > libraryMaxBytes {
 		return nil, orbsock.Errorf(orbsock.CodeInvalidParams, "%s exceeds %d bytes", p.Path, libraryMaxBytes)
 	}
-	defer r.stageLibraryPaths([]string{p.Path})()
+	defer r.stageLibraryPaths([]string{p.Path}, libraryMaxBytes)()
 	return r.ctlForwardFor(ctx, apigen.MethodLibraryPut, p, libraryPutTimeout)
 }
 

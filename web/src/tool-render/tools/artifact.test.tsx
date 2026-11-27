@@ -31,7 +31,7 @@ function card(op: string, extra: Record<string, unknown> = {}) {
 
 describe("artifact 工具渲染器", () => {
 	it("「agent 工具」表里的全部工具都注册到它", () => {
-		expect(ARTIFACT_TOOLS).toHaveLength(18);
+		expect(ARTIFACT_TOOLS).toHaveLength(19);
 		for (const name of ARTIFACT_TOOLS)
 			expect(resolveToolRenderer(name)).toBe(artifactRenderer);
 	});

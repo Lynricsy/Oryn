@@ -218,7 +218,7 @@ func (s *Service) agentSealDesign(ctx context.Context, c Caller, params json.Raw
 	if err := canvas.ApplySeal(&doc, sealOps(doc, frames)); err != nil {
 		return Result{}, canvasOpsErr(err)
 	}
-	files, closeAll := changes(ctx, c, ps)
+	files, closeAll := changes(ctx, c, ps, a.Type)
 	defer closeAll()
 	r, err := s.writeCanvas(ctx, a.ID, head.Version, doc, nil, c.author(), c.Turn, "", files)
 	if err != nil {
