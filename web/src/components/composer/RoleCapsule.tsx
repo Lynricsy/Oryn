@@ -417,6 +417,14 @@ export function RoleCapsule({
 						face: <AssistantFace size={18} />,
 						model: assistantDefaultModel,
 						hint: t("roleCapsule.assistantHint"),
+						// 全局助手与 role 同列、头像也相似：名字后加主题色闪光标记；改过名时再写出「助手」
+						mark: {
+							label: t("tabBar.assistant"),
+							text:
+								assistantName === t("tabBar.assistant")
+									? undefined
+									: t("modelPicker.assistantMark"),
+						},
 						level:
 							value.kind === "assistant"
 								? shownLevel

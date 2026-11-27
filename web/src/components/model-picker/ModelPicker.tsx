@@ -70,6 +70,11 @@ export interface PickerEntry {
 	hint?: string;
 	/** 名字后的小徽标（如「默认」） */
 	badge?: string;
+	/**
+	 * 特殊对象的强调标记（全局助手）：主题色的闪光小徽标。`label` 作悬停提示；
+	 * `text` 是徽标里的字，名字本身已说明身份时省略（只剩图标，免得重复）
+	 */
+	mark?: { label: string; text?: string };
 	/** 不能选的原因：行置灰、悬停提示 */
 	problem?: string;
 	/** 收进「更多角色」 */
@@ -99,6 +104,25 @@ export function targetKey(t: PickTarget): string {
 	if (t.kind === "entry") return entryKey(t.entry.key);
 	if (t.kind === "model") return modelKey(t.model);
 	return customKey(t.value);
+}
+
+/** 对象行与检视栏名字后的强调标记（见 `PickerEntry.mark`）；装饰，读屏名由行名与 `title` 承担。 */
+function EntryMark({
+	mark,
+}: {
+	mark: NonNullable<PickerEntry["mark"]>;
+}): ReactNode {
+	return (
+		<span
+			aria-hidden
+			title={mark.label}
+			data-entry-mark=""
+			className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded-xs bg-accent-soft px-1 text-2xs text-accent-ink leading-4"
+		>
+			<Icon name="sparkle" size={10} weight="fill" />
+			{mark.text}
+		</span>
+	);
 }
 
 /** 目录里的对话模型 → 选择器的模型行。 */
@@ -462,6 +486,7 @@ export function ModelPicker({
 						>
 							{e.name}
 						</span>
+						{e.mark && <EntryMark mark={e.mark} />}
 						{e.badge && (
 							<span className="shrink-0 rounded-xs bg-inset px-1 text-2xs text-muted leading-4">
 								{e.badge}
@@ -858,6 +883,7 @@ function Inspector({
 					<span className="min-w-0 truncate font-semibold text-sm">
 						{target.entry.name}
 					</span>
+					{target.entry.mark && <EntryMark mark={target.entry.mark} />}
 				</div>
 			) : (
 				<div className="flex min-w-0 items-center gap-2">

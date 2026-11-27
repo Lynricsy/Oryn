@@ -267,6 +267,7 @@
 		"searchPattern": "Search or enter a model pattern (provider/id, wildcard, @role)",
 		"use": "Use {{model}}",
 		"default": "Default",
+		"assistantMark": "Assistant",
 		"groups": "Groups",
 		"entries": "Targets",
 		"frequent": "Frequent",

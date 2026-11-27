@@ -267,6 +267,7 @@
 		"searchPattern": "搜索或输入模型模式（provider/id、通配、@角色）",
 		"use": "使用 {{model}}",
 		"default": "默认",
+		"assistantMark": "助手",
 		"groups": "分组",
 		"entries": "对象",
 		"frequent": "常用",
