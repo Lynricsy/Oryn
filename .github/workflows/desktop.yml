@@ -259,6 +259,8 @@ jobs:
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # beforeBuildCommand（build:launcher）的 `tsc -b` 峰值约 3 GB，macOS 机器上 Node 按物理内存算出的默认堆上限不够（OOM，同 mobile.yml）
+          NODE_OPTIONS: --max-old-space-size=6144
           # 只有「签名配置」判定启用的那一组才取 secret 的值，其余为空（包装脚本不导出空值）；非发布运行全部为空
           ORYN_SIGN_TAURI_SIGNING_PRIVATE_KEY: ${{ steps.sign.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           ORYN_SIGN_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.sign.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
