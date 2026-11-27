@@ -24,7 +24,7 @@
 ## 已定决策（主人确认）
 
 - D1 粒度：**方案组**。一个方案组里有 2–4 个方案；每个方案是一组帧（可以只有首屏），可以各带一套 token。
-- D2 选定之后：落选方案的画框移到「备选方案」画布页保留。导出、eject、部署、原型、样机的缺省范围都排除它们。选中方案的 token 由 agent 提升为主题。
+- D2 选定之后：落选方案的画框移到「备选方案」画布页保留。导出、eject、部署、原型、样机一律排除它们（不是缺省排除：显式点名也拒绝，源码也不打包）。选中方案的 token 由 agent 提升为主题。
 - D3 模型可以主动出多版：方向不确定、需求模糊或有明显取舍时，主动出 2–3 版并说明差别。结构、文案、交互上的方案都算。
 - D4 范围：TSX 设计画布（orb 线程）与 HTML 画框画布（全局助手、Runner）都做。
 
@@ -147,19 +147,21 @@
 
 ### C6 交付范围
 
-落选画框的排除规则：
+落选画框一律排除，不只是缺省不选。想交付落选方案，就先在画布上改选它。
 
 | 交付物 | 规则 |
 |---|---|
-| 样机导出（后端 `selectMockupPages`） | 不传 `frames` 时排除落选画框 |
-| `MockupDialog` | 落选画框缺省不勾选，仍可手动选 |
-| 导出工程、eject、部署 | 落选帧不写进 `oryn-frames.json` 的 `frames`，而是写进新字段 `hidden: string[]`；`eject/main.tsx` 的 `collectFrames` 跳过 `hidden` |
-| 原型 | `resolveStartPage` 与原型可达的帧都排除落选画框 |
+| 样机导出（后端 `selectMockupPages`） | 不传 `frames` 时排除落选画框；显式 `frames` 里含落选画框时回 invalid：「<画框名> 是方案组『X』的落选方案，先改选它再导出」 |
+| `MockupDialog` | 不列出落选画框 |
+| 导出工程（zip）、`oryn design eject`、部署到 box | 落选帧的 `src/frames/<id>.tsx` 不进工程文件，`oryn-frames.json` 不列出它们；`src/variants.json` 去掉落选方案（组里只剩选中方案）；只被落选方案引用的 `src/themes/<名>.css` 不打包。部署走 eject，规则自动相同 |
+| 原型 | `resolveStartPage` 与原型可达的帧都排除落选画框；指向落选帧的 `<Link>` 不跳转（同指向不存在的帧） |
+
+因为落选帧的入口文件不在工程里，直接访问 `#/<落选帧 id>` 只会走到「没有这个帧」，不需要另加 `hidden` 列表。
 
 导出工程同时要支持方案主题：
 - `oryn-frames.json` 的帧项新增 `theme?: string`。
 - `eject/main.tsx` 切换路由时设置 `document.documentElement.dataset.orynTheme`。
-- `designengine` 生成 `styles.css` 时，在 `theme.css` 之后逐个 `@import` 版本里的 `src/themes/*.css`。
+- `designengine` 生成 `styles.css` 时，在 `theme.css` 之后逐个 `@import` 打包进工程的 `src/themes/*.css`。
 
 ### C7 提示词里带上方案信息
 
@@ -273,11 +275,12 @@
 
 - Depends on：S1（`Archived`）、S3（主题文件格式）。
 - Files：`internal/artifacts/export.go`、`internal/designengine/{eject.go,project.go}`、`internal/designengine/eject/main.tsx`、对应测试。
-- Do：按 C6 的后端部分实现。
+- Do：按 C6 的后端部分实现。过滤放在 `export.go` 组装工程文件的地方（读版本 `src/**` 的那段），由 `canvas.Doc.Archived()` 经 `source` 得到落选帧 id；样机的拒绝放在 `selectMockupPages`。
 - Accept：`go test ./internal/artifacts/ -run 'TestExport|TestMockup' ./internal/designengine/ ./internal/orbdrt/ -run 'TestDesignEject'` → `ok`。新增断言：
-  - 不带 `frames` 的样机不含落选画框；
-  - `oryn-frames.json` 的 `hidden` 与帧 `theme` 正确；
-  - 生成的 `styles.css` 含 `src/themes/*.css` 的 import。
+  - 不带 `frames` 的样机不含落选画框；显式 `frames` 里含落选画框时回 invalid；
+  - 导出 zip 的文件清单里没有落选帧的 `src/frames/<id>.tsx`，也没有只被落选方案引用的主题文件；导出的 `src/variants.json` 只剩选中方案；`oryn-frames.json` 的帧与 `theme` 正确；
+  - `TestDesignEject`：eject 出的目录同样没有落选帧文件；在 eject 目录 `npm ci && npm run build` 成功（`variants.json` 与帧文件一致），构建产物里没有落选帧的模块；
+  - 生成的 `styles.css` 只含打包进来的 `src/themes/*.css` 的 import。
 
 ### S9 前端：方案组的显示、选定与排除
 
@@ -351,7 +354,7 @@ S7-->S10
     1. 让 agent「三张牌都做首屏」，得到三个方案并排、各自强调色不同的画框；
     2. 在查看器里选 B，落选画框搬到「备选方案」页；
     3. 下一回合 agent 收到通知，`theme.css` 等于 B 的 token；
-    4. 样机导出不含落选画框。
+    4. 样机导出不含落选画框，显式点名落选画框被拒；导出工程的 zip 清单里没有落选帧，部署到 box 后访问 `#/<落选帧 id>` 显示「没有这个帧」。
 
 ## 探针结论
 
@@ -369,6 +372,7 @@ S7-->S10
 - 一个设计画布里方案帧太多时，实时预览只覆盖离视口最近的 6 帧（`MAX_LIVE`），其余显示静态帧，构建后才更新。本期不改这个上限。
 - 选定之后的主题提升依赖 agent 下一回合执行。在这之前，未参与比较的帧仍然是旧的基础主题。查看器的提示条和通知文本都要写明「Agent 统一主题后其余帧才会跟上」。
 - 方案主题文件的选择器写错时只有警告；变量缺失由 `token-undefined` 探针规则兜底。
+- 导出时去掉落选帧文件：如果保留下来的帧或 `src/components/**` 引用了落选帧文件，导出的工程会构建失败。S10 要在技能里写明「帧之间不互相 import，共用的部分放进 `src/components/`」；S8 的 eject 构建验收会抓到违反这条规则的情况。
 
 ## 不做
 
