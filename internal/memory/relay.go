@@ -349,13 +349,22 @@ func (h *relay) endpoint(w http.ResponseWriter, r *http.Request, kind apigen.Mem
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
-	resp, err := h.s.cfg.HTTP.Do(req)
+	// 不跟随重定向：307 / 308 会把记忆文本原样重放到 Location 的主机，那台主机没有经过 AI 数据同意判定（同 geminidecision）
+	guarded := *h.s.cfg.HTTP
+	guarded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := guarded.Do(req)
 	if err != nil {
 		slog.Warn("记忆中转：接口不可达", "kind", kind, "host", u.Host, "err", redact(err.Error(), key))
 		WriteError(w, http.StatusBadGateway, "upstream_unreachable", "接口不可达")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// 3xx 也不转给 Hindsight：它的客户端会自己跟着 Location 直连过去，同样绕开同意判定
+	if resp.StatusCode/100 == 3 {
+		slog.Warn("记忆中转：拦下接口的重定向", "kind", kind, "host", u.Host, "status", resp.StatusCode)
+		WriteError(w, http.StatusBadGateway, "upstream_redirect", "接口返回了重定向，已拦下（不跟随到未经同意的主机）")
+		return
+	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, relayRespMax+1))
 	if err != nil || len(respBody) > relayRespMax {
 		WriteError(w, http.StatusBadGateway, "upstream_unreachable", "接口响应读取失败或过大")

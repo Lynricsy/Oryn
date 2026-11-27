@@ -257,6 +257,9 @@ type target struct {
 	hostedProject, hostedEndpoint string
 	// consent 非空时是被 AI 数据同意拒绝的接收方 id（resolve 回 403）。
 	consent string
+	// model 为真表示模型路由（/llm/）：上游的 3xx 不转给调用方（见 blockRedirect），免得调用方跟着 Location
+	// 把完整请求直接发给未经同意判定的另一台主机。
+	model bool
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -355,6 +358,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			if t.model && resp.StatusCode/100 == 3 {
+				blockRedirect(resp, t.url.Host)
+			}
 			if resp.StatusCode == http.StatusOK && len(pushed) > 0 {
 				if pr, ok := h.R.(PushRecorder); ok {
 					pr.GitPushed(GitPush{Host: t.gitHost, Repo: t.repo, Refs: pushed})
@@ -400,6 +406,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	p.ServeHTTP(w, r)
+}
+
+// blockRedirect 把模型上游的重定向换成 502：Location 指向的主机没有经过 AI 数据同意判定，调用方（omp、Hindsight 的
+// SDK）若照着跟随，会绕开出站代理把完整请求直接发过去。模型 API 本身不需要重定向。
+func blockRedirect(resp *http.Response, host string) {
+	slog.Warn("egress：拦下模型上游的重定向", "host", host, "status", resp.StatusCode, "location", resp.Header.Get("Location"))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	_ = resp.Body.Close()
+	body, _ := json.Marshal(map[string]any{
+		"type":  "error",
+		"error": map[string]string{"type": "upstream_redirect", "code": "upstream_redirect", "message": "oryn egress: 模型上游返回了重定向，已拦下（不跟随到未经同意的主机）"},
+	})
+	resp.StatusCode, resp.Status = http.StatusBadGateway, "502 Bad Gateway"
+	resp.Header = http.Header{"Content-Type": {"application/json"}}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
 }
 
 // serveMemory 处理 `/memory/t/<threadId>/<Hindsight 路径>`（M16）：线程号只从路径取，经 Resolver.Caller 校验归属
@@ -477,7 +499,7 @@ func (h *Handler) resolve(r *http.Request) (target, int) {
 			}
 		}
 		u.Path = rest
-		return target{url: u, own: rt.SecretIDs, hostBound: rt.HostBoundIDs}, http.StatusOK
+		return target{url: u, own: rt.SecretIDs, hostBound: rt.HostBoundIDs, model: true}, http.StatusOK
 	case "git":
 		return h.resolveGit(r, pol, strings.ToLower(parts[1]), rest)
 	case "gh":

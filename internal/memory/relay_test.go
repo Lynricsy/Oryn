@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -482,4 +483,37 @@ func TestRelayEndpointRequiresConsent(t *testing.T) {
 	grant("memory-rerank:generativelanguage.googleapis.com")
 	require.Equal(t, http.StatusOK, rerank().Code)
 	assert.Equal(t, 2, e.up.count())
+}
+
+// 已同意的嵌入接口 A 返回 307 指向 B：中转不跟随、也不把 3xx 交给 Hindsight（它会自己直连 B），B 收不到记忆文本。
+func TestRelayEndpointBlocksRedirect(t *testing.T) {
+	var bHits atomic.Int32
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { bHits.Add(1) }))
+	t.Cleanup(b.Close)
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://b.example.net/emb/embeddings", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(a.Close)
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		switch addr {
+		case "embed.example.com:80":
+			addr = a.Listener.Addr().String()
+		case "b.example.net:80":
+			addr = b.Listener.Addr().String()
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}}}
+	consent := aiconsent.CheckerFunc(func(_ context.Context, id string) error {
+		if id != "memory-embed:embed.example.com" {
+			return &aiconsent.DeniedError{Recipient: id}
+		}
+		return nil
+	})
+	e := newRelayEnvWith(t, consent, client)
+	e.endpoint(t, apigen.MemoryEndpointEmbed, "http://embed.example.com/emb", "qwen-embed", keyEmbed)
+	w := e.post(t, "embed/embeddings", "", e.token, map[string]any{"model": "oryn-embed", "input": []string{"你好"}})
+	assert.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+	assert.Equal(t, "upstream_redirect", errCode(t, w))
+	assert.Empty(t, w.Header().Get("Location"))
+	assert.Zero(t, bHits.Load(), "重定向目标收不到记忆文本")
 }

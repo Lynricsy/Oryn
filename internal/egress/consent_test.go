@@ -219,3 +219,30 @@ func TestWebProxyRequiresConsent(t *testing.T) {
 	assert.EqualValues(t, 2, dials.Load(), "撤回之后不再拨号")
 	assert.EqualValues(t, 1, upCount.Load())
 }
+
+// 模型上游返回 307 / 308：不把 Location 交给调用方（它会照着直连另一台未经同意判定的主机），换成 502，B 收不到请求。
+func TestLLMRouteBlocksUpstreamRedirect(t *testing.T) {
+	b, bCount := countingServer(t)
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://b.example.net/v1/chat/completions", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(a.Close)
+	h := NewHandler("orb-x", fakeR{
+		pol:     Policy{Routes: map[string]Route{"gw": {Origin: "http://a.example.com", Provider: "gw", SecretIDs: []string{"s1"}}}},
+		secrets: map[string][2]string{"s1": {"REAL-KEY", ""}},
+		consent: newConsent("model:gw@a.example.com"),
+	})
+	h.transport = redirectTransport(map[string]string{
+		"a.example.com:80": a.Listener.Addr().String(),
+		"b.example.net:80": b.Listener.Addr().String(),
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	resp := do(t, "POST", srv.URL+"/llm/gw/v1/chat/completions", map[string]string{"Authorization": "Bearer oryn-ph-s1"})
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	assert.Empty(t, resp.Header.Get("Location"), "Location 不交给调用方")
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "upstream_redirect")
+	assert.Zero(t, bCount.Load(), "重定向目标收不到请求")
+}
