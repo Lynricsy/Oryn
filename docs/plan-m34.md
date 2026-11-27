@@ -391,3 +391,27 @@ S7-->S10
 - 方案间同步滚动或像素级对比视图。
 - 跨画布页的方案组，以及组的嵌套。
 - 调整实时预览帧数上限。
+
+## 执行记录（2026-11-27）
+
+| 步骤 | 提交 | 验收 |
+|---|---|---|
+| S0 | `03c1bc726d`（结论） | 见「探针结论」 |
+| S1 | `dc7ca21ba5` | `go test ./internal/artifacts/canvas/` ok；`bun run test -- canvas-doc` 122 passed |
+| S5 | `0fd1df4d9b`、`3db39b9d59` | `TestDesignDirection*` ok；sqlc 生成物一致 |
+| S2、S3 | `69cd1a687b` | `go test ./internal/artifacts/design/`（含 node 跑引擎实现的对照）ok；`TestDesignVariantThemeChromium` PASS |
+| S4 | `dcad6f7a9c` | `TestSealDesignVariants` ok |
+| S6 | `040485766b` | `TestDesignCheck*`、`TestCheckArtifactSkipsArchived`、`TestDesignHeadArchived` ok |
+| S7 | `f6bb719fad` | `TestNotesPickDelivered`、`TestLivePickStamped` ok |
+| S8 | `cf3c93fe56`、`89b4932ad4` | `TestExport*`、`TestMockup*`、`TestDesignEjectVariants`（`ORYN_TEST_EJECT_BUILD=1` 实跑 `npm ci && npm run build`）ok |
+| S9 | `fc931adb42`、`36356fc72f` | `bun run check` 0；相关 9 个测试文件 186 passed；dev:mock 浏览器验证选定、搬到备选方案、改选搬回 |
+| S10 | `776a3f0cb6` | 指引渲染无格式错误；`rg "一套主题\|用户明说要比较"` 无输出 |
+| 端到端 | `75b1299296`（脚本）、`8af9439cd9`（修复） | `bun run accept:m34` 连续 3 次 V1–V4 全过；回归 `bun run accept:m29` K1–K7 全过 |
+
+偏差与修订（都已写进对应契约）：
+- C1：画框的 `canvas` 改为可以 set；组与画框共用 id 命名空间，`variants.json` 的组 id 不能与帧 id 同名。
+- C6：导出的 `variants.json` 改为整组去掉已选定的组。
+- S6：显式点名落选帧时照常检查，只在不点名的全帧检查里跳过。
+- 端到端验收暴露出一个 M29 起就有的问题：dev 冷启动时还没有帧入口，React 没有预构建；几个实时帧并发加载时才发现这些依赖，触发重新预构建，加载中的帧混用新旧两批 chunk（两份 React），白屏。在 `8af9439cd9` 修复：`optimizeDeps.include` 预构建引擎提供的依赖，`lucide-react` 并入按引擎解析的别名。修复前后各做 4–5 次冷启动复现对照：修复前每次 dev 日志都有「optimized dependencies changed. reloading」，修复后没有。
+- 已知的既有失败，与 M34 无关：`web/src/App.test.tsx` 的 12 条路由用例在 M34 开工前的提交 `08b02dd014` 上同样失败。
+- 没有验证：部署到 box 后访问落选帧路由（隔离验收环境没有 box 基础设施）。部署走 eject，eject 产物已经在 V4 和 `TestDesignEjectVariants` 里验证过。
