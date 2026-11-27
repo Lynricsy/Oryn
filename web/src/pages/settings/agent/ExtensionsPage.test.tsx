@@ -3,6 +3,7 @@
  * 工具 json / md 里的 name）；启停写对应键；需重启的提示；行内源码编辑与新建文件。
  */
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	agentFetch,
@@ -162,29 +163,95 @@ describe("ExtensionsPage", () => {
 		expect(screen.getByText("不会加载")).toBeInTheDocument();
 	});
 
-	it("目录式条目在文件间切换编辑并保存", async () => {
+	it("目录式条目打开文件管理：切换文件不丢草稿，保存只写当前文件", async () => {
 		renderPage(<ExtensionsPage />);
 		fireEvent.click(
 			await screen.findByRole("button", { name: "编辑 guard 的源码" }),
 		);
 		const dialog = await screen.findByRole("dialog");
-		expect(
-			await within(dialog).findByLabelText("editor:extensions/guard/index.ts"),
-		).toHaveValue("export default () => {};\n");
-		fireEvent.click(within(dialog).getByRole("combobox", { name: /^文件/ }));
-		fireEvent.click(
-			await screen.findByRole("option", { name: "extensions/guard/util.ts" }),
+		const index = await within(dialog).findByLabelText(
+			"editor:extensions/guard/index.ts",
 		);
-		const editor = await screen.findByLabelText(
+		expect(index).toHaveValue("export default () => {};\n");
+		fireEvent.change(index, { target: { value: "// 草稿\n" } });
+		fireEvent.click(within(dialog).getByRole("button", { name: /^util\.ts/ }));
+		const util = await within(dialog).findByLabelText(
 			"editor:extensions/guard/util.ts",
 		);
-		fireEvent.change(editor, { target: { value: "export const x = 1;\n" } });
-		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		fireEvent.change(util, { target: { value: "export const x = 1;\n" } });
+		fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
 		await waitFor(() =>
 			expect(home.puts).toEqual([
 				{ path: "extensions/guard/util.ts", body: "export const x = 1;\n" },
 			]),
 		);
+		fireEvent.click(within(dialog).getByRole("button", { name: /^index\.ts/ }));
+		expect(
+			await within(dialog).findByLabelText("editor:extensions/guard/index.ts"),
+		).toHaveValue("// 草稿\n");
+		// 入口文件不能单独删除
+		expect(
+			within(dialog).getByRole("button", {
+				name: "入口文件随条目一起删除，不能单独删",
+			}),
+		).toBeDisabled();
+	});
+
+	it("新建目录式工具：入口为 index.ts", async () => {
+		renderPage(<ExtensionsPage />);
+		await screen.findByText("bash.ts");
+		fireEvent.click(
+			screen.getByRole("button", { name: "在「自定义工具」中新建" }),
+		);
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.click(within(dialog).getByRole("combobox", { name: /^形式/ }));
+		fireEvent.click(await screen.findByRole("option", { name: /^目录/ }));
+		const name = within(dialog).getByLabelText(/^目录名/);
+		fireEvent.change(name, { target: { value: "kit" } });
+		fireEvent.click(within(dialog).getByRole("button", { name: "继续" }));
+		expect(name).toHaveAttribute("aria-invalid", "true");
+		fireEvent.change(name, { target: { value: "deploy" } });
+		fireEvent.click(within(dialog).getByRole("button", { name: "继续" }));
+		const editor = await screen.findByLabelText("editor:tools/deploy/index.ts");
+		fireEvent.change(editor, { target: { value: "export default {};\n" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() =>
+			expect(home.puts).toEqual([
+				{ path: "tools/deploy/index.ts", body: "export default {};\n" },
+			]),
+		);
+	});
+
+	it("导入工具目录：zip 只有一个顶层文件夹时以它为名，整目录一次写入", async () => {
+		renderPage(<ExtensionsPage />);
+		await screen.findByText("bash.ts");
+		fireEvent.click(screen.getByRole("button", { name: "导入自定义工具" }));
+		const dialog = await screen.findByRole("dialog");
+		const zip = zipSync({
+			"weather/index.ts": strToU8("export default {};\n"),
+			"weather/data/icon.png": new Uint8Array([137, 80, 78, 71, 0, 1]),
+			"__MACOSX/weather/._index.ts": strToU8("junk"),
+		});
+		fireEvent.change(within(dialog).getByTestId("pick-zip-input"), {
+			target: { files: [new File([zip], "weather-v2.zip")] },
+		});
+		expect(await within(dialog).findByDisplayValue("weather")).toBeVisible();
+		fireEvent.click(within(dialog).getByRole("button", { name: "导入" }));
+		await waitFor(() => expect(home.batches).toHaveLength(1));
+		expect(home.batches[0]).toEqual({
+			files: [
+				{
+					path: "tools/weather/data/icon.png",
+					content: btoa(String.fromCharCode(137, 80, 78, 71, 0, 1)),
+					encoding: "base64",
+				},
+				{
+					path: "tools/weather/index.ts",
+					content: "export default {};\n",
+					encoding: "utf8",
+				},
+			],
+		});
 	});
 
 	it("新建 hook：选 post、填文件名，进编辑器保存", async () => {

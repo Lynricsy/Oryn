@@ -29,6 +29,8 @@ import { identityKeys } from "./identity-queries";
 
 export type AgentFile = Schemas["AgentConfigFile"];
 export type AgentWriteResult = Schemas["AgentConfigWriteResult"];
+export type AgentBatch = Schemas["AgentConfigBatch"];
+export type AgentBatchResult = Schemas["AgentConfigBatchResult"];
 
 /** omp 主配置：`disabledExtensions` 等启停键写在这里。 */
 export const OMP_CONFIG_PATH = "config.yml";
@@ -79,8 +81,11 @@ export async function writeAgentText(
 	return (await res.json()) as AgentWriteResult;
 }
 
-export async function deleteAgentFile(path: string): Promise<void> {
-	await rawFetch(fileUrl(path), { method: "DELETE" });
+/** 批量变更：先删 `delete`（文件或目录），再写 `files`；整批校验通过才执行。 */
+export async function applyAgentBatch(
+	batch: AgentBatch,
+): Promise<AgentBatchResult> {
+	return unwrap(api.POST("/api/v1/agent-config/batch", { body: batch }));
 }
 
 /**
@@ -140,14 +145,43 @@ export interface AgentFileActions {
 		text: string,
 		base?: string | null,
 	): Promise<AgentWriteResult>;
-	/** 依次删除（目录式条目传其下全部文件）。 */
+	/** 删除文件（目录式条目传其下全部文件），一次批量请求。 */
 	remove(paths: readonly string[]): Promise<void>;
+	/** 批量变更并更新缓存。 */
+	apply(batch: AgentBatch): Promise<AgentBatchResult>;
+}
+
+/** 批量变更后的缓存：写入的文本直接换上，base64 写入的重读，删除的置空。 */
+function afterBatch(
+	qc: QueryClient,
+	batch: AgentBatch,
+	result: AgentBatchResult,
+): void {
+	for (const p of result.deleted)
+		qc.setQueryData(agentConfigKeys.text(p), null);
+	for (const f of batch.files ?? []) {
+		if (f.encoding === "base64")
+			void qc.invalidateQueries({ queryKey: agentConfigKeys.text(f.path) });
+		else qc.setQueryData(agentConfigKeys.text(f.path), f.content);
+	}
+	afterChange(qc, [...result.deleted, ...result.files.map((f) => f.path)]);
 }
 
 export function useAgentFileActions(): AgentFileActions {
 	const qc = useQueryClient();
-	return useMemo(
-		() => ({
+	return useMemo(() => {
+		const apply = async (batch: AgentBatch) => {
+			try {
+				const result = await applyAgentBatch(batch);
+				afterBatch(qc, batch, result);
+				return result;
+			} catch (e) {
+				// 失败可能是列表过期（别处删改过）：重取列表
+				void qc.invalidateQueries({ queryKey: agentConfigKeys.files });
+				throw e;
+			}
+		};
+		return {
 			async write(path, text, base) {
 				try {
 					const result = await writeAgentText(path, text, base);
@@ -163,16 +197,11 @@ export function useAgentFileActions(): AgentFileActions {
 				}
 			},
 			async remove(paths) {
-				try {
-					for (const p of paths) await deleteAgentFile(p);
-				} finally {
-					for (const p of paths) qc.setQueryData(agentConfigKeys.text(p), null);
-					afterChange(qc, paths);
-				}
+				await apply({ delete: [...paths] });
 			},
-		}),
-		[qc],
-	);
+			apply,
+		};
+	}, [qc]);
 }
 
 /** `disabledExtensions` 里的键；文档缺失、不合法或不是字符串列表时为空。 */

@@ -2309,6 +2309,37 @@ export class MockServer {
 				return new Response(null, { status: 204 });
 			}
 		}
+		if (p === "agent-config/batch" && m === "POST") {
+			const batch = (await req.json()) as Schemas["AgentConfigBatch"];
+			const deleted: string[] = [];
+			for (const d of batch.delete ?? [])
+				for (const fp of Object.keys(this.files))
+					if (fp === d || fp.startsWith(`${d}/`)) {
+						const before = this.files[fp];
+						delete this.files[fp];
+						this.noteOmpHomeChange(fp, before);
+						deleted.push(fp);
+					}
+			const written = (batch.files ?? []).map((f) => {
+				const before = this.files[f.path];
+				this.files[f.path] =
+					f.encoding === "base64" ? atob(f.content) : f.content;
+				this.noteOmpHomeChange(f.path, before);
+				return {
+					path: f.path,
+					size: this.files[f.path]?.length ?? 0,
+					mode: f.mode ?? 420,
+					sha256: "0".repeat(64),
+					updatedAt: Date.now(),
+				};
+			});
+			return json({
+				files: written,
+				deleted: deleted.filter((d) => this.files[d] === undefined).sort(),
+				extractedSecrets: [],
+				warnings: [],
+			});
+		}
 		if (p === "agent-config/apply-status" && m === "GET")
 			return json(this.applyStatus());
 		if (p === "agent-config/restart-sessions" && m === "POST") {

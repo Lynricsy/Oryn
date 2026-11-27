@@ -1,5 +1,5 @@
 /**
- * Agent 设置子页测试共用：内存里的 omp-home（`/api/v1/agent-config/files…` 的 GET / PUT / DELETE）与渲染包装。
+ * Agent 设置子页测试共用：内存里的 omp-home（`/api/v1/agent-config/files…` 的 GET / PUT / DELETE 与 `batch`）与渲染包装。
  * 各测试文件仍需自己 `vi.mock` CodeEditor（mock 按文件提升）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -7,18 +7,22 @@ import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { vi } from "vitest";
+import type { Schemas } from "../../../api/client";
 import { readConfigDoc } from "../../../lib/omp-config";
 
 export const home = {
 	files: {} as Record<string, string>,
 	puts: [] as { path: string; body: string }[],
+	/** 删除的文件（单文件 DELETE 与批量删除都记在这里） */
 	deletes: [] as string[],
+	batches: [] as Schemas["AgentConfigBatch"][],
 };
 
 export function resetHome(files: Record<string, string>): void {
 	home.files = { ...files };
 	home.puts = [];
 	home.deletes = [];
+	home.batches = [];
 }
 
 /** 生成式 UI 总开关（`/api/v1/settings/generative-ui`，扩展与工具页首）。`fail` 时写入返回 500。 */
@@ -71,6 +75,29 @@ export const agentFetch = vi.fn(
 			return Response.json({
 				files: Object.entries(home.files).map(([p, c]) => meta(p, c)),
 			});
+		if (url.pathname === "/api/v1/agent-config/batch") {
+			const batch = (await req.json()) as Schemas["AgentConfigBatch"];
+			home.batches.push(batch);
+			const removed: string[] = [];
+			for (const d of batch.delete ?? [])
+				for (const p of Object.keys(home.files))
+					if (p === d || p.startsWith(`${d}/`)) {
+						delete home.files[p];
+						home.deletes.push(p);
+						removed.push(p);
+					}
+			for (const f of batch.files ?? [])
+				home.files[f.path] =
+					f.encoding === "base64" ? atob(f.content) : f.content;
+			return Response.json({
+				files: (batch.files ?? []).map((f) =>
+					meta(f.path, home.files[f.path] ?? ""),
+				),
+				deleted: removed.filter((p) => home.files[p] === undefined).sort(),
+				extractedSecrets: [],
+				warnings: [],
+			});
+		}
 		if (!url.pathname.startsWith(PREFIX))
 			return Response.json({ code: "not_found", message: "" }, { status: 404 });
 		const path = decodeURIComponent(url.pathname.slice(PREFIX.length));

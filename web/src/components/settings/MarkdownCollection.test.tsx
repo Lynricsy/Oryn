@@ -1,9 +1,11 @@
 /**
  * MarkdownCollection：从扁平文件列表找条目（技能目录式 / 平铺 md、mdc），名称与描述取 frontmatter；
  * 开关写 config.yml 的 `disabledExtensions`（保留注释）；新建（名称校验、frontmatter + 正文）、编辑（保留未列出的键）、
- * 删除（确认，目录整删，顺带清掉停用键）；config.yml 在别处被改过时不写入并提示。
+ * 删除（确认，目录整删，顺带清掉停用键）；config.yml 在别处被改过时不写入并提示；
+ * 技能目录的文件管理（上传、覆盖确认、删除附属文件）与整目录导入（zip 收窄、同名替换）。
  */
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { skillKey } from "../../lib/omp-config";
 import {
@@ -265,5 +267,105 @@ describe("MarkdownCollection（技能）", () => {
 		);
 		await waitFor(() => expect(lastDisabled()).toEqual(["skill:other"]));
 		await waitFor(() => expect(screen.queryByText("code-review")).toBeNull());
+	});
+
+	it("文件管理：上传新文件；同名先确认再覆盖（#! 脚本给可执行权限）；删除附属文件，入口不可删", async () => {
+		mountSkills();
+		fireEvent.click(
+			await screen.findByRole("button", { name: "管理 code-review 的文件" }),
+		);
+		const dialog = await screen.findByRole("dialog");
+		expect(
+			within(dialog).getByRole("button", {
+				name: "入口文件随条目一起删除，不能单独删",
+			}),
+		).toBeDisabled();
+
+		fireEvent.change(within(dialog).getByTestId("pick-files-input"), {
+			target: { files: [new File(["# 笔记\n"], "notes.md")] },
+		});
+		await waitFor(() =>
+			expect(home.batches).toEqual([
+				{
+					files: [
+						{
+							path: "skills/review/notes.md",
+							content: "# 笔记\n",
+							encoding: "utf8",
+						},
+					],
+				},
+			]),
+		);
+
+		const script = new File(["#!/bin/sh\necho 2\n"], "run.sh");
+		Object.defineProperty(script, "webkitRelativePath", {
+			value: "scripts/run.sh",
+		});
+		fireEvent.change(within(dialog).getByTestId("pick-folder-input"), {
+			target: { files: [script] },
+		});
+		expect(
+			await within(dialog).findByText(
+				"1 个文件已存在，上传会覆盖：scripts/run.sh",
+			),
+		).toBeInTheDocument();
+		expect(home.batches).toHaveLength(1);
+		fireEvent.click(within(dialog).getByRole("button", { name: "覆盖并上传" }));
+		await waitFor(() => expect(home.batches).toHaveLength(2));
+		expect(home.batches[1]).toEqual({
+			files: [
+				{
+					path: "skills/review/scripts/run.sh",
+					content: "#!/bin/sh\necho 2\n",
+					encoding: "utf8",
+					mode: 0o755,
+				},
+			],
+		});
+
+		fireEvent.click(
+			within(dialog).getByRole("button", { name: "删除 scripts/run.sh" }),
+		);
+		fireEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+		await waitFor(() =>
+			expect(home.deletes).toEqual(["skills/review/scripts/run.sh"]),
+		);
+	});
+
+	it("导入：zip 里只有一个含 SKILL.md 的目录时收窄到它；同名须勾选替换，同一批先删再写", async () => {
+		mountSkills();
+		fireEvent.click(await screen.findByRole("button", { name: "导入技能" }));
+		const dialog = await screen.findByRole("dialog");
+		const zip = zipSync({
+			"repo-main/README.md": strToU8("仓库说明\n"),
+			"repo-main/skills/review/SKILL.md": strToU8(
+				"---\ndescription: 新版\n---\n正文\n",
+			),
+			"repo-main/skills/review/ref/a.md": strToU8("参考\n"),
+		});
+		fireEvent.change(within(dialog).getByTestId("pick-zip-input"), {
+			target: { files: [new File([zip], "repo-main.zip")] },
+		});
+		expect(await within(dialog).findByDisplayValue("review")).toBeVisible();
+		const submit = within(dialog).getByRole("button", { name: "导入" });
+		expect(submit).toBeDisabled();
+		fireEvent.click(
+			within(dialog).getByRole("checkbox", { name: /^整体替换/ }),
+		);
+		fireEvent.click(submit);
+		await waitFor(() => expect(home.batches).toHaveLength(1));
+		expect(home.batches[0]).toEqual({
+			delete: ["skills/review"],
+			files: [
+				{ path: "skills/review/ref/a.md", content: "参考\n", encoding: "utf8" },
+				{
+					path: "skills/review/SKILL.md",
+					content: "---\ndescription: 新版\n---\n正文\n",
+					encoding: "utf8",
+				},
+			],
+		});
+		expect(home.files["skills/review/scripts/run.sh"]).toBeUndefined();
 	});
 });

@@ -1,6 +1,8 @@
 /**
  * 设置 → 扩展与工具：列出 omp-home 下 `extensions/`、`hooks/pre|post/`、`tools/` 的条目（每类一组），
  * 提供源码编辑（行内对话框；「配置文件」的文件浏览器没有按路径直达的入口）、新建、删除与启停。这些改动要重启会话才生效。
+ * 目录式条目（扩展子目录、工具子目录）打开文件管理：逐个编辑、新建、上传、删除其中的文件；
+ * 扩展与工具另可整目录导入（文件夹或 zip），也可新建以 index.ts 为入口的目录。
  *
  * 名称与启停键对照 Core：
  * - 扩展模块（`discoverExtensionModulePaths` + `getExtensionNameFromPath`，键 `extension-module:<名称>`）：
@@ -29,6 +31,11 @@ import {
 	GroupNote,
 	TextFileDialog,
 } from "../../../components/settings/agent-config-ui";
+import { EntryFilesDialog } from "../../../components/settings/EntryFilesDialog";
+import {
+	EntryImportDialog,
+	type ImportKind,
+} from "../../../components/settings/EntryImportDialog";
 import { Badge, Callout } from "../../../components/ui/data";
 import type { IconName } from "../../../components/ui/icons";
 import {
@@ -259,6 +266,15 @@ const NEW_FILE_PATTERN: Record<Section, RegExp> = {
 	tools: /^[A-Za-z0-9][A-Za-z0-9._-]*\.(json|md|ts|js|sh|bash|py)$/,
 };
 
+/** 目录式扩展 / 工具的目录名。 */
+const DIR_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** 可以整目录导入的分组（hook 只认单文件）。 */
+const IMPORT_KIND: Partial<Record<Section, ImportKind>> = {
+	extensions: "extension",
+	tools: "tool",
+};
+
 export default function ExtensionsPage() {
 	const { t } = useTranslation();
 	const files = useAgentFiles();
@@ -282,6 +298,7 @@ export default function ExtensionsPage() {
 	const [creating, setCreating] = useState<Section | null>(null);
 	const [newPath, setNewPath] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<CodeEntry | null>(null);
+	const [importing, setImporting] = useState<Section | null>(null);
 
 	const sections: {
 		id: Section;
@@ -361,16 +378,30 @@ export default function ExtensionsPage() {
 					key={s.id}
 					title={t(`agentPages.code.${s.id}.title`)}
 					action={
-						<Button
-							size="sm"
-							icon="plus"
-							aria-label={t("agentPages.code.newIn", {
-								section: t(`agentPages.code.${s.id}.title`),
-							})}
-							onClick={() => setCreating(s.id)}
-						>
-							{t("agentPages.new")}
-						</Button>
+						<div className="flex items-center gap-1.5">
+							{IMPORT_KIND[s.id] && (
+								<Button
+									size="sm"
+									icon="upload"
+									aria-label={t("agentPages.import.titleShort", {
+										section: t(`agentPages.code.${s.id}.title`),
+									})}
+									onClick={() => setImporting(s.id)}
+								>
+									{t("agentPages.import.action")}
+								</Button>
+							)}
+							<Button
+								size="sm"
+								icon="plus"
+								aria-label={t("agentPages.code.newIn", {
+									section: t(`agentPages.code.${s.id}.title`),
+								})}
+								onClick={() => setCreating(s.id)}
+							>
+								{t("agentPages.new")}
+							</Button>
+						</div>
 					}
 				>
 					{files.error ? (
@@ -387,8 +418,29 @@ export default function ExtensionsPage() {
 			))}
 			{textError ? <ErrorText error={textError} /> : null}
 			<AgentErrorText error={config.mutateError} />
-			{editing && (
-				<EntryEditor entry={editing} onClose={() => setEditing(null)} />
+			{editing &&
+				(editing.location.endsWith("/") ? (
+					<EntryFilesDialog
+						title={editing.name}
+						root={editing.location.slice(0, -1)}
+						main={editing.main}
+						locked={editing.key === undefined ? undefined : editing.main}
+						onClose={() => setEditing(null)}
+					/>
+				) : (
+					<TextFileDialog
+						path={editing.main}
+						title={editing.name}
+						onClose={() => setEditing(null)}
+					/>
+				))}
+			{importing && IMPORT_KIND[importing] && (
+				<EntryImportDialog
+					kind={IMPORT_KIND[importing]}
+					sectionTitle={t(`agentPages.code.${importing}.title`)}
+					nameHint={t("agentPages.code.dirNameHint")}
+					onClose={() => setImporting(null)}
+				/>
 			)}
 			{newPath && (
 				<TextFileDialog
@@ -458,41 +510,7 @@ function GenerativeUiGroup(): ReactNode {
 	);
 }
 
-/** 编辑条目的源码；目录式条目可在其文件间切换（切换会丢弃未保存的改动）。 */
-function EntryEditor({
-	entry,
-	onClose,
-}: {
-	entry: CodeEntry;
-	onClose(): void;
-}) {
-	const { t } = useTranslation();
-	const [path, setPath] = useState(entry.main);
-	const picker =
-		entry.paths.length > 1 ? (
-			<FormField label={t("agentPages.code.file")}>
-				{(p) => (
-					<Select
-						{...p}
-						value={path}
-						options={entry.paths.map((x) => ({ value: x, label: x }))}
-						onChange={setPath}
-					/>
-				)}
-			</FormField>
-		) : undefined;
-	return (
-		<TextFileDialog
-			key={path}
-			path={path}
-			title={entry.name}
-			before={picker}
-			onClose={onClose}
-		/>
-	);
-}
-
-/** 新建文件：先定文件名（hook 另选 pre / post），再进编辑器。 */
+/** 新建：先定文件名（hook 另选 pre / post；扩展与工具可选建目录，入口为 index.ts），再进编辑器。 */
 function NewFileDialog({
 	section,
 	taken,
@@ -507,15 +525,28 @@ function NewFileDialog({
 	const { t } = useTranslation();
 	const [name, setName] = useState("");
 	const [hookType, setHookType] = useState<"pre" | "post">("pre");
+	const [layout, setLayout] = useState<"file" | "dir">("file");
 	const [touched, setTouched] = useState(false);
 	const trimmed = name.trim();
+	const asDir = section !== "hooks" && layout === "dir";
 	const path =
 		section === "hooks"
 			? `hooks/${hookType}/${trimmed}`
-			: `${section}/${trimmed}`;
-	const error = !NEW_FILE_PATTERN[section].test(trimmed)
-		? t(`agentPages.code.${section}.nameHint`)
-		: taken.includes(path)
+			: asDir
+				? `${section}/${trimmed}/index.ts`
+				: `${section}/${trimmed}`;
+	const dirPath = `${section}/${trimmed}`;
+	const error = !(asDir ? DIR_NAME : NEW_FILE_PATTERN[section]).test(trimmed)
+		? t(
+				asDir
+					? "agentPages.code.dirNameHint"
+					: `agentPages.code.${section}.nameHint`,
+			)
+		: (
+					asDir
+						? taken.some((p) => p === dirPath || p.startsWith(`${dirPath}/`))
+						: taken.includes(path)
+				)
 			? t("agentPages.errors.nameTaken")
 			: null;
 	const submit = () => {
@@ -551,6 +582,21 @@ function NewFileDialog({
 					submit();
 				}}
 			>
+				{section !== "hooks" && (
+					<FormField label={t("agentPages.code.layout")}>
+						{(p) => (
+							<Select<"file" | "dir">
+								{...p}
+								value={layout}
+								options={[
+									{ value: "file", label: t("agentPages.code.layoutFile") },
+									{ value: "dir", label: t("agentPages.code.layoutDir") },
+								]}
+								onChange={setLayout}
+							/>
+						)}
+					</FormField>
+				)}
 				{section === "hooks" && (
 					<FormField label={t("agentPages.code.hookType")}>
 						{(p) => (
@@ -567,8 +613,14 @@ function NewFileDialog({
 					</FormField>
 				)}
 				<Field
-					label={t("agentPages.code.fileName")}
-					hint={t(`agentPages.code.${section}.nameHint`)}
+					label={t(
+						asDir ? "agentPages.code.dirName" : "agentPages.code.fileName",
+					)}
+					hint={t(
+						asDir
+							? "agentPages.code.dirNameHint"
+							: `agentPages.code.${section}.nameHint`,
+					)}
 				>
 					<TextInput
 						value={name}

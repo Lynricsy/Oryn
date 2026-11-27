@@ -8,6 +8,8 @@
  * - 新建 / 编辑对话框：名称（只在新建时可填）、`fields` 列出的 frontmatter 字段、正文编辑器；
  *   未列出的 frontmatter 键原样保留。frontmatter 无法解析时退回整份原文编辑。
  * - 删除前确认；被停用的条目删除后顺带把它的键从 `disabledExtensions` 里移除。
+ * - `dir-skill` 是多文件条目：行上显示文件数，可打开文件管理（附属文件的编辑、新建、上传、删除），
+ *   分组另有「导入」（文件夹或 zip，整目录一次写入；同名时可整体替换）。
  */
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -43,6 +45,8 @@ import {
 	EmptyPanel,
 	GroupNote,
 } from "./agent-config-ui";
+import { EntryFilesDialog } from "./EntryFilesDialog";
+import { EntryImportDialog } from "./EntryImportDialog";
 
 export type FieldKind = "text" | "textarea" | "list" | "bool";
 
@@ -205,6 +209,13 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 		entry: Entry;
 		name: string;
 	} | null>(null);
+	/** 目录式条目的文件管理（技能） */
+	const [filesOf, setFilesOf] = useState<{
+		entry: Entry;
+		name: string;
+	} | null>(null);
+	const [importing, setImporting] = useState(false);
+	const multiFile = layout === "dir-skill";
 
 	const rows = entries.map((entry) => {
 		const text = texts.get(entry.path);
@@ -230,9 +241,21 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 		<Group
 			title={title}
 			action={
-				<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
-					{t("agentPages.new")}
-				</Button>
+				<div className="flex items-center gap-1.5">
+					{multiFile && (
+						<Button
+							size="sm"
+							icon="upload"
+							aria-label={t("agentPages.import.titleShort", { section: title })}
+							onClick={() => setImporting(true)}
+						>
+							{t("agentPages.import.action")}
+						</Button>
+					)}
+					<Button size="sm" icon="plus" onClick={() => setEditing("new")}>
+						{t("agentPages.new")}
+					</Button>
+				</div>
 			}
 		>
 			{files.error ? (
@@ -255,6 +278,13 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 									<>
 										<span className="min-w-0 truncate">{name}</span>
 										{entry.ext !== "md" && <Badge>.{entry.ext}</Badge>}
+										{multiFile && entry.paths.length > 1 && (
+											<Badge>
+												{t("agentPages.files.count", {
+													count: entry.paths.length,
+												})}
+											</Badge>
+										)}
 										{requireDescription &&
 											parsed &&
 											!(
@@ -292,6 +322,15 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 												disabled={parsed === undefined}
 												onClick={() => setEditing(entry)}
 											/>
+											{multiFile && (
+												<IconButton
+													icon="folderOpen"
+													box="sm"
+													size={14}
+													label={t("agentPages.files.open", { name })}
+													onClick={() => setFilesOf({ entry, name })}
+												/>
+											)}
 											<IconButton
 												icon="trash"
 												box="sm"
@@ -332,6 +371,17 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 					taken={names}
 					onReload={() => setEditKey((k) => k + 1)}
 					onClose={() => setEditing(null)}
+					onManageFiles={
+						multiFile && editing !== "new"
+							? () =>
+									setFilesOf({
+										entry: editing,
+										name:
+											rows.find((r) => r.entry.path === editing.path)?.parsed
+												?.name ?? editing.stem,
+									})
+							: undefined
+					}
 				/>
 			)}
 			{deleting && (
@@ -340,6 +390,23 @@ export function MarkdownCollection(props: MarkdownCollectionProps) {
 					paths={deleting.entry.paths}
 					onClose={() => setDeleting(null)}
 					onDeleted={() => onDeleted(deleting.name)}
+				/>
+			)}
+			{filesOf && (
+				<EntryFilesDialog
+					title={filesOf.name}
+					root={`${dir}/${filesOf.entry.stem}`}
+					main={filesOf.entry.path}
+					locked={filesOf.entry.path}
+					onClose={() => setFilesOf(null)}
+				/>
+			)}
+			{importing && (
+				<EntryImportDialog
+					kind="skill"
+					sectionTitle={title}
+					nameHint={props.nameHint ?? t("agentPages.nameHint")}
+					onClose={() => setImporting(false)}
 				/>
 			)}
 		</Group>
@@ -394,6 +461,7 @@ function EntryDialog({
 	taken,
 	onReload,
 	onClose,
+	onManageFiles,
 }: {
 	props: MarkdownCollectionProps;
 	/** null = 新建 */
@@ -403,6 +471,8 @@ function EntryDialog({
 	taken: ReadonlySet<string>;
 	onReload(): void;
 	onClose(): void;
+	/** 目录式条目：打开文件管理（叠在本对话框上） */
+	onManageFiles?(): void;
 }) {
 	const { dir, layout, fields, requireDescription } = props;
 	const extensions = props.extensions ?? DEFAULT_EXTENSIONS;
@@ -603,6 +673,22 @@ function EntryDialog({
 							/>
 						</div>
 					</>
+				)}
+				{onManageFiles && entry && (
+					<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+						<Icon name="folder" size={13} aria-hidden />
+						<span>
+							{t("agentPages.files.count", { count: entry.paths.length })}
+						</span>
+						<Button
+							size="sm"
+							variant="ghost"
+							icon="folderOpen"
+							onClick={onManageFiles}
+						>
+							{t("agentPages.files.manage")}
+						</Button>
+					</div>
 				)}
 				{isModifiedError(error) ? (
 					<EditConflict onReload={onReload} />
