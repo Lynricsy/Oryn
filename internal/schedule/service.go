@@ -227,6 +227,8 @@ type Service struct {
 	afterMinNext func()
 	// afterCheckTarget 在 createLocked / updateLocked 的目标预检之后、写库事务之前调用（契约 C4）。
 	afterCheckTarget func()
+	// afterWebhookAuth 在 TriggerWebhook 通过凭据校验之后、插入运行之前调用（M31：撤销与调用的串行）。
+	afterWebhookAuth func()
 }
 
 type delivery struct {

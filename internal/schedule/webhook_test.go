@@ -242,3 +242,48 @@ func TestWebhookHandOffRestricted(t *testing.T) {
 		assert.Equal(t, x.Text == triggerWebhook, x.Restricted, "trigger %s", x.Text)
 	}
 }
+
+// 已通过校验的调用与撤销（换新地址、改签名、关闭）串行：撤销在调用插入运行之前无法返回，撤销返回之后旧地址立即失效。
+func TestWebhookRevocationIsSerialized(t *testing.T) {
+	revokes := map[string]func(f *fixture, id string) error{
+		"rotate": func(f *fixture, id string) error {
+			_, err := f.s.SetWebhook(f.ctx, id, apigen.ScheduleWebhookInput{RotateKey: new(true)})
+			return err
+		},
+		"secret": func(f *fixture, id string) error {
+			_, err := f.s.SetWebhook(f.ctx, id, apigen.ScheduleWebhookInput{Secret: new("s3cret")})
+			return err
+		},
+		"delete": func(f *fixture, id string) error { return f.s.DeleteWebhook(f.ctx, id) },
+	}
+	for name, revoke := range revokes {
+		t.Run(name, func(t *testing.T) {
+			f := webhookFixture(t)
+			f.concurrent = true // 撤销在另一个 goroutine 里，Changed 的持锁检查会误报
+			s := f.putNew(Input{Name: "alerts", Kind: KindManual, Prompt: "p", Overlap: OverlapAllow})
+			key := f.enableHook(s.ID, apigen.ScheduleWebhookInput{})
+
+			revoked := make(chan error, 1)
+			duringAuth := false
+			f.s.afterWebhookAuth = func() {
+				f.s.afterWebhookAuth = nil
+				go func() { revoked <- revoke(f, s.ID) }()
+				select {
+				case err := <-revoked:
+					revoked <- err
+					duringAuth = true
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
+			_, err := f.call(key, "first", nil)
+			require.NoError(t, err)
+			require.NoError(t, <-revoked)
+			assert.False(t, duringAuth, "撤销不得在已验签的调用插入运行之前返回")
+			assert.Len(t, f.runs(s.ID), 1, "撤销之前受理的调用照常运行")
+
+			_, err = f.call(key, "second", nil)
+			require.Error(t, err, "撤销返回之后旧凭据立即失效")
+			assert.Len(t, f.runs(s.ID), 1)
+		})
+	}
+}

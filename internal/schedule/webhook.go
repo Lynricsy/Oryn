@@ -149,7 +149,11 @@ func (s *Service) DeleteWebhook(ctx context.Context, id string) error {
 
 // TriggerWebhook 处理一次入站 Webhook 调用：按密钥找到定时、校验签名，然后记一次 trigger = webhook 的运行并投递。
 // 上一次运行未结束时按定时的 overlap 记一条 skipped（同样带请求）；定时已暂停或项目已归档时不记运行、回错误。
+// 凭据校验与插入运行在同一个 loopMu 串行区里：换新地址、改签名、关闭 Webhook 与删除定时都持 loopMu，它们返回之后
+// 不会再有用旧凭据通过校验的调用建出运行（「立即失效」）。
 func (s *Service) TriggerWebhook(ctx context.Context, c WebhookCall) (apigen.ScheduleWebhookAccepted, error) {
+	s.loopMu.Lock()
+	defer s.loopMu.Unlock()
 	hook, err := s.st.Q.GetScheduleWebhookByKey(ctx, webhookKeyHash(c.Key))
 	if errors.Is(err, sql.ErrNoRows) {
 		return apigen.ScheduleWebhookAccepted{}, errf(CodeNotFound, "unknown webhook")
@@ -160,6 +164,9 @@ func (s *Service) TriggerWebhook(ctx context.Context, c WebhookCall) (apigen.Sch
 	if err := s.checkSignature(hook, c); err != nil {
 		return apigen.ScheduleWebhookAccepted{}, err
 	}
+	if s.afterWebhookAuth != nil {
+		s.afterWebhookAuth()
+	}
 	if !utf8.Valid(c.Body) {
 		return apigen.ScheduleWebhookAccepted{}, errf(CodeInvalidRequest, "the request body must be UTF-8 text")
 	}
@@ -168,8 +175,6 @@ func (s *Service) TriggerWebhook(ctx context.Context, c WebhookCall) (apigen.Sch
 		return apigen.ScheduleWebhookAccepted{}, err
 	}
 
-	s.loopMu.Lock()
-	defer s.loopMu.Unlock()
 	now := s.cfg.Now()
 	nowMs := now.UnixMilli()
 	var fp *fireParams
