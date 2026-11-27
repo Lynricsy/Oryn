@@ -11,9 +11,22 @@ import {
 	useRef,
 	useState,
 } from "react";
+import {
+	NO_PINS,
+	type Point,
+	pickPoint,
+	pinsByPage,
+	scrollToPage,
+} from "./anchor";
 import { MAX_PRINT_PAGES } from "./limits";
+import { PinLayer } from "./pins";
 import { PrintPageStyle, ReadyMark } from "./shared";
-import type { OfficeStrings, OfficeView } from "./types";
+import type {
+	AnchorPin,
+	OfficeStrings,
+	OfficeView,
+	ViewerAnchor,
+} from "./types";
 
 /** 一份可以逐页画到 canvas 上的文档。 */
 export interface PageSource {
@@ -93,6 +106,10 @@ interface PageBoxProps {
 	register?: (i: number, el: HTMLDivElement | null) => void;
 	/** 这一页画完（或失败）时回调。 */
 	onSettled?: (i: number) => void;
+	/** 这一页上的评论图钉。 */
+	pins?: readonly AnchorPin[];
+	/** 评论模式下点了这一页：页序号（从 0 起）、页内归一化坐标、视口坐标。 */
+	onPick?: (i: number, point: Point, at: Point) => void;
 }
 
 function PageBox({
@@ -106,6 +123,8 @@ function PageBox({
 	className = "oryn-o-page",
 	register,
 	onSettled,
+	pins = NO_PINS,
+	onPick,
 }: PageBoxProps): ReactNode {
 	const host = useRef<HTMLDivElement>(null);
 	const [failed, setFailed] = useState(false);
@@ -163,8 +182,29 @@ function PageBox({
 			{failed ? (
 				<div className="oryn-o-page-error">{strings.pageFailed(index + 1)}</div>
 			) : null}
+			{onPick ? (
+				<button
+					type="button"
+					className="oryn-pick"
+					aria-label={label}
+					onClick={(e) => {
+						const { point, at } = pickPoint(e);
+						onPick(index, point, at);
+					}}
+				/>
+			) : null}
+			<PinLayer pins={pins} />
 		</div>
 	);
+}
+
+/** 普通视图里的评论：点选、图钉与定位（缩略图与打印视图不用）。 */
+export interface PageComments {
+	/** 评论模式下点了第 i 页（从 0 起）；为空时不响应点选。 */
+	onPick: ((i: number, point: Point, at: Point) => void) | null;
+	pins: readonly AnchorPin[];
+	/** 要滚动定位到的锚点（按 `page.number` 与 `y`）。 */
+	locate: ViewerAnchor | null;
 }
 
 interface PagedViewProps {
@@ -176,6 +216,7 @@ interface PagedViewProps {
 	onReady?(pages: number): void;
 	/** 普通视图里页列上方的工具条。 */
 	header?: ReactNode;
+	comments?: PageComments;
 }
 
 export function PagedView(props: PagedViewProps): ReactNode {
@@ -205,6 +246,7 @@ function ScrollPages({
 	label,
 	onReady,
 	header,
+	comments,
 }: PagedViewProps): ReactNode {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const pageEls = useRef<(HTMLDivElement | null)[]>([]);
@@ -272,6 +314,18 @@ function ScrollPages({
 		if (i === 0) setReady(true);
 	}, []);
 
+	const pins = comments?.pins ?? NO_PINS;
+	const byPage = useMemo(() => pinsByPage(pins), [pins]);
+	const onPick = comments?.onPick ?? undefined;
+
+	const locate = comments?.locate ?? null;
+	useEffect(() => {
+		const n = locate?.page?.number;
+		const el = scrollRef.current;
+		const page = n === undefined ? null : pageEls.current[n - 1];
+		if (el && page) scrollToPage(el, page, locate?.y ?? null, PAD);
+	}, [locate]);
+
 	const pages: ReactNode[] = [];
 	if (scale > 0)
 		for (let i = 0; i < source.count; i++)
@@ -287,6 +341,8 @@ function ScrollPages({
 					strings={strings}
 					register={register}
 					onSettled={onSettled}
+					pins={byPage.get(i + 1)}
+					onPick={onPick}
 				/>,
 			);
 

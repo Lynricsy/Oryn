@@ -381,15 +381,20 @@ export function SlideView({
 	);
 }
 
-/** 把画板用 `transform: scale` 缩放到容器里居中；没有 ResizeObserver（测试环境）时按原尺寸。 */
+/**
+ * 把画板用 `transform: scale` 缩放到容器里居中；没有 ResizeObserver（测试环境）时按原尺寸。
+ * `overlay` 盖在缩放后的画板上、自身不缩放（评论的点选层与图钉，大小不随幻灯片缩放）。
+ */
 export function ScaledSlide({
 	deck,
 	children,
 	className,
+	overlay,
 }: {
 	deck: Deck;
 	children: ReactNode;
 	className?: string;
+	overlay?: ReactNode;
 }): ReactNode {
 	const ref = useRef<HTMLDivElement>(null);
 	const [scale, setScale] = useState(1);
@@ -421,6 +426,14 @@ export function ScaledSlide({
 			>
 				{children}
 			</div>
+			{overlay ? (
+				<div
+					className="oryn-s-overlay"
+					style={{ width: width * scale, height: height * scale }}
+				>
+					{overlay}
+				</div>
+			) : null}
 		</div>
 	);
 }

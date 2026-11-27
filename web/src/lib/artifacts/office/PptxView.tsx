@@ -1,5 +1,6 @@
 // PowerPoint 演示文稿（pptx / pptm）：`@silurus/ooxml` 的 PptxPresentation 逐张画到 canvas（见 paged.tsx）。
 // 普通视图带「演示」：单张铺满、方向键 / 空格 / 点击翻页、Esc 退出；进出演示时回调 onPresent（沙箱里由它请求宿主铺满）。
+// 评论模式下点幻灯片给出张号、该张标题与归一化坐标，文字取点中的形状里的文字（库的元素命中测试）。
 
 import type { PptxPresentation } from "@silurus/ooxml/pptx";
 import {
@@ -11,8 +12,14 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { clipText, NO_PINS, type Point, pointAnchor } from "./anchor";
 import { loadPptx } from "./ooxml";
-import { fillBox, PagedView, type PageSource } from "./paged";
+import {
+	fillBox,
+	type PageComments,
+	PagedView,
+	type PageSource,
+} from "./paged";
 import { OfficeState, useLoaded } from "./shared";
 import type { OfficeViewProps } from "./types";
 import "./office.css";
@@ -20,6 +27,58 @@ import "./office.css";
 /** 幻灯片在 100% 下的 CSS 宽度（与打印 PDF 的 1280×720 窗口一致）。 */
 const SLIDE_WIDTH = 1280;
 
+/** 每份演示文稿的各张标题（张号从 1 起），取自库的 Markdown 投影（每张一行 `# <标题> (slide N)`）。 */
+const titleCache = new WeakMap<
+	PptxPresentation,
+	Promise<ReadonlyMap<number, string>>
+>();
+
+const TITLE_LINE = /^#{1,6} (.*?) ?\(slide (\d+)\)\s*$/;
+
+function slideTitles(
+	pres: PptxPresentation,
+): Promise<ReadonlyMap<number, string>> {
+	let titles = titleCache.get(pres);
+	if (!titles) {
+		titles = pres.toMarkdown().then((md) => {
+			const out = new Map<number, string>();
+			for (const line of md.split("\n")) {
+				const m = TITLE_LINE.exec(line);
+				if (!m) continue;
+				// 去掉 Markdown 转义的反斜杠
+				const title = (m[1] ?? "").replace(
+					/\\([\\`*_{}[\]()#+\-.!|<>~])/g,
+					"$1",
+				);
+				out.set(Number(m[2]), clipText(title));
+			}
+			return out;
+		});
+		titleCache.set(pres, titles);
+	}
+	return titles;
+}
+
+/** 第 i 张一点的锚点：标题取不到为空，点中的形状没有文字时 `text` 为空；库出错只让这两项为空。 */
+async function anchorAt(pres: PptxPresentation, i: number, p: Point) {
+	const [name, text] = await Promise.all([
+		slideTitles(pres).then(
+			(t) => t.get(i + 1) ?? "",
+			() => "",
+		),
+		pres
+			.getElementContextAt(
+				i,
+				{ x: p.x * pres.slideWidth, y: p.y * pres.slideHeight },
+				{ maxTextCharacters: 200 },
+			)
+			.then(
+				(c) => c?.text ?? "",
+				() => "",
+			),
+	]);
+	return pointAnchor({ number: i + 1, name }, p, text);
+}
 export interface PptxViewProps extends OfficeViewProps {
 	/** 进入（true）与退出（false）演示时回调。 */
 	onPresent?(on: boolean): void;
@@ -46,6 +105,10 @@ function PptxSlides({
 	strings,
 	onReady,
 	onPresent,
+	pickable,
+	onPick,
+	pins,
+	locate,
 }: PptxViewProps & { pres: PptxPresentation }): ReactNode {
 	const [presenting, setPresenting] = useState<number | null>(null);
 	const source = useMemo<PageSource>(() => {
@@ -72,6 +135,20 @@ function PptxSlides({
 		present.current?.(false);
 	}, []);
 
+	const comments = useMemo<PageComments>(
+		() => ({
+			onPick:
+				pickable && onPick
+					? (i, point, at) => {
+							void anchorAt(pres, i, point).then((a) => onPick(a, at));
+						}
+					: null,
+			pins: pins ?? NO_PINS,
+			locate: locate ?? null,
+		}),
+		[pres, pickable, onPick, pins, locate],
+	);
+
 	const header =
 		view === "full" && source.count > 0 ? (
 			<div className="oryn-o-toolbar">
@@ -91,6 +168,7 @@ function PptxSlides({
 				label={(i) => strings.slideLabel(i + 1)}
 				onReady={onReady}
 				header={header}
+				comments={comments}
 			/>
 			{presenting !== null ? (
 				<Presenter

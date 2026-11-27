@@ -10,12 +10,14 @@ import {
 	useState,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { NO_PINS } from "../../../src/lib/artifacts/office/anchor";
 import { MAX_PREVIEW_BYTES } from "../../../src/lib/artifacts/office/limits";
 import type {
 	OfficeAssets,
 	OfficeView,
 	OfficeViewProps,
 } from "../../../src/lib/artifacts/office/types";
+import { useViewerBridge } from "./bridge";
 import {
 	pickLocale,
 	readViewerConfig,
@@ -78,6 +80,9 @@ function OfficeApp({
 		() => frameAssets(config.root, location.href),
 		[config.root],
 	);
+	// 评论只在普通视图里：缩略图与打印视图不画图钉、不响应点选
+	const comments = useViewerBridge();
+	const full = view === "full";
 
 	useEffect(() => {
 		if (tooLarge) return;
@@ -114,6 +119,10 @@ function OfficeApp({
 				onReady={() => {
 					document.documentElement.dataset.ready = "true";
 				}}
+				pickable={full && comments.mode === "comment" && comments.pick !== null}
+				onPick={comments.pick ?? undefined}
+				pins={full ? comments.pins : NO_PINS}
+				locate={full ? comments.locate : null}
 			/>
 		);
 

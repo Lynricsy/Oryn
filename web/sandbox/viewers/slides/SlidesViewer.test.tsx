@@ -191,4 +191,73 @@ describe("SlidesViewer", () => {
 		);
 		expect(screen.getByRole("alert")).toHaveTextContent("slides[0].title");
 	});
+
+	it("评论模式下点幻灯片报出张号、标题与归一化坐标；定位翻到锚点那一张并画图钉", () => {
+		const pick = vi.fn();
+		const rect = vi
+			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+			.mockReturnValue(new DOMRect(100, 50, 400, 200));
+		try {
+			const comments = {
+				mode: "comment" as const,
+				pins: [],
+				locate: null,
+				pick,
+			};
+			const { container, rerender } = render(
+				<SlidesViewer
+					content={content(EIGHT_LAYOUT_DECK)}
+					view={null}
+					strings={strings}
+					comments={comments}
+				/>,
+			);
+			expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
+			fireEvent.click(screen.getByRole("button", { name: "在这里评论" }), {
+				clientX: 200,
+				clientY: 100,
+			});
+			expect(pick).toHaveBeenLastCalledWith(
+				{
+					page: { number: 1, name: "2026 年第三季度回顾" },
+					x: 0.25,
+					y: 0.25,
+					range: null,
+					block: null,
+					text: "",
+				},
+				{ x: 200, y: 100 },
+			);
+
+			const anchor = {
+				page: { number: 2, name: "本季重点" },
+				x: 0.5,
+				y: 0.75,
+				range: null,
+				block: null,
+				text: "",
+			};
+			rerender(
+				<SlidesViewer
+					content={content(EIGHT_LAYOUT_DECK)}
+					view={null}
+					strings={strings}
+					comments={{
+						...comments,
+						mode: null,
+						pins: [{ n: 1, answered: false, anchor }],
+						locate: anchor,
+					}}
+				/>,
+			);
+			expect(counter()).toBe("2 / 8");
+			const pin = container.querySelector<HTMLElement>(".oryn-pin");
+			expect(pin?.textContent).toBe("1");
+			expect(pin?.style.left).toBe("50%");
+			expect(pin?.style.top).toBe("75%");
+			expect(screen.queryByRole("button", { name: "在这里评论" })).toBeNull();
+		} finally {
+			rect.mockRestore();
+		}
+	});
 });

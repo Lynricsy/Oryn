@@ -28,9 +28,24 @@ import {
 	useRef,
 	useState,
 } from "react";
+import {
+	NO_PINS,
+	type Point,
+	pickPoint,
+	pinsByPage,
+	pointAnchor,
+	scrollToPage,
+	textAtPoint,
+} from "./anchor";
 import { PagedView, type PageSource, releaseCanvases } from "./paged";
+import { PinLayer } from "./pins";
 import { OfficeState, ReadyMark, useLoaded } from "./shared";
-import type { OfficeStrings, OfficeViewProps } from "./types";
+import type {
+	AnchorPin,
+	OfficeStrings,
+	OfficeViewProps,
+	ViewerAnchor,
+} from "./types";
 import "./office.css";
 
 /** 缩放档位（相对 PDF 实际尺寸，1 = 100%）；放大 / 缩小在相邻档位间跳。 */
@@ -101,6 +116,9 @@ export function PdfView(props: OfficeViewProps): ReactNode {
 				base={size}
 				strings={props.strings}
 				onReady={props.onReady}
+				onPick={props.pickable ? props.onPick : undefined}
+				pins={props.pins ?? NO_PINS}
+				locate={props.locate ?? null}
 			/>
 		);
 	return (
@@ -194,11 +212,18 @@ function PdfScroll({
 	base,
 	strings,
 	onReady,
+	onPick,
+	pins,
+	locate,
 }: {
 	doc: PDFDocumentProxy;
 	base: PageSize;
 	strings: OfficeStrings;
 	onReady?: (pages: number) => void;
+	/** 评论模式下的点选；为空时不响应。 */
+	onPick?: (anchor: ViewerAnchor, at: Point) => void;
+	pins: readonly AnchorPin[];
+	locate: ViewerAnchor | null;
 }): ReactNode {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const pageEls = useRef<(HTMLDivElement | null)[]>([]);
@@ -321,8 +346,30 @@ function PdfScroll({
 	const goToPage = (n: number) => {
 		const el = scrollRef.current;
 		const page = pageEls.current[n - 1];
-		if (el && page) el.scrollTop = page.offsetTop - PAGE_PAD;
+		if (el && page) scrollToPage(el, page, null, PAGE_PAD);
 	};
+
+	useEffect(() => {
+		const n = locate?.page?.number;
+		const el = scrollRef.current;
+		const page = n === undefined ? null : pageEls.current[n - 1];
+		if (el && page) scrollToPage(el, page, locate?.y ?? null, PAGE_PAD);
+	}, [locate]);
+
+	const byPage = useMemo(() => pinsByPage(pins), [pins]);
+	// 页组件是 memo 的：点选回调保持同一个引用，最新的 onPick 经 ref 取
+	const pickRef = useRef(onPick);
+	pickRef.current = onPick;
+	const pickPage = useCallback((n: number, point: Point, at: Point) => {
+		// 文字取点中的文本层片段（pdf.js 按原文位置摆放的透明文字）
+		const text = textAtPoint(
+			at,
+			(el) =>
+				!el.classList.contains("textLayer") &&
+				el.closest(`.oryn-o-page[data-page="${n}"] .textLayer`) !== null,
+		);
+		pickRef.current?.(pointAnchor({ number: n, name: "" }, point, text), at);
+	}, []);
 
 	const commitPageInput = () => {
 		const n = Number.parseInt(pageInput ?? "", 10);
@@ -350,6 +397,8 @@ function PdfScroll({
 					register={registerPage}
 					onSettled={onSettled}
 					strings={strings}
+					pins={byPage.get(n) ?? NO_PINS}
+					onPick={onPick ? pickPage : undefined}
 				/>,
 			);
 		}
@@ -433,6 +482,9 @@ interface PdfPageProps {
 	/** 这一页第一次画完（或失败）时回调。 */
 	onSettled: (n: number) => void;
 	strings: OfficeStrings;
+	pins: readonly AnchorPin[];
+	/** 评论模式下点了这一页：页号（从 1 起）、页内归一化坐标、视口坐标。 */
+	onPick?: (n: number, point: Point, at: Point) => void;
 }
 
 const PdfPage = memo(function PdfPage({
@@ -445,6 +497,8 @@ const PdfPage = memo(function PdfPage({
 	register,
 	onSettled,
 	strings,
+	pins,
+	onPick,
 }: PdfPageProps): ReactNode {
 	const boxRef = useRef<HTMLDivElement>(null);
 	const canvasHostRef = useRef<HTMLDivElement>(null);
@@ -582,6 +636,18 @@ const PdfPage = memo(function PdfPage({
 					{strings.pageFailed(pageNumber)}
 				</div>
 			) : null}
+			{onPick ? (
+				<button
+					type="button"
+					className="oryn-pick"
+					aria-label={strings.pageLabel(pageNumber)}
+					onClick={(e) => {
+						const { point, at } = pickPoint(e);
+						onPick(pageNumber, point, at);
+					}}
+				/>
+			) : null}
+			<PinLayer pins={pins} />
 		</div>
 	);
 });

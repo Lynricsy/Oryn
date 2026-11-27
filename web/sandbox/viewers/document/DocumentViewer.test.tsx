@@ -110,4 +110,86 @@ describe("DocumentViewer", () => {
 		);
 		expect(screen.queryByRole("button")).toBeNull();
 	});
+
+	it("评论模式下点块报出块序号与块文字，不进入编辑；整篇按钮报出空锚点", () => {
+		const pick = vi.fn();
+		render(
+			<DocumentViewer
+				content={content({ editable: true })}
+				view={null}
+				strings={strings}
+				comments={{ mode: "comment", pins: [], locate: null, pick }}
+			/>,
+		);
+		expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
+		const blocks = screen.getAllByRole("button", { name: "评论这一块" });
+		expect(blocks).toHaveLength(4);
+		fireEvent.click(blocks[1] as HTMLElement, { clientX: 10, clientY: 20 });
+		expect(pick).toHaveBeenLastCalledWith(
+			{
+				page: null,
+				x: null,
+				y: null,
+				range: null,
+				block: 1,
+				text: "见 [文档](https://example.com/x) 与图 ![走势](images/a.png)。",
+			},
+			{ x: 10, y: 20 },
+		);
+		expect(screen.queryByRole("textbox")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "评论整篇文档" }), {
+			clientX: 5,
+			clientY: 6,
+		});
+		expect(pick).toHaveBeenLastCalledWith(null, { x: 5, y: 6 });
+	});
+
+	it("图钉按块文字重新定位：序号对不上时找文字相同的块，找不到不画", () => {
+		const anchor = (block: number | null, text: string) => ({
+			page: null,
+			x: null,
+			y: null,
+			range: null,
+			block,
+			text,
+		});
+		const { container } = render(
+			<DocumentViewer
+				content={content()}
+				view={null}
+				strings={strings}
+				comments={{
+					mode: null,
+					pins: [
+						{ n: 1, answered: false, anchor: anchor(0, "# 设计说明") },
+						{
+							n: 2,
+							answered: true,
+							anchor: anchor(
+								3,
+								"见 [文档](https://example.com/x) 与图 ![走势](images/a.png)。",
+							),
+						},
+						{ n: 3, answered: false, anchor: anchor(1, "已删掉的段落") },
+						{ n: 4, answered: false, anchor: anchor(null, "") },
+					],
+					locate: null,
+					pick: vi.fn(),
+				}}
+			/>,
+		);
+		const pinsOf = (sel: string) =>
+			[...container.querySelectorAll(`${sel} .oryn-pin`)].map(
+				(p) => p.textContent,
+			);
+		expect(pinsOf('[data-block="0"]')).toEqual(["1"]);
+		expect(pinsOf('[data-block="1"]')).toEqual(["2"]);
+		expect(pinsOf(".oryn-doc-pins")).toEqual(["4"]);
+		expect(container.querySelectorAll(".oryn-pin")).toHaveLength(3);
+		expect(
+			container.querySelector('[data-block="1"] .oryn-pin-answered'),
+		).not.toBeNull();
+		// 不在评论模式：块上没有点选按钮
+		expect(screen.queryByRole("button", { name: "评论这一块" })).toBeNull();
+	});
 });

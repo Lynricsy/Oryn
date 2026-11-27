@@ -196,8 +196,8 @@
 	background: var(--oryn-surface);
 }
 
-/* 最后一个子元素是盖在上面的按钮 */
-.oryn-block > :nth-last-child(2) {
+/* 块里最后一段内容（后面是盖在上面的按钮，评论模式下按钮后还可能有图钉） */
+.oryn-block > :has(+ .oryn-block-hit) {
 	margin-bottom: 0;
 }
 
@@ -215,6 +215,46 @@
 .oryn-block-hit:focus-visible {
 	outline: 2px solid var(--oryn-accent);
 	outline-offset: 0;
+}
+
+.oryn-block-comment .oryn-block-hit {
+	cursor: crosshair;
+}
+
+/* 只为挂图钉的块：不加边距，排版与整篇渲染一致 */
+.oryn-block-static {
+	position: relative;
+}
+
+.oryn-doc > .oryn-block-static:first-child > :first-child {
+	margin-top: 0;
+}
+
+/* 块的评论图钉：在块左侧的页边上依次排开 */
+.oryn-block-pins {
+	position: absolute;
+	top: 4px;
+	right: calc(100% + 6px);
+	display: flex;
+	gap: 4px;
+	pointer-events: none;
+}
+
+.oryn-block-pins .oryn-pin,
+.oryn-doc-pins .oryn-pin {
+	position: relative;
+	margin: 0;
+}
+
+/* 整篇文档的评论图钉 */
+.oryn-doc-pins {
+	position: fixed;
+	top: 12px;
+	left: 12px;
+	z-index: 10;
+	display: flex;
+	gap: 4px;
+	pointer-events: none;
 }
 
 .oryn-block-editor {

@@ -1,14 +1,23 @@
 // 幻灯片 artifact 的查看器（计划 M14 5.3）：一次一张，键盘与底部浮条翻页；演示态请父页面把帧铺满窗口；
 // `content` 能力可用且看的是最新版本时可以就地改字并保存成新版本。
 // `?view=print` 把全部幻灯片逐页排开（PDF 导出用），`?view=thumbnail` 只画第一张。
+// 评论（M31 7.4）：评论模式下点幻灯片报出张号、标题与归一化坐标；当前这张的图钉画在幻灯片上，定位时翻到那一张。
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+	NO_PINS,
+	pickPoint,
+	pointAnchor,
+	textAtPoint,
+} from "../../../src/lib/artifacts/office/anchor";
+import { PinLayer } from "../../../src/lib/artifacts/office/pins";
 import {
 	type Deck,
 	parseDeck,
 	slideSize,
 	withText,
 } from "../../../src/lib/artifacts/slides";
+import type { ViewerComments } from "../shared/bridge";
 import type { ViewMode } from "../shared/config";
 import type { ViewerContent } from "../shared/content";
 import { EditBar, SaveStatusBar } from "../shared/EditBar";
@@ -32,10 +41,13 @@ export function SlidesViewer({
 	content,
 	view,
 	strings,
+	comments,
 }: {
 	content: ViewerContent;
 	view: ViewMode;
 	strings: ViewerStrings;
+	/** 帧运行时的评论桥；没有时不画图钉、不响应点选。 */
+	comments?: ViewerComments;
 }): ReactNode {
 	const { doc } = content;
 	const parsed = useMemo(() => (doc ? parseDeck(doc.text) : null), [doc]);
@@ -88,6 +100,13 @@ export function SlidesViewer({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [interactive, count, current, presenting]);
 
+	// 定位评论：翻到锚点所在的那一张
+	const locate = view === null ? (comments?.locate ?? null) : null;
+	useEffect(() => {
+		const n = locate?.page?.number;
+		if (n !== undefined) setIndex(n - 1);
+	}, [locate]);
+
 	if (content.state === "loading")
 		return <p className="oryn-placeholder">{strings.loading}</p>;
 	if (content.state === "error" || !doc || !parsed)
@@ -116,6 +135,42 @@ export function SlidesViewer({
 
 	const slide = deck.slides[current];
 	const editing = draft !== null;
+	// 演示与改字时不评论、不画图钉
+	const pick =
+		!presenting && !editing && comments?.mode === "comment"
+			? comments.pick
+			: null;
+	const pins =
+		presenting || editing
+			? NO_PINS
+			: (comments?.pins ?? NO_PINS).filter(
+					(p) => p.anchor.page?.number === current + 1,
+				);
+	const overlay =
+		slide && (pick || pins.length > 0) ? (
+			<>
+				{pick ? (
+					<button
+						type="button"
+						className="oryn-pick"
+						aria-label={strings.commentSlide}
+						onClick={(e) => {
+							const { point, at } = pickPoint(e);
+							const name = "title" in slide ? (slide.title ?? "") : "";
+							// 点中的最内层文字元素；幻灯片画板与根节点本身不算（那是整张的文字）
+							const text = textAtPoint(
+								at,
+								(el) =>
+									el.closest(".oryn-s-scaled") !== null &&
+									!el.matches(".oryn-s-scaled, .oryn-s-scaled > *"),
+							);
+							pick(pointAnchor({ number: current + 1, name }, point, text), at);
+						}}
+					/>
+				) : null}
+				<PinLayer pins={pins} />
+			</>
+		) : undefined;
 	const startPresenting = () => {
 		setPresenting(true);
 		requestPresent(true);
@@ -137,7 +192,7 @@ export function SlidesViewer({
 					onDismiss={content.dismiss}
 				/>
 			)}
-			{!presenting && content.editable && !editing && (
+			{!presenting && content.editable && !editing && !pick && (
 				<button
 					type="button"
 					className="oryn-btn oryn-s-edit"
@@ -150,7 +205,7 @@ export function SlidesViewer({
 				</button>
 			)}
 			{slide && (
-				<ScaledSlide deck={deck}>
+				<ScaledSlide deck={deck} overlay={overlay}>
 					<SlideView
 						key={current}
 						deck={deck}

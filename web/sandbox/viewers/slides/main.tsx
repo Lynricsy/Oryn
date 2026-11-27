@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { useViewerBridge } from "../shared/bridge";
 import {
 	pickLocale,
 	readViewerConfig,
@@ -25,7 +26,15 @@ function App({
 	strings: ViewerStrings;
 }): ReactNode {
 	const content = useViewerContent(config, view);
-	return <SlidesViewer content={content} view={view} strings={strings} />;
+	const comments = useViewerBridge();
+	return (
+		<SlidesViewer
+			content={content}
+			view={view}
+			strings={strings}
+			comments={comments}
+		/>
+	);
 }
 
 const config = readViewerConfig(document);

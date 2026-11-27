@@ -17,6 +17,10 @@ export interface ViewerStrings {
 	dismiss: string;
 	documentHint: string;
 	editBlock: string;
+	/** 评论模式下：块上的点选按钮、整篇评论按钮、幻灯片上的点选按钮。 */
+	commentBlock: string;
+	commentDocument: string;
+	commentSlide: string;
 	slidesHint: string;
 	prev: string;
 	next: string;
@@ -79,6 +83,9 @@ const ZH: ViewerStrings = {
 	dismiss: "关闭",
 	documentHint: "点击段落、标题或列表来修改文字",
 	editBlock: "修改这一块",
+	commentBlock: "评论这一块",
+	commentDocument: "评论整篇文档",
+	commentSlide: "在这里评论",
 	slidesHint: "点击幻灯片上的文字直接修改",
 	prev: "上一张",
 	next: "下一张",
@@ -125,6 +132,9 @@ const EN: ViewerStrings = {
 	dismiss: "Dismiss",
 	documentHint: "Click a paragraph, heading or list to change its text",
 	editBlock: "Edit this block",
+	commentBlock: "Comment on this block",
+	commentDocument: "Comment on the whole document",
+	commentSlide: "Comment here",
 	slidesHint: "Click any text on the slide to change it",
 	prev: "Previous slide",
 	next: "Next slide",

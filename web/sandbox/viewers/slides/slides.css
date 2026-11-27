@@ -415,3 +415,11 @@ body,
 .oryn-editable:focus {
 	outline: 2px solid var(--s-accent);
 }
+
+/* 盖在缩放后的幻灯片上的评论层（点选按钮与图钉），与画板同大小、不随画板缩放 */
+.oryn-s-overlay {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+}

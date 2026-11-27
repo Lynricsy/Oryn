@@ -347,3 +347,54 @@
 .oryn-o-pdf .textLayer[data-main-rotation="270"] {
 	transform: rotate(270deg) translateX(-100%);
 }
+
+/* 表格上画不到格子里的评论图钉（整张工作表、滚出视口、别的工作表上的），按工作表列在右上角 */
+.oryn-o-sheet-pins {
+	position: absolute;
+	top: 6px;
+	right: 18px;
+	z-index: 4;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px;
+	max-width: 60%;
+	pointer-events: none;
+}
+
+.oryn-o-sheet-pin-group {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 4px 2px 8px;
+	border: 1px solid var(--oryn-line, rgb(128 128 128 / 0.35));
+	border-radius: 999px;
+	background: var(--oryn-raised, #fff);
+	box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
+	font-size: 11px;
+	pointer-events: auto;
+}
+
+.oryn-o-sheet-pin-name {
+	max-width: 12em;
+	overflow: hidden;
+	color: var(--oryn-muted, #71717a);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.oryn-o-sheet-pin {
+	appearance: none;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 50% 50% 50% 2px;
+	background: var(--oryn-accent, #2563eb);
+	color: var(--oryn-accent-fg, #fff);
+	font:
+		600 11px / 20px system-ui,
+		sans-serif;
+	text-align: center;
+	cursor: pointer;
+}

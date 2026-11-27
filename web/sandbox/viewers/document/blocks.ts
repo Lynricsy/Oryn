@@ -59,3 +59,21 @@ export function replaceBlock(
 	});
 	return joinBlocks(next);
 }
+
+/**
+ * 评论锚点的块序号在当前文本里落到哪一块：`texts` 是各块源码折叠空白后的前 120 码点（与锚点的 `text` 同法）。
+ * 原序号处的文字与锚点相同就用它；否则找文字相同、离原序号最近的块（一样近取靠前的）；都没有回 `null`。
+ */
+export function relocateBlock(
+	texts: readonly string[],
+	block: number,
+	text: string,
+): number | null {
+	if (texts[block] === text) return block;
+	let best: number | null = null;
+	for (let i = 0; i < texts.length; i++) {
+		if (texts[i] !== text) continue;
+		if (best === null || Math.abs(i - block) < Math.abs(best - block)) best = i;
+	}
+	return best;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { joinBlocks, replaceBlock, splitBlocks } from "./blocks";
+import { joinBlocks, relocateBlock, replaceBlock, splitBlocks } from "./blocks";
 
 const DOC = `
 # 重连机制
@@ -51,5 +51,20 @@ describe("splitBlocks", () => {
 		expect(replaceBlock(blocks, 1, "B2")).toBe("# A\n\nB2\n\nC\n");
 		expect(replaceBlock(blocks, 1, "  ")).toBe("# A\n\nC\n");
 		expect(replaceBlock(splitBlocks("only\n"), 0, "")).toBe("\n");
+	});
+});
+
+describe("relocateBlock", () => {
+	const texts = ["# A", "B", "C", "B"];
+	it("原序号处文字相同就用它", () => {
+		expect(relocateBlock(texts, 3, "B")).toBe(3);
+	});
+	it("否则取文字相同、离原序号最近的块，一样近取靠前的", () => {
+		expect(relocateBlock(texts, 2, "B")).toBe(1);
+		expect(relocateBlock(texts, 9, "B")).toBe(3);
+		expect(relocateBlock(texts, 0, "C")).toBe(2);
+	});
+	it("没有文字相同的块回 null", () => {
+		expect(relocateBlock(texts, 1, "D")).toBeNull();
 	});
 });
