@@ -12,7 +12,11 @@ import {
 	useArtifactCapabilities,
 } from "../../api/artifact-queries";
 import { api, unwrap } from "../../api/client";
-import { CANVAS_FILE, parseCanvasDoc } from "../../lib/artifacts/canvas-doc";
+import {
+	archivedPages,
+	CANVAS_FILE,
+	parseCanvasDoc,
+} from "../../lib/artifacts/canvas-doc";
 import { dispositionName, downloadBlob } from "../../lib/artifacts/download";
 import { showToast } from "../../state/toasts";
 import {
@@ -142,7 +146,10 @@ export function MockupDialog({
 	const [customBg, setCustomBg] = useState("#f4f4f5");
 	const [busy, setBusy] = useState(false);
 
-	const pages = docQuery.data?.pages ?? [];
+	// 落选方案的画框不能导出（M34 C6），不列出；全选时不传 frames，后端同样排除它们
+	const doc = docQuery.data;
+	const archived = doc ? archivedPages(doc) : null;
+	const pages = doc?.pages.filter((p) => !archived?.has(p.id)) ?? [];
 	const selectedPages = pages.filter((p) => !excluded.has(p.id));
 	const allSelected = pages.length > 0 && selectedPages.length === pages.length;
 	const someSelected =

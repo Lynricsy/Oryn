@@ -20,6 +20,7 @@ import {
 import type { Thread } from "../../../api/client";
 import {
 	type CanvasDoc,
+	type CanvasGroup,
 	type CanvasNote,
 	type CanvasPage,
 	noteBox,
@@ -45,6 +46,8 @@ export interface HandOffSet {
 	pages: CanvasPage[];
 	/** 绘制顺序。 */
 	notes: CanvasNote[];
+	/** 文档的方案组：画框行带上方案信息（M34 C7）。 */
+	groups: CanvasGroup[];
 }
 
 function overlaps(
@@ -83,6 +86,7 @@ export function handOffSet(
 	return {
 		pages: readingOrder(doc, canvas).filter((p) => pageIds.has(p.id)),
 		notes: notes.filter((n) => noteIds.has(n.id)),
+		groups: doc.groups ?? [],
 	};
 }
 
@@ -154,6 +158,7 @@ export async function handOff(
 		set.pages,
 		set.notes,
 		deps.t,
+		set.groups,
 	);
 	if (target === null) {
 		deps.seedHome(

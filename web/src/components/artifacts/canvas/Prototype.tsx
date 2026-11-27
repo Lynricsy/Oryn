@@ -6,6 +6,8 @@
  * - 通过 `FrameLink` 监听运行时的 `navigated {frame}` 与 `ready.design`，帧内点击 `<Link>` 跳转后同步当前帧名、尺寸与设备外壳，
  *   不重载 iframe；顶栏下拉切帧或重置起始帧时优先发 `{kind:"navigate", frame}`，非设计帧或模式不同则直接切源。
  * - 支持静态产物帧与实时预览帧（`LiveFrame` / `PORTAL_SANDBOX`，目标源为 portal 源）。
+ * - 落选方案的画框（`archivedPages`，M34 C6）不可达：不做起始帧、不进切帧下拉；帧内 `<Link>` 跳到落选帧时立即跳回当前帧，
+ *   与指向不存在的帧一样停在原处。
  */
 import {
 	type ReactNode,
@@ -18,6 +20,7 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
+	archivedPages,
 	type CanvasDoc,
 	type CanvasPage,
 	DEVICES,
@@ -52,18 +55,22 @@ export function findPageByFrame(
 	);
 }
 
-/** 选出原型起始画框：`doc.design.start` → 第一个带 `source` 的画框 → 第一个画框。 */
+/** 原型可达的画框：去掉落选方案的画框（M34 C6）。 */
+export function reachablePages(doc: CanvasDoc): CanvasPage[] {
+	const archived = archivedPages(doc);
+	return doc.pages.filter((p) => !archived.has(p.id));
+}
+
+/** 选出原型起始画框（只在可达的画框里选）：`doc.design.start` → 第一个带 `source` 的画框 → 第一个画框。 */
 export function resolveStartPage(doc: CanvasDoc): CanvasPage | null {
+	const pages = reachablePages(doc);
 	const start = doc.design?.start;
 	if (start) {
 		const hit =
-			doc.pages.find((p) => p.id === start) ??
-			findPageByFrame(doc.pages, start);
+			pages.find((p) => p.id === start) ?? findPageByFrame(pages, start);
 		if (hit) return hit;
 	}
-	return (
-		doc.pages.find((p) => frameIdOf(p.source) !== null) ?? doc.pages[0] ?? null
-	);
+	return pages.find((p) => frameIdOf(p.source) !== null) ?? pages[0] ?? null;
 }
 
 export interface PrototypeProps {
@@ -122,6 +129,7 @@ export function Prototype({
 	onClose,
 }: PrototypeProps): ReactNode {
 	const { t } = useTranslation();
+	const pages = useMemo(() => reachablePages(doc), [doc]);
 	const startPage = useMemo(() => resolveStartPage(doc), [doc]);
 	const [currentId, setCurrentId] = useState<string>(() => startPage?.id ?? "");
 	// `srcPageId` 仅绑定 iframe 初始 src，帧内跳转时保持不变以免二次加载
@@ -135,15 +143,16 @@ export function Prototype({
 
 	const linkRef = useRef<FrameLink | null>(null);
 	const linkOffsRef = useRef<(() => void)[]>([]);
-	const pagesRef = useRef(doc.pages);
-	pagesRef.current = doc.pages;
+	const pagesRef = useRef(pages);
+	pagesRef.current = pages;
+	const allPagesRef = useRef(doc.pages);
+	allPagesRef.current = doc.pages;
 
 	const currentPage =
-		doc.pages.find((p) => p.id === currentId) ??
-		startPage ??
-		doc.pages[0] ??
-		null;
-	const srcPage = doc.pages.find((p) => p.id === srcPageId) ?? currentPage;
+		pages.find((p) => p.id === currentId) ?? startPage ?? pages[0] ?? null;
+	const currentRef = useRef(currentPage);
+	currentRef.current = currentPage;
+	const srcPage = pages.find((p) => p.id === srcPageId) ?? currentPage;
 	const srcContent: PageContent = srcPage
 		? contentOf(srcPage)
 		: { kind: "empty" };
@@ -154,9 +163,20 @@ export function Prototype({
 	const overrideRef = useRef(deviceOverride);
 	overrideRef.current = deviceOverride;
 
-	const syncFrame = useCallback((frame: string) => {
+	const syncFrame = useCallback((frame: string, linked: boolean) => {
 		const matched = findPageByFrame(pagesRef.current, frame);
-		if (!matched) return;
+		if (!matched) {
+			// 帧内 <Link> 跳到了落选画框：跳回当前帧，停在原处（同指向不存在的帧）
+			const back = currentRef.current ? pageFrameId(currentRef.current) : null;
+			if (
+				linked &&
+				back !== null &&
+				back !== frame &&
+				findPageByFrame(allPagesRef.current, frame)
+			)
+				linkRef.current?.post({ kind: "navigate", frame: back });
+			return;
+		}
 		const prevHasShell = deviceRef.current !== "none";
 		const nextDevice: Device = overrideRef.current ?? matched.device ?? "none";
 		const nextHasShell = nextDevice !== "none";
@@ -172,9 +192,9 @@ export function Prototype({
 			linkRef.current = link;
 			if (!link) return;
 			linkOffsRef.current = [
-				link.on("navigated", (msg) => syncFrame(msg.frame)),
+				link.on("navigated", (msg) => syncFrame(msg.frame, true)),
 				link.on("ready", (msg) => {
-					if (msg.design) syncFrame(msg.design.frame);
+					if (msg.design) syncFrame(msg.design.frame, false);
 				}),
 			];
 		},
@@ -211,7 +231,7 @@ export function Prototype({
 	}, []);
 
 	const navigateTo = (targetId: string, forceReload = false) => {
-		const target = doc.pages.find((p) => p.id === targetId);
+		const target = pages.find((p) => p.id === targetId);
 		if (!target) return;
 		const targetFrame = pageFrameId(target);
 		const currentFrame = currentPage ? pageFrameId(currentPage) : null;
@@ -331,14 +351,14 @@ export function Prototype({
 					</span>
 				</div>
 				<div className="flex min-w-0 flex-wrap items-center gap-1.5">
-					{doc.pages.length > 0 && (
+					{pages.length > 0 && (
 						<Select
 							aria-label={t("artifacts.design.prototype.frameSelect")}
 							size="sm"
 							className="w-auto max-w-[160px]"
 							value={currentPage?.id ?? ""}
 							onChange={(v) => navigateTo(v)}
-							options={doc.pages.map((p) => ({ value: p.id, label: p.name }))}
+							options={pages.map((p) => ({ value: p.id, label: p.name }))}
 						/>
 					)}
 					<Select

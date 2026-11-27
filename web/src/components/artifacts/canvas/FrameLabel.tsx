@@ -3,13 +3,16 @@
  *
  * 按钮依次是：调节（6.5，只给声明了参数的画框）、交给 Agent（6.6）、下载 PNG、从这页演示（6.8）、聚焦（6.8）。
  * 每个按钮由对应的回调决定是否出现：没给回调就没有这个按钮。行宽（= 画框在屏幕上的宽）放不下时从右往左隐藏按钮。
- * 按钮在画框选中、悬停或获得焦点时显示。点名字选中画框（`Shift` 加选）。
+ * 按钮在画框选中、悬停或获得焦点时显示。点名字选中画框（`Shift` 加选）。属于方案组的画框在名字前带方案标记（方案 id 大写）。
  */
 import type { TFunction } from "i18next";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchArtifactPng } from "../../../api/artifact-queries";
-import type { CanvasPage } from "../../../lib/artifacts/canvas-doc";
+import type {
+	CanvasPage,
+	CanvasVariant,
+} from "../../../lib/artifacts/canvas-doc";
 import { downloadBlob } from "../../../lib/artifacts/download";
 import { showToast } from "../../../state/toasts";
 import type { IconName } from "../../ui/icons";
@@ -38,6 +41,8 @@ export interface FrameLabelActions {
 
 export interface FrameLabelProps extends FrameLabelActions {
 	page: CanvasPage;
+	/** 画框所属的方案（M34）：名字前显示方案标记。 */
+	variant?: Pick<CanvasVariant, "id" | "name">;
 	/** 画框左上角在画布区里的屏幕坐标，与画框在屏幕上的宽。 */
 	left: number;
 	top: number;
@@ -48,6 +53,7 @@ export interface FrameLabelProps extends FrameLabelActions {
 
 export function FrameLabel({
 	page,
+	variant,
 	left,
 	top,
 	width,
@@ -102,6 +108,15 @@ export function FrameLabel({
 				height: LABEL_HEIGHT,
 			}}
 		>
+			{variant && (
+				<span
+					data-testid="canvas-frame-variant"
+					title={variant.name}
+					className="mr-1 inline-flex h-4 max-w-16 shrink-0 items-center truncate rounded bg-accent-soft px-1 font-semibold text-2xs text-accent"
+				>
+					{variant.id.toUpperCase()}
+				</span>
+			)}
 			<button
 				type="button"
 				title={page.name}

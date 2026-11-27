@@ -236,6 +236,57 @@ describe("Prototype", () => {
 		);
 	});
 
+	it("落选方案的画框（M34 C6）：不做起始帧、不进下拉；帧内跳到落选帧时跳回当前帧", () => {
+		const doc: CanvasDoc = {
+			...makeDesignDoc([LOGIN, DASHBOARD, PLAIN_HTML], "p-dash"),
+			groups: [
+				{
+					id: "entry",
+					canvas: "c1",
+					name: "入口",
+					variants: [
+						{ id: "a", name: "登录", note: "", theme: "", pages: ["p-login"] },
+						{ id: "b", name: "控制台", note: "", theme: "", pages: ["p-dash"] },
+					],
+					picked: "a",
+					pickedBy: null,
+				},
+			],
+		};
+		expect(resolveStartPage(doc)?.id).toBe("p-login");
+		const contentOf = (p: CanvasPage): PageContent => ({
+			kind: "frame",
+			src: `https://frame.test/_oryn/v/1/${p.file}`,
+		});
+		render(
+			<Prototype
+				title="原型"
+				doc={doc}
+				contentOf={contentOf}
+				onClose={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("combobox", { name: "切换画框" }));
+		expect(
+			screen.getAllByRole("option").map((o) => o.textContent?.trim()),
+		).toEqual(["登录", "说明页"]);
+
+		const mock = attachMockWindow(
+			screen.getByTestId("prototype-frame") as HTMLIFrameElement,
+		);
+		mock.postMessage.mockClear();
+		mock.sendFromFrame({ kind: "navigated", frame: "dashboard" });
+		expect(screen.getByTestId("prototype-title").textContent).toBe("登录");
+		expect(mock.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: "navigate", frame: "login" }),
+			"*",
+		);
+		// 指向不存在的帧：同样停在原处，但不发跳回
+		mock.postMessage.mockClear();
+		mock.sendFromFrame({ kind: "navigated", frame: "missing" });
+		expect(mock.postMessage).not.toHaveBeenCalled();
+	});
+
 	it("手动切换帧与重置起始帧向 iframe 发送 navigate；支持 live 模式的 portal origin", () => {
 		const doc = makeDesignDoc([LOGIN, DASHBOARD], "p-login");
 		const portalOrigin = "https://t-abc-p5179.orb.example";

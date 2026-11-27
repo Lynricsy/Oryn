@@ -19,6 +19,7 @@ import {
 	applyCanvasOps,
 	type CanvasDoc,
 	type CanvasOp,
+	expandPicks,
 	parseCanvasDoc,
 	parseCanvasOps,
 	stringifyCanvasDoc,
@@ -412,6 +413,139 @@ const SEEDS: Seed[] = [
 </script>
 <style>h1 { color: var(--accent); font-size: var(--title-size); } [data-dark="true"] body { background: #18181b; color: #fafafa; }</style>
 <h1>把习惯变成日常</h1><p>每天一分钟，记录你的坚持。</p>`,
+			),
+		},
+	},
+	// 方案组（M34）：首页首屏三版方案并排，B 方案两个画框；另有一个不属于方案组的画框（统一到选定方案的对象）
+	{
+		id: "art_01JDNAVARIANTS000000000000",
+		kind: "canvas",
+		title: "首页首屏三版方案",
+		threadId: MAIN_THREAD,
+		projectId: projects[0]?.id,
+		path: "canvas.json",
+		versions: [
+			{
+				text: `${JSON.stringify(
+					{
+						format: 3,
+						canvases: [{ id: "canvas-1", name: "首页" }],
+						pages: [
+							{
+								id: "home-a",
+								canvas: "canvas-1",
+								name: "首屏 · 冷静",
+								file: "page-home-a.html",
+								x: 0,
+								y: 0,
+								width: 960,
+								height: 600,
+							},
+							{
+								id: "home-b",
+								canvas: "canvas-1",
+								name: "首屏 · 杂志",
+								file: "page-home-b.html",
+								x: 1104,
+								y: 0,
+								width: 960,
+								height: 600,
+							},
+							{
+								id: "pricing-b",
+								canvas: "canvas-1",
+								name: "定价 · 杂志",
+								file: "page-pricing-b.html",
+								x: 1104,
+								y: 696,
+								width: 960,
+								height: 600,
+							},
+							{
+								id: "home-c",
+								canvas: "canvas-1",
+								name: "首屏 · 高对比",
+								file: "page-home-c.html",
+								x: 2208,
+								y: 0,
+								width: 960,
+								height: 600,
+							},
+							{
+								id: "about",
+								canvas: "canvas-1",
+								name: "关于我们",
+								file: "page-about.html",
+								x: 0,
+								y: 1500,
+								width: 960,
+								height: 600,
+							},
+						],
+						notes: [],
+						groups: [
+							{
+								id: "home",
+								canvas: "canvas-1",
+								name: "首页首屏",
+								variants: [
+									{
+										id: "a",
+										name: "冷静克制",
+										note: "大留白，单列，冷灰配色",
+										theme: "",
+										pages: ["home-a"],
+									},
+									{
+										id: "b",
+										name: "暖调杂志",
+										note: "双栏版式，暖色衬线标题，带定价页",
+										theme: "",
+										pages: ["home-b", "pricing-b"],
+									},
+									{
+										id: "c",
+										name: "高对比",
+										note: "深色底，大字号，荧光强调色",
+										theme: "",
+										pages: ["home-c"],
+									},
+								],
+								picked: null,
+								pickedBy: null,
+							},
+						],
+					},
+					null,
+					2,
+				)}\n`,
+				at: NOW - 3 * 60 * MIN,
+			},
+		],
+		files: {
+			"page-home-a.html": page(
+				"首屏 · 冷静",
+				`<style>body { background: #f4f6f8; color: #1f2933; padding: 72px 96px; } h1 { font-size: 44px; font-weight: 500; letter-spacing: -0.01em; } p { color: #52606d; max-width: 30em; } a { display: inline-block; margin-top: 24px; padding: 10px 20px; border-radius: 6px; background: #334e68; color: #fff; text-decoration: none; }</style>
+<h1>把习惯变成日常</h1><p>每天一分钟，记录你的坚持。没有排行榜，也没有打卡压力。</p><a href="#">开始记录</a>`,
+			),
+			"page-home-b.html": page(
+				"首屏 · 杂志",
+				`<style>body { background: #fbf4ea; color: #3b2314; display: grid; grid-template-columns: 1.2fr 1fr; gap: 48px; padding: 64px; } h1 { font: 600 52px/1.1 Georgia, serif; color: #9a3412; } p { color: #6b4a33; } .side { border-left: 2px solid #f0c9a0; padding-left: 24px; font-style: italic; }</style>
+<div><h1>把习惯<br>变成日常</h1><p>每天一分钟，记录你的坚持。</p></div><div class="side"><p>「坚持不是意志力，是一张每天都会打开的表。」</p></div>`,
+			),
+			"page-pricing-b.html": page(
+				"定价 · 杂志",
+				`<style>body { background: #fbf4ea; color: #3b2314; padding: 64px; } h1 { font: 600 40px Georgia, serif; color: #9a3412; } .card { background: #fffaf3; border-color: #f0c9a0; }</style>
+<h1>定价</h1><div class="grid"><div class="card"><b>免费</b>三个习惯</div><div class="card"><b>¥12/月</b>不限习惯与提醒</div></div>`,
+			),
+			"page-home-c.html": page(
+				"首屏 · 高对比",
+				`<style>body { background: #0b0b0f; color: #f5f5f5; padding: 72px; } h1 { font-size: 64px; font-weight: 800; line-height: 1; } p { color: #a1a1aa; } a { display: inline-block; margin-top: 28px; padding: 14px 28px; border-radius: 999px; background: #c6ff3d; color: #0b0b0f; font-weight: 700; text-decoration: none; }</style>
+<h1>把习惯<br>变成日常。</h1><p>每天一分钟，记录你的坚持。</p><a href="#">现在开始</a>`,
+			),
+			"page-about.html": page(
+				"关于我们",
+				"<h1>关于我们</h1><p>三个人的小团队，做一款不催你的习惯应用。</p>",
 			),
 		},
 	},
@@ -1599,7 +1733,8 @@ export class MockArtifacts {
 		let ops: CanvasOp[];
 		let doc: CanvasDoc;
 		try {
-			ops = parseCanvasOps(body.ops);
+			// 选定方案的搬移操作由服务端按同一规则展开（同 canvas.ExpandPicks；重复展开不改变结果）
+			ops = expandPicks(live.doc, parseCanvasOps(body.ops));
 			if (ops.length === 0) throw new Error("没有操作");
 			for (const op of ops)
 				if (op.op === "add" && op.object.type === "note")

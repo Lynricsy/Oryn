@@ -102,6 +102,7 @@ import {
 	type PageContent,
 	pageUrl,
 } from "./frames";
+import { GroupOverlay, PickNotice, variantByPage } from "./GroupOverlay";
 import { HandOffBar } from "./HandOffBar";
 import { useHandOff } from "./handoff";
 import { isTypingTarget, keyAction, type Tool, type ZoomTarget } from "./keys";
@@ -486,6 +487,8 @@ export function CanvasEditor({
 	const [liveFlowLinks, setLiveFlowLinks] = useState<Record<string, string[]>>(
 		{},
 	);
+	// 用户刚选定方案的组（M34 C5 提示条）；关掉为 null
+	const [pickNotice, setPickNotice] = useState<string | null>(null);
 
 	const baseDoc = live ? snapshot.doc : pinnedDoc;
 	const doc = preview?.doc ?? baseDoc;
@@ -1550,6 +1553,7 @@ export function CanvasEditor({
 			p.y >= shown.y,
 	);
 	const selectedIds = items.map((it) => it.value.id);
+	const pageVariants = variantByPage(doc);
 	const render = caps.data?.render === true;
 	// 聚焦与演示（6.8）：顺序都是所在画布页的阅读顺序
 	const focusedPage = focused
@@ -1753,6 +1757,13 @@ export function CanvasEditor({
 						}}
 						onDoubleClick={onDoubleClick}
 					/>
+					<GroupOverlay
+						doc={doc}
+						canvas={canvasKey}
+						cam={cam}
+						commit={readOnly ? undefined : (ops) => commit(ops)}
+						onPicked={setPickNotice}
+					/>
 					<div
 						data-testid="canvas-frame-labels"
 						className="pointer-events-none absolute inset-0"
@@ -1763,6 +1774,7 @@ export function CanvasEditor({
 								<FrameLabel
 									key={p.id}
 									page={p}
+									variant={pageVariants.get(p.id)}
 									left={s.x}
 									top={s.y}
 									width={p.width * z}
@@ -1875,6 +1887,14 @@ export function CanvasEditor({
 						count={items.length}
 						busy={handOff.busy}
 						onHandOff={() => handOff.run(doc, canvasKey, selectedIds)}
+					/>
+				)}
+				{live && pickNotice !== null && (
+					<PickNotice
+						artifactId={artifactId}
+						doc={doc}
+						group={pickNotice}
+						onClose={() => setPickNotice(null)}
 					/>
 				)}
 				{compact ? (

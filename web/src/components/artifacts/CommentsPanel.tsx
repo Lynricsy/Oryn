@@ -26,6 +26,7 @@ import {
 	useResolveArtifactComment,
 } from "../../api/artifact-queries";
 import type { Thread } from "../../api/client";
+import { type CanvasDoc, parseCanvasDoc } from "../../lib/artifacts/canvas-doc";
 import { commentsPrompt } from "../../lib/artifacts/prompt";
 import { formatRelative } from "../../lib/format";
 import { sendGeneratedPrompt } from "../../state/actions";
@@ -49,6 +50,7 @@ import {
 	commentSubmittable,
 	isSubmitKey,
 } from "./CommentBox";
+import { restTransport } from "./canvas/use-canvas-doc";
 import { useArtifactActivity } from "./use-activity";
 import { authorName } from "./VersionHistory";
 
@@ -56,6 +58,12 @@ type DetailThread = ArtifactDetail["threads"][number];
 
 /** 下拉里「新线程」一项的值（线程 id 不会是空串）。 */
 const NEW_THREAD = "";
+
+/** 画布的实时文档（含还没落成版本的用户操作，如刚选定的方案）：评论消息据此给画框行带上方案信息（M34 C7）。 */
+async function liveCanvasDoc(artifactId: string): Promise<CanvasDoc> {
+	const state = await restTransport(artifactId).fetchState();
+	return parseCanvasDoc(JSON.stringify(state.doc));
+}
 
 export interface SendTarget {
 	threadId: string;
@@ -336,26 +344,29 @@ function SendBar({
 
 	const send = async () => {
 		if (disabled || !artifact) return;
-		const text = commentsPrompt(
-			{ id: artifactId, title: artifact.title },
-			version,
-			unsent,
-			t,
-		);
-		if (target === NEW_THREAD) {
-			uiStore
-				.getState()
-				.seedHome(
-					artifact.projectId
-						? { text, projectId: artifact.projectId }
-						: { text },
-				);
-			navigate("/");
-			return;
-		}
 		const to = targets.find((x) => x.threadId === target);
 		setBusy(true);
 		try {
+			const text = commentsPrompt(
+				{ id: artifactId, title: artifact.title },
+				version,
+				unsent,
+				t,
+				artifact.kind === "canvas"
+					? await liveCanvasDoc(artifactId)
+					: undefined,
+			);
+			if (target === NEW_THREAD) {
+				uiStore
+					.getState()
+					.seedHome(
+						artifact.projectId
+							? { text, projectId: artifact.projectId }
+							: { text },
+					);
+				navigate("/");
+				return;
+			}
 			await sendGeneratedPrompt(target, text);
 			await markSent.mutateAsync({
 				id: artifactId,

@@ -77,6 +77,7 @@ const CANVAS_DOC = {
 };
 
 let requests: { method: string; url: URL }[];
+let canvasDoc: object;
 let downloads: string[];
 let renderOk: boolean;
 let exportFailOnce: boolean;
@@ -104,7 +105,7 @@ function setupFetch() {
 				url.pathname === `/api/v1/artifacts/${ID}/file` &&
 				url.searchParams.get("path") === "canvas.json"
 			) {
-				return new Response(JSON.stringify(CANVAS_DOC), {
+				return new Response(JSON.stringify(canvasDoc), {
 					headers: { "Content-Type": "application/json" },
 				});
 			}
@@ -136,6 +137,7 @@ function setupFetch() {
 
 beforeEach(() => {
 	requests = [];
+	canvasDoc = CANVAS_DOC;
 	downloads = [];
 	renderOk = true;
 	exportFailOnce = false;
@@ -169,6 +171,34 @@ function mountDialog(onClose = vi.fn()) {
 }
 
 describe("MockupDialog", () => {
+	it("不列出落选方案的画框（M34 C6）；全选时不传 frames，由后端排除落选画框", async () => {
+		canvasDoc = {
+			...CANVAS_DOC,
+			format: 3,
+			groups: [
+				{
+					id: "layout",
+					canvas: "c1",
+					name: "布局",
+					variants: [
+						{ id: "a", name: "宽屏", note: "", theme: "", pages: ["home"] },
+						{ id: "b", name: "窄屏", note: "", theme: "", pages: ["mobile"] },
+					],
+					picked: "a",
+					pickedBy: null,
+				},
+			],
+		};
+		mountDialog();
+		await screen.findByText("首页");
+		expect(screen.queryByText("移动端")).toBeNull();
+		expect(screen.getByText("1/1")).toBeTruthy();
+		fireEvent.click(screen.getByTestId("mockup-download"));
+		await waitFor(() => expect(downloads).toHaveLength(1));
+		const req = requests.find((r) => r.url.pathname.endsWith("/export"));
+		expect(req?.url.searchParams.has("frames")).toBe(false);
+	});
+
 	it("加载画框列表、调整参数并请求 mockup-png 导出", async () => {
 		const { onClose } = mountDialog();
 		await screen.findByText("移动端");
