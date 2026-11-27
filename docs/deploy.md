@@ -130,6 +130,7 @@ artifacts:
 编辑会话的行为：
 
 - 引擎经 `<wopi_base>/wopi/files/<artifact id>` 回调 orynd（不经登录 Cookie，凭 32 字节随机访问令牌，库里只存哈希；令牌 12 小时过期）。discovery 里有 `proof-key` 时 orynd 校验每个回调的 `X-WOPI-Proof`；默认 CODE 镜像不发签名，这时只凭令牌并记一条日志。引擎必须能访问 `wopi_base`，浏览器必须能访问 `url`。
+- 令牌在引擎的回调里以查询串 `access_token` 出现，编辑器 WebSocket 的路径里也带着它；默认 CODE 镜像不签名时它就是对文档的写凭证。不要让任何一层把它写进日志：主域名的 `/wopi/` 与整个引擎虚拟主机都要关掉访问日志（示例反代配置已包含），自己另加的日志、监控或 WAF 也要排除这两处。
 - 版本只在显式保存、退出编辑器、会话过期三个时刻且内容有变时落下，作者是用户；引擎每 30 秒的自动保存只更新工作副本。
 - 编辑期间这个 artifact 的其他写入（agent 的 `update_artifact`、恢复版本、上传新版本）回 423 `locked`。关闭编辑器后宽限 30 秒（等引擎的退出保存），最后一次活动 30 分钟后占用也会过期；释放时工作副本与最新版本不同就落一个备注为「编辑器自动保存」的版本。orynd 每 15 秒清扫一次，启动时先清扫一轮。
 - 去掉 `artifacts.office` 重启后，遗留的占用照常按上面的规则释放。
@@ -143,7 +144,7 @@ artifacts:
 3. 配置要点（示例文件已包含）：`proxy_http_version 1.1`、`Upgrade`/`Connection` 头（WebSocket 与 orb link）、`proxy_read_timeout 3600s`、`proxy_buffering off`、`client_max_body_size 600m`。
 4. 托管仓库（M24）：主域名另有 `location /git/ { client_max_body_size 0; … }`，其余各行与 `location /` 相同。主人本机的 `git push` 与 Git LFS 上传经这里到达 orynd，托管仓库不设大小上限，所以这条路径不限请求体，其余路径仍是 `600m`。数据盘由 orynd 自己保护（可用空间低于 `repos.min_free_gb` 时拒绝推送与上传）。orb 的推送与上传在 orb link 里传输，不受这条上限影响。自己写反代配置时同样要给 `/git/` 放开请求体上限并关闭请求缓冲（`proxy_request_buffering off`），否则大推送会被 413 拒绝，或先整个缓冲到反代的磁盘上。
 5. 公开入口：`/api/v1/public/` 下的路径不需要登录，必须能从公网直接到达，不要在反代上给它们加 IP 白名单、Basic Auth 或单点登录。其中 `/api/v1/public/github/webhook` 收 GitHub 的仓库 webhook，`/api/v1/public/hooks/` 收定时的入站 Webhook（M31，见 [features.md](features.md#入站-webhook)）。后者的请求体上限（64 KiB）与按来源 IP 的限流由 orynd 执行，不需要单独的 `location`；限流靠反代传来的 `X-Real-IP`（示例文件已设置），不传时所有调用方共用反代的回环地址、一起被限流。
-6. Office 引擎（M32，可选）：引擎单独一个域名，`deploy/openresty/oryn-office.conf` 是对应的虚拟主机（WebSocket 升级、长超时、挡掉公网的 `/cool/convert-to`）。引擎回调 orynd 的 `/wopi/` 走主域名的 `location /`，不需要单独配置。
+6. Office 引擎（M32，可选）：引擎单独一个域名，`deploy/openresty/oryn-office.conf` 是对应的虚拟主机（WebSocket 升级、长超时、挡掉公网的 `/cool/convert-to`、不记访问日志）。引擎回调 orynd 的 `/wopi/` 在主域名上有单独的 `location /wopi/ { access_log off; … }`：回调的查询串里带着写令牌，走默认 `location /` 会被访问日志的 `$request` 原样记下。自己写反代配置时同样要给这个前缀关掉访问日志，或只记不带查询串的 `$uri`。
 
 ## 4. 启动控制面并初始化
 
