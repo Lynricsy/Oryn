@@ -155,6 +155,140 @@ func TestScheduleSetInputAndPrompts(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC).UnixMilli(), at)
 }
 
+func TestScheduleManualKind(t *testing.T) {
+	f := newFakeAPI(t)
+	f.json("POST /api/v1/schedules", 201, apigen.Schedule{ID: "sch_m"})
+	ctx := context.Background()
+	t.Setenv("TZ", "")
+
+	var errb bytes.Buffer
+	o := scheduleFlags{noProject: true, name: "hook", manual: true, keep: 5, prompt: "处理推送"}
+	_, err := scheduleAdd(ctx, f.client(), o, changedSet("no-project", "name", "manual", "prompt"), nil, &errb)
+	require.NoError(t, err)
+	reqs := f.requests()
+	assert.JSONEq(t, `{"mode":"new_thread","kind":"manual","prompt":"处理推送","name":"hook","keepLast":5}`, string(reqs[len(reqs)-1].Body),
+		"manual 不带时间字段，也不填缺省时区")
+	assert.Empty(t, errb.String(), "manual 不提示缺省时区")
+
+	n := len(f.requests())
+	_, err = scheduleAdd(ctx, f.client(), scheduleFlags{noProject: true, name: "x", manual: true, every: "1m", prompt: "p"}, changedSet("manual", "every", "prompt"), nil, &bytes.Buffer{})
+	assert.ErrorContains(t, err, "--every / --manual 只能给一个")
+	_, err = scheduleAdd(ctx, f.client(), scheduleFlags{noProject: true, name: "x", manual: true, until: "2027-01-01T00:00:00Z", prompt: "p"}, changedSet("manual", "until", "prompt"), nil, &bytes.Buffer{})
+	assert.ErrorContains(t, err, "--until")
+	_, err = scheduleAdd(ctx, f.client(), scheduleFlags{noProject: true, name: "x", prompt: "p"}, changedSet("prompt"), nil, &bytes.Buffer{})
+	assert.ErrorContains(t, err, "--manual 之一")
+	assert.Len(t, f.requests(), n, "参数错误时不发请求")
+
+	// 线程内定时（set）不接受 --manual，缺时间时的提示也不提它
+	var in apigen.ScheduleInput
+	err = applyScheduleFlags(&in, scheduleFlags{manual: true, prompt: "p"}, changedSet("manual", "prompt"), true, time.Now(), nil, &bytes.Buffer{})
+	assert.ErrorContains(t, err, "只适用于每次新建线程的定时")
+	err = applyScheduleFlags(&in, scheduleFlags{prompt: "p"}, changedSet("prompt"), true, time.Now(), nil, &bytes.Buffer{})
+	assert.EqualError(t, err, "须给出 --cron、--every 或 --at 之一")
+
+	// update：cron → manual 时去掉 cron 与截止时刻，保留其余
+	cur := apigen.Schedule{ID: "sch_c", Mode: apigen.ScheduleModeNewThread, Name: "c", Kind: apigen.ScheduleKindCron, Cron: new("0 9 * * *"),
+		Timezone: "Asia/Shanghai", EndsAt: new(int64(1798732800000)), Prompt: "p", Enabled: true, Overlap: apigen.ScheduleOverlapSkip, KeepLast: 5}
+	f.json("GET /api/v1/schedules/sch_c", 200, cur)
+	f.json("PUT /api/v1/schedules/sch_c", 200, cur)
+	_, err = scheduleUpdate(ctx, f.client(), "sch_c", scheduleFlags{manual: true}, changedSet("manual"), nil, &bytes.Buffer{})
+	require.NoError(t, err)
+	reqs = f.requests()
+	assert.JSONEq(t, `{"mode":"new_thread","name":"c","kind":"manual","timezone":"Asia/Shanghai","prompt":"p","enabled":true,"overlap":"skip","keepLast":5}`,
+		string(reqs[len(reqs)-1].Body))
+
+	f.json("GET /api/v1/schedules/sch_t", 200, apigen.Schedule{ID: "sch_t", Mode: apigen.ScheduleModeThread, Kind: apigen.ScheduleKindEvery, Every: new("1h0m0s"), ThreadID: new("T-1")})
+	_, err = scheduleUpdate(ctx, f.client(), "sch_t", scheduleFlags{manual: true}, changedSet("manual"), nil, &bytes.Buffer{})
+	assert.ErrorContains(t, err, "--manual")
+}
+
+func TestScheduleManualAndWebhookDisplay(t *testing.T) {
+	hook := &apigen.ScheduleWebhook{HasSecret: true, CreatedAt: 1, RotatedAt: 1}
+	m := apigen.Schedule{Kind: apigen.ScheduleKindManual, Timezone: "UTC"}
+	assert.Equal(t, "manual", scheduleSpec(m))
+	assert.Equal(t, "manual", nextText(m))
+	m.Webhook = hook
+	assert.Equal(t, "manual + webhook", scheduleSpec(m))
+	assert.Equal(t, "manual or webhook", nextText(m))
+	m.PausedReason = new(apigen.SchedulePausedReasonUser)
+	assert.Equal(t, "paused: user", nextText(m))
+
+	e := apigen.Schedule{Kind: apigen.ScheduleKindEvery, Every: new("1h0m0s"), Timezone: "UTC", Webhook: hook}
+	assert.Equal(t, "every 1h0m0s (UTC) + webhook", scheduleSpec(e))
+	var out bytes.Buffer
+	require.NoError(t, printSchedule(&out, e))
+	assert.Contains(t, out.String(), "要求签名")
+	assert.Contains(t, out.String(), "尚未被调用")
+}
+
+func TestScheduleWebhookPut(t *testing.T) {
+	f := newFakeAPI(t)
+	f.json("PUT /api/v1/schedules/sch_1/webhook", 200, apigen.ScheduleWebhookResult{
+		URL: new("https://oryn.example/api/v1/public/hooks/owh_abc"), Webhook: apigen.ScheduleWebhook{HasSecret: true, CreatedAt: 1, RotatedAt: 1}})
+	f.json("DELETE /api/v1/schedules/sch_1/webhook", 204, nil)
+	ctx := context.Background()
+
+	// 首次开启：空请求体；url 单独一行到 stdout，提示到 stderr
+	r, err := scheduleWebhookPut(ctx, f.client(), "sch_1", scheduleWebhookFlags{}, changedSet(), nil)
+	require.NoError(t, err)
+	var out, errb bytes.Buffer
+	require.NoError(t, printWebhookResult(&out, &errb, r, false))
+	assert.Equal(t, "https://oryn.example/api/v1/public/hooks/owh_abc\n", out.String())
+	assert.Contains(t, errb.String(), "只显示这一次")
+	reqs := f.requests()
+	assert.Equal(t, "PUT /api/v1/schedules/sch_1/webhook", reqs[0].Method+" "+reqs[0].Path)
+	assert.JSONEq(t, `{}`, string(reqs[0].Body))
+
+	// --rotate + --secret-stdin（去掉末尾换行）
+	_, err = scheduleWebhookPut(ctx, f.client(), "sch_1", scheduleWebhookFlags{rotate: true, secretStdin: true}, changedSet("rotate", "secret-stdin"), strings.NewReader("s3cr3t\n"))
+	require.NoError(t, err)
+	reqs = f.requests()
+	assert.JSONEq(t, `{"rotateKey":true,"secret":"s3cr3t"}`, string(reqs[len(reqs)-1].Body))
+
+	// --secret / --clear-secret
+	_, err = scheduleWebhookPut(ctx, f.client(), "sch_1", scheduleWebhookFlags{secret: "k"}, changedSet("secret"), nil)
+	require.NoError(t, err)
+	reqs = f.requests()
+	assert.JSONEq(t, `{"secret":"k"}`, string(reqs[len(reqs)-1].Body))
+	_, err = scheduleWebhookPut(ctx, f.client(), "sch_1", scheduleWebhookFlags{clearSecret: true}, changedSet("clear-secret"), nil)
+	require.NoError(t, err)
+	reqs = f.requests()
+	assert.JSONEq(t, `{"secret":""}`, string(reqs[len(reqs)-1].Body))
+
+	// 没有新地址：stdout 打印状态
+	out.Reset()
+	errb.Reset()
+	require.NoError(t, printWebhookResult(&out, &errb, apigen.ScheduleWebhookResult{Webhook: apigen.ScheduleWebhook{RotatedAt: 1, LastCalledAt: new(int64(2))}}, false))
+	assert.Contains(t, out.String(), "不要求签名")
+	assert.Contains(t, out.String(), "最近调用")
+	assert.Empty(t, errb.String())
+
+	n := len(f.requests())
+	for _, bad := range []struct {
+		o       scheduleWebhookFlags
+		changed []string
+		stdin   string
+		want    string
+	}{
+		{scheduleWebhookFlags{secret: "k", clearSecret: true}, []string{"secret", "clear-secret"}, "", "只能给一个"},
+		{scheduleWebhookFlags{secret: "k", secretStdin: true}, []string{"secret", "secret-stdin"}, "k", "只能给一个"},
+		{scheduleWebhookFlags{secret: ""}, []string{"secret"}, "", "不能为空"},
+		{scheduleWebhookFlags{secretStdin: true}, []string{"secret-stdin"}, "\n", "不能为空"},
+		{scheduleWebhookFlags{secret: strings.Repeat("密", 257)}, []string{"secret"}, "", "256"},
+	} {
+		_, err := scheduleWebhookPut(ctx, f.client(), "sch_1", bad.o, changedSet(bad.changed...), strings.NewReader(bad.stdin))
+		var ec *exitCodeError
+		require.ErrorAs(t, err, &ec, bad.want)
+		assert.Equal(t, 2, ec.code)
+		assert.ErrorContains(t, err, bad.want)
+	}
+	assert.Len(t, f.requests(), n, "参数错误时不发请求")
+
+	require.NoError(t, scheduleWebhookDelete(ctx, f.client(), "sch_1"))
+	reqs = f.requests()
+	assert.Equal(t, "DELETE /api/v1/schedules/sch_1/webhook", reqs[len(reqs)-1].Method+" "+reqs[len(reqs)-1].Path)
+}
+
 // ---- orb 内 ----
 
 // requests 加锁取已收到的请求。
