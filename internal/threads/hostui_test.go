@@ -112,7 +112,7 @@ func TestRequestUISurvivesLiveReset(t *testing.T) {
 	assert.Equal(t, StateAwaitingInput, string(got.State))
 	assert.NotContains(t, o.snapshot().resolved, "cfm_1")
 
-	f.s.WithdrawUI(f.ctx, th.id, "cfm_1")
+	assert.True(t, f.s.WithdrawUI(f.ctx, th.id, "cfm_1"))
 	assert.Contains(t, o.snapshot().resolved, "cfm_1")
 	assert.Contains(t, f.sink.uiResolved, "cfm_1")
 	th.mu.Lock()
@@ -120,4 +120,41 @@ func TestRequestUISurvivesLiveReset(t *testing.T) {
 	assert.Empty(t, th.hostUI)
 	th.mu.Unlock()
 	assert.ErrorIs(t, f.s.UIResponse(f.ctx, th.id, json.RawMessage(`{"type":"extension_ui_response","id":"cfm_1","confirmed":true}`)), ErrUIResolved)
+	assert.False(t, f.s.WithdrawUI(f.ctx, th.id, "cfm_1"), "已撤回的请求再撤回返回 false")
+}
+
+// M33：视图的阻塞作答是 vwa_ 开头的 input 请求，同样让对话进入 awaiting_input、触发 InputRequested，应答交给协调层；
+// vwa_ 只配 input、cfm_ 只配 confirm。
+func TestRequestUIViewAwait(t *testing.T) {
+	f, th, a, o, coord := hostUIThread(t)
+	const vwa = `{"type":"extension_ui_request","id":"vwa_1","method":"input","title":"Pick a plan","placeholder":"oryn-view:tc-1"}`
+	require.NoError(t, f.s.RequestUI(f.ctx, th.id, json.RawMessage(vwa)))
+	got, err := f.s.Get(f.ctx, th.id)
+	require.NoError(t, err)
+	assert.Equal(t, StateAwaitingInput, string(got.State))
+	inputs := o.snapshot().inputs
+	require.Len(t, inputs, 1)
+	assert.Equal(t, "vwa_1", inputs[0].RequestID)
+	sent(a)
+
+	resp := json.RawMessage(`{"type":"extension_ui_response","id":"vwa_1","value":"hi"}`)
+	require.NoError(t, f.s.UIResponse(f.ctx, th.id, resp))
+	select {
+	case ans := <-coord.answers:
+		assert.Equal(t, "vwa_1", ans.id)
+		assert.JSONEq(t, string(resp), string(ans.frame))
+	case <-time.After(5 * time.Second):
+		t.Fatal("UIAnswered 没有被调用")
+	}
+	assert.Empty(t, sent(a), "应答不写 agent 流")
+	assert.False(t, f.s.WithdrawUI(f.ctx, th.id, "vwa_1"), "已作答的请求不再撤回")
+
+	for _, bad := range []string{
+		`{"type":"extension_ui_request","id":"vwa_2","method":"confirm","title":"t"}`,
+		`{"type":"extension_ui_request","id":"cfm_2","method":"input","title":"t"}`,
+	} {
+		var te *Error
+		require.ErrorAs(t, f.s.RequestUI(f.ctx, th.id, json.RawMessage(bad)), &te, bad)
+		assert.Equal(t, "invalid_frame", te.Code)
+	}
 }

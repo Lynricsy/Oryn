@@ -6,16 +6,21 @@ import (
 	"strings"
 )
 
-// hostUIPrefix 是控制面发起的待答请求的 id 前缀（M19 确认卡，coord 用 ids.New("cfm") 生成）。
-const hostUIPrefix = "cfm_"
+// 控制面发起的待答请求的 id 前缀：确认卡（M19，coord 用 ids.New("cfm") 生成）与全局助手视图的阻塞作答（M33，ids.New("vwa")）。
+const (
+	hostUIPrefix   = "cfm_"
+	hostViewPrefix = "vwa_"
+)
 
-// RequestUI 在线程里挂一个控制面发起的待答请求（M19 确认卡）：只接受 id 以 cfm_ 开头的 confirm 类
-// extension_ui_request 帧。请求像 agent 的请求一样进实时缓冲、广播给客户端、触发 InputRequested 并让线程变为
-// awaiting_input；主人的应答不写 agent 流，而在后台交给 Coordinator.UIAnswered。同一 id 重复调用幂等。
+// RequestUI 在线程里挂一个控制面发起的待答请求：只接受 id 以 cfm_ 开头的 confirm 类（M19 确认卡）与 id 以 vwa_ 开头的
+// input 类（M33 视图的阻塞作答）extension_ui_request 帧。请求像 agent 的请求一样进实时缓冲、广播给客户端、触发
+// InputRequested 并让线程变为 awaiting_input；主人的应答不写 agent 流，而在后台交给 Coordinator.UIAnswered。
+// 同一 id 重复调用幂等。
 func (s *Service) RequestUI(ctx context.Context, threadID string, frame json.RawMessage) error {
 	var h frameHead
-	if json.Unmarshal(frame, &h) != nil || h.Type != "extension_ui_request" || h.Method != "confirm" || !strings.HasPrefix(h.ID, hostUIPrefix) {
-		return errf("invalid_frame", "host ui request must be a confirm extension_ui_request with a "+hostUIPrefix+" id")
+	if json.Unmarshal(frame, &h) != nil || h.Type != "extension_ui_request" ||
+		!((h.Method == "confirm" && strings.HasPrefix(h.ID, hostUIPrefix)) || (h.Method == "input" && strings.HasPrefix(h.ID, hostViewPrefix))) {
+		return errf("invalid_frame", "host ui request must be a confirm extension_ui_request with a "+hostUIPrefix+" id or an input one with a "+hostViewPrefix+" id")
 	}
 	t, err := s.get(ctx, threadID)
 	if err != nil {
@@ -38,23 +43,24 @@ func (s *Service) RequestUI(ctx context.Context, threadID string, frame json.Raw
 	return nil
 }
 
-// WithdrawUI 撤回一个控制面发起的待答请求（过期）：从实时缓冲移除并广播 ui.resolved、InputResolved。
-// 不存在时什么都不做。
-func (s *Service) WithdrawUI(ctx context.Context, threadID, id string) {
+// WithdrawUI 撤回一个控制面发起的待答请求（过期、超时、调用取消）：从实时缓冲移除并广播 ui.resolved、InputResolved。
+// 返回是否撤回了；不存在（已作答或已撤回）时什么都不做、返回 false。
+func (s *Service) WithdrawUI(ctx context.Context, threadID, id string) bool {
 	t, err := s.get(ctx, threadID)
 	if err != nil {
-		return
+		return false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.hostUI[id]; !ok {
-		return
+		return false
 	}
 	delete(t.hostUI, id)
 	t.live.ResolveUI(id)
 	s.out().UIResolved(t.id, id)
 	s.observer().InputResolved(t.id, id)
 	s.recompute(ctx, t)
+	return true
 }
 
 // answerHostUILocked 处理主人对 hostUI 请求的应答：与 agent 请求同样解决与广播，但不写 agent 流、不唤醒 orb；
