@@ -5,6 +5,7 @@
 //   __orynStart({v:1, mark:"", path:"dist/<id>.html", root:"", runtime:true, design:{frame, links}})，然后渲染；
 //   design 取自入口 HTML 里的 <script id="oryn-design" type="application/json">。
 // - ?__oryn_probe=1：首次渲染提交后加载 ./probe.js（探针脚本自己决定何时写结果）。
+// 帧属于带主题的方案（src/variants.json，M34）时，渲染前在 <html> 上写 data-oryn-theme，方案主题的作用域规则据此生效。
 
 import "./styles.css";
 import { type ComponentType, type ReactNode, StrictMode, useEffect } from "react";
@@ -20,6 +21,8 @@ export interface MountOptions {
 	id: string;
 	frame: FrameModule;
 	layout?: LayoutModule;
+	/** 帧所属方案的主题名（src/themes/<名>.css）；不属于带主题的方案时省略。 */
+	theme?: string;
 }
 
 export interface MountHandle {
@@ -99,6 +102,8 @@ export function mount(opts: MountOptions): MountHandle {
 	const el = document.getElementById("root");
 	if (!el) throw new Error("oryn design: 缺少 #root");
 	const root = createRoot(el);
+	if (opts.theme) document.documentElement.dataset.orynTheme = opts.theme;
+	else delete document.documentElement.dataset.orynTheme;
 
 	const render = () => {
 		const Frame = frame.default;

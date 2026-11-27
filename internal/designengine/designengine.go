@@ -19,7 +19,7 @@ import (
 //
 // 手写常量而不在运行时计算：镜像构建脚本从本文件精确匹配取值作构建参数，Dockerfile 再按同一算法复算核对；
 // TestVersionMatchesContent 保证它与嵌入内容一致，改了引擎文件而没更新这里时测试失败并给出新值。
-const Version = "efee1556f53a"
+const Version = "c05f843bbf87"
 
 // files 是引擎源的全部文件（引擎目录下，无子目录）。
 var files = []string{
@@ -30,11 +30,12 @@ var files = []string{
 	"package.json",
 	"plugin-frames.mjs",
 	"styles.css",
+	"variants.mjs",
 	"vite.config.mjs",
 }
 
 //go:embed engine/babel-loc.mjs engine/entry.tsx engine/link.tsx engine/package-lock.json engine/package.json
-//go:embed engine/plugin-frames.mjs engine/styles.css engine/vite.config.mjs
+//go:embed engine/plugin-frames.mjs engine/styles.css engine/variants.mjs engine/vite.config.mjs
 var engine embed.FS
 
 // WriteTo 把引擎源写到 dir（不存在则创建）；已有同名文件被覆盖，dir 里的其它文件（如 node_modules）不动。

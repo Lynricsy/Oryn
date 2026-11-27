@@ -1005,6 +1005,52 @@ export default function Home() {
 	assert.False(t, got["split-repeat"], "(c) split-repeat")
 }
 
+// M34 S3：真引擎 + 真 dev server + 真 Chromium（条件同上）。两帧写同一段 text-accent 文字：home-a 不属于带主题的方案，
+// 用 theme.css 的深色强调色；home-b 属于主题 pale 的方案，src/themes/pale.css 把强调色覆盖成浅黄。只有 home-b 报
+// contrast-low，说明方案主题按帧生效、互不影响。
+func TestDesignVariantThemeChromium(t *testing.T) {
+	modules := os.Getenv("ORYN_TEST_DESIGN_ENGINE_MODULES")
+	if os.Getenv("ORYN_TEST_CHROMIUM") != "1" || modules == "" {
+		t.Skip("set ORYN_TEST_CHROMIUM=1 and ORYN_TEST_DESIGN_ENGINE_MODULES=<engine node_modules> to run")
+	}
+	if _, ok := webui.Asset("sandbox/probe.js"); !ok {
+		t.Fatal("嵌入的 Web 产物里没有 sandbox/probe.js：先 make web")
+	}
+	e := newDesignEnv(t)
+	share := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(share, designengine.Version), 0o755))
+	require.NoError(t, os.Symlink(modules, filepath.Join(share, designengine.Version, "node_modules")))
+	e.rt.design.shareRoot = share
+	if os.Geteuid() == 0 {
+		e.rt.design.chromium = rootChromium(t)
+	}
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	const frame = `export default function F() {
+	return <main className="bg-bg p-8"><p className="text-accent text-base">这是一段用强调色写的正文，用来检查对比度。</p></main>;
+}
+`
+	writeSrc(t, res.Dir, "src/theme.css", "@theme {\n  --color-bg: #ffffff;\n  --color-text: #111111;\n  --color-accent: #0f766e;\n}\n")
+	writeSrc(t, res.Dir, "src/themes/pale.css", ":root[data-oryn-theme=\"pale\"] {\n  --color-accent: #fde68a;\n}\n")
+	writeSrc(t, res.Dir, "src/frames/home-a.tsx", frame)
+	writeSrc(t, res.Dir, "src/frames/home-b.tsx", frame)
+	writeSrc(t, res.Dir, "src/variants.json", `{"groups":[{"id":"home","name":"首页","variants":[`+
+		`{"id":"a","name":"深色","frames":["home-a"]},{"id":"b","name":"浅黄","theme":"pale","frames":["home-b"]}]}]}`)
+
+	got, err := e.check(orbsock.DesignCheckParams{ID: res.ID})
+	require.NoError(t, err)
+	t.Logf("design.check: status=%s message=%q", got.Status, got.Message)
+	require.NotEqual(t, "unverified", got.Status, got.Message)
+	low := map[string]bool{}
+	for _, is := range got.Issues {
+		t.Logf("  %s %s %s %q %s", is.Rule, is.Frame, is.Loc, is.Text, is.Detail)
+		if is.Rule == "contrast-low" {
+			low[is.Frame] = true
+		}
+	}
+	assert.True(t, low["home-b"], "home-b 用浅黄强调色，应报 contrast-low")
+	assert.False(t, low["home-a"], "home-a 用 theme.css 的强调色，不应报 contrast-low")
+}
+
 // rootChromium 在宿主机以 root 跑测试时包一层：把本次的 profile 与临时目录交给 nobody 后以 nobody 执行原参数（root 下
 // Chromium 不加 --no-sandbox 起不来；orb 里 uid 1000 直接跑）。
 func rootChromium(t *testing.T) string {
