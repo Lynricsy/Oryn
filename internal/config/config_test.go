@@ -535,3 +535,25 @@ func TestProviderSandboxConfig(t *testing.T) {
 	require.NoError(t, err, "docker.sandbox 只在 driver=docker 时校验")
 	assert.True(t, c.Firecracker.Sandbox.Enabled)
 }
+
+func TestValidateOps(t *testing.T) {
+	base := DefaultOrynd() // 没有 public_url：完整校验不过，运维参数校验应通过
+	require.NoError(t, base.ValidateOps())
+	require.Error(t, base.Validate())
+
+	cases := map[string]func(c *Orynd){
+		"idle 为 0":            func(c *Orynd) { c.Idle.AgentIdle = 0 },
+		"保留期 1h":              func(c *Orynd) { c.Stats.Retention.Samples = Duration(time.Hour) },
+		"单个快照大于总量":            func(c *Orynd) { c.Snapshots.MaxSnapshotGB = c.Snapshots.MaxTotalGB + 1 },
+		"repos.max_mirror 为负": func(c *Orynd) { c.Repos.MaxMirrorGB = -1 },
+		"repos.min_free 为负":   func(c *Orynd) { c.Repos.MinFreeGB = -1 },
+		"repos.max_lfs 为负":    func(c *Orynd) { c.Repos.MaxLFSCacheGB = -1 },
+	}
+	for name, mut := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := DefaultOrynd()
+			mut(&c)
+			assert.Error(t, c.ValidateOps())
+		})
+	}
+}

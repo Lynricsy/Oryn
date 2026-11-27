@@ -442,9 +442,7 @@ func (c Orynd) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("log_level %q 无效", c.LogLevel))
 	}
-	if c.Idle.AgentIdle <= 0 || c.Idle.UserIdle <= 0 || c.Idle.StopAfterFrozen <= 0 {
-		errs = append(errs, errors.New("idle 的各项时长必须为正"))
-	}
+	errs = append(errs, c.opsErrors()...)
 	if err := validatePushGatewayURL(c.Push.Gateway.URL); err != nil {
 		errs = append(errs, err)
 	}
@@ -466,29 +464,11 @@ func (c Orynd) Validate() error {
 	if c.Schedule.DeliverTimeout.D() < time.Minute {
 		errs = append(errs, errors.New("schedule.deliver_timeout 至少为 1m"))
 	}
-	for _, r := range []struct {
-		key string
-		d   Duration
-	}{
-		{"stats.retention.samples", c.Stats.Retention.Samples},
-		{"stats.retention.events", c.Stats.Retention.Events},
-		{"stats.retention.usage", c.Stats.Retention.Usage},
-	} {
-		if r.d != 0 && r.d.D() < 24*time.Hour {
-			errs = append(errs, fmt.Errorf("%s 必须为 0（永久）或至少 24h", r.key))
-		}
-	}
 	if c.Snapshots.MaxAge <= 0 || c.Snapshots.MinSetup <= 0 {
 		errs = append(errs, errors.New("snapshots.max_age 与 snapshots.min_setup 必须为正"))
 	}
 	if d := c.Snapshots.MaxDepth; d < 1 || d > 64 {
 		errs = append(errs, fmt.Errorf("snapshots.max_depth %d 必须在 1–64 之间", d))
-	}
-	if c.Snapshots.MaxTotalGB < 1 {
-		errs = append(errs, fmt.Errorf("snapshots.max_total_gb %d 至少为 1", c.Snapshots.MaxTotalGB))
-	}
-	if g := c.Snapshots.MaxSnapshotGB; g < 0 || g > max(c.Snapshots.MaxTotalGB, 1) {
-		errs = append(errs, fmt.Errorf("snapshots.max_snapshot_gb %d 必须在 1 与 snapshots.max_total_gb（%d）之间（0 = 自动）", g, c.Snapshots.MaxTotalGB))
 	}
 	if n := c.Pool.MaxTotal; n < 0 || n > 16 {
 		errs = append(errs, fmt.Errorf("pool.max_total %d 必须在 0–16 之间（0 = 关闭预热池）", n))
@@ -503,6 +483,37 @@ func (c Orynd) Validate() error {
 	if c.Artifacts.Render.User == "root" {
 		errs = append(errs, errors.New("artifacts.render.user 不能是 root"))
 	}
+	errs = append(errs, c.Sandbox.validate()...)
+	return errors.Join(errs...)
+}
+
+// ValidateOps 只校验可在运行时覆盖的字段（见 internal/opsconf）；Validate 包含它。
+func (c Orynd) ValidateOps() error { return errors.Join(c.opsErrors()...) }
+
+// opsErrors 是可在运行时覆盖的字段（空闲、统计保留期、快照容量、仓库容量）的校验。
+func (c Orynd) opsErrors() []error {
+	var errs []error
+	if c.Idle.AgentIdle <= 0 || c.Idle.UserIdle <= 0 || c.Idle.StopAfterFrozen <= 0 {
+		errs = append(errs, errors.New("idle 的各项时长必须为正"))
+	}
+	for _, r := range []struct {
+		key string
+		d   Duration
+	}{
+		{"stats.retention.samples", c.Stats.Retention.Samples},
+		{"stats.retention.events", c.Stats.Retention.Events},
+		{"stats.retention.usage", c.Stats.Retention.Usage},
+	} {
+		if r.d != 0 && r.d.D() < 24*time.Hour {
+			errs = append(errs, fmt.Errorf("%s 必须为 0（永久）或至少 24h", r.key))
+		}
+	}
+	if c.Snapshots.MaxTotalGB < 1 {
+		errs = append(errs, fmt.Errorf("snapshots.max_total_gb %d 至少为 1", c.Snapshots.MaxTotalGB))
+	}
+	if g := c.Snapshots.MaxSnapshotGB; g < 0 || g > max(c.Snapshots.MaxTotalGB, 1) {
+		errs = append(errs, fmt.Errorf("snapshots.max_snapshot_gb %d 必须在 1 与 snapshots.max_total_gb（%d）之间（0 = 自动）", g, c.Snapshots.MaxTotalGB))
+	}
 	if c.Repos.MaxMirrorGB < 0 {
 		errs = append(errs, errors.New("repos.max_mirror_gb 不能为负"))
 	}
@@ -512,8 +523,7 @@ func (c Orynd) Validate() error {
 	if c.Repos.MaxLFSCacheGB < 0 {
 		errs = append(errs, errors.New("repos.max_lfs_cache_gb 不能为负"))
 	}
-	errs = append(errs, c.Sandbox.validate()...)
-	return errors.Join(errs...)
+	return errs
 }
 
 // validatePushGatewayURL 校验 push.gateway.url：空串 = 关闭；否则必须是不带路径、查询串与 userinfo 的 origin，

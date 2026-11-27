@@ -22,7 +22,7 @@ import (
 // 命中时更新文件 mtime，重启后按 mtime 恢复顺序。托管仓库的对象不在这里（步骤 3.13）。
 type lfsCache struct {
 	dir string
-	max int64
+	max int64 // 受 mu 保护（setMax 在运行时改）
 
 	mu    sync.Mutex
 	total int64
@@ -196,6 +196,14 @@ func (c *lfsCache) prune(keep func(projectID string) bool) {
 			c.removeProject(d.Name())
 		}
 	}
+}
+
+// setMax 在运行时改上限；调小时立刻淘汰到新上限以内（已打开的文件句柄仍能读完）。
+func (c *lfsCache) setMax(n int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.max = n
+	c.evictLocked(0)
 }
 
 // evictLocked 从表尾删除对象，直到 total+size ≤ max 或表空。正被读取的文件删除后仍可读完（已打开的句柄）。

@@ -121,7 +121,7 @@ func sameStamps(a, b []db.ListConfigSecretStampsRow) bool {
 
 // snapshotsOn 报告该项目在该 provider 上是否建立并使用项目快照：全局开关、项目开关，且 provider 上报了基础镜像身份。
 func (s *Service) snapshotsOn(prj *db.Project, prov db.Provider) bool {
-	return s.cfg.Snapshots.Enabled && prj != nil && prj.Snapshots && prov.BaseImageID != ""
+	return s.snapCfg().Enabled && prj != nil && prj.Snapshots && prov.BaseImageID != ""
 }
 
 // isProjectSnapshot 报告 id 是否是项目快照（否则是连环境 fork 的快照）。
@@ -159,7 +159,7 @@ func (s *Service) pickProjectSnapshot(ctx context.Context, p CreateParams, t tar
 	switch {
 	case snap.ConfigHash != hash:
 		s.retireSnapshot(ctx, snap.ID, RetireConfigChanged)
-	case s.nowMs()-snap.LineageAt >= s.cfg.Snapshots.MaxAge.D().Milliseconds():
+	case s.nowMs()-snap.LineageAt >= s.snapCfg().MaxAge.D().Milliseconds():
 		s.retireSnapshot(ctx, snap.ID, RetireExpired)
 	default:
 		pick.snapID = snap.ID
@@ -265,7 +265,7 @@ func (s *Service) firstSpawn(ctx context.Context, orbID string) bool {
 // 它只在 provider 确认实际用了快照时保留，见 onJobFinished），不看 orbd 自报的 prepared。ok=false 表示不参与：
 // 无项目、协调 orb、快照未开启，或 orb 来自连环境 fork 的快照（用过快照的 orb 永远不开新血统）。
 func (s *Service) snapshotSource(ctx context.Context, orb db.Orb) (prj db.Project, prov db.Provider, src *db.ProjectSnapshot, ok bool) {
-	if orb.ProjectID == nil || orb.Coordinator || orb.Computer == 1 || !s.cfg.Snapshots.Enabled {
+	if orb.ProjectID == nil || orb.Coordinator || orb.Computer == 1 || !s.snapCfg().Enabled {
 		return prj, prov, nil, false
 	}
 	var err error
@@ -330,7 +330,7 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 	now := s.nowMs()
 	depth, lineage := int64(0), now
 	if src == nil {
-		if time.Duration(res.DurationMs)*time.Millisecond < s.cfg.Snapshots.MinSetup.D() {
+		if time.Duration(res.DurationMs)*time.Millisecond < s.snapCfg().MinSetup.D() {
 			return false
 		}
 		if s.snapshotUsageUnknown(ctx, orb.ID) {
@@ -340,7 +340,7 @@ func (s *Service) afterSetupSnapshot(ctx context.Context, l *orbLink, orb db.Orb
 		}
 	} else {
 		depth, lineage = src.Depth+1, src.LineageAt
-		if depth > int64(s.cfg.Snapshots.MaxDepth) {
+		if depth > int64(s.snapCfg().MaxDepth) {
 			s.retireSnapshot(ctx, src.ID, RetireDepth)
 			return false
 		}
@@ -464,7 +464,7 @@ func (s *Service) publishSnapshot(ctx context.Context, orb db.Orb, snapID, hash 
 			return verr
 		case !prj.Snapshots:
 			cancelled = RetireManual
-		case size != nil && s.cfg.Snapshots.MaxSnapshotBytes() > 0 && *size > s.cfg.Snapshots.MaxSnapshotBytes():
+		case size != nil && s.snapCfg().MaxSnapshotBytes() > 0 && *size > s.snapCfg().MaxSnapshotBytes():
 			cancelled = RetireQuota
 		}
 		if cancelled != "" {
@@ -576,7 +576,7 @@ func (s *Service) sweepSnapshots(ctx context.Context) {
 			s.discardBuild(ctx, r.ProviderID, derefStr(r.SourceOrbID), r.ID)
 		}
 	}
-	if maxAge := s.cfg.Snapshots.MaxAge.D(); maxAge > 0 {
+	if maxAge := s.snapCfg().MaxAge.D(); maxAge > 0 {
 		ready, err := s.st.Q.ListProjectSnapshotsByState(ctx, SnapshotReady)
 		if err != nil {
 			slog.Warn("项目快照回收失败", "err", err)
@@ -639,7 +639,7 @@ func (s *Service) gcRetired(ctx context.Context, r db.ProjectSnapshot, now int64
 // 直到不超；返回此时是否不超。退役之后那份大小就不再计入：仍被 orb 引用的退役镜像属于引用它的 orb，
 // 等 orb 删除后由回收器清掉，再退役别的快照也不能让它少占一个字节。超大的单个快照由 max_snapshot_gb 管。
 func (s *Service) reserveSnapshotQuota(ctx context.Context, providerID, projectID, typ string) bool {
-	limit := s.cfg.Snapshots.MaxTotalBytes()
+	limit := s.snapCfg().MaxTotalBytes()
 	if limit <= 0 {
 		return true
 	}

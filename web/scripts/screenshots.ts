@@ -912,6 +912,7 @@ function noHorizontalOverflow(testId: string) {
 const SETTINGS_SECTIONS = [
 	"account",
 	"compute",
+	"server",
 	"projects",
 	"secrets",
 	"git",

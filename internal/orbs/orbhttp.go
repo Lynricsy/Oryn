@@ -278,7 +278,7 @@ type userTouch struct {
 // 不同 orb 的写入互不阻塞。
 func (s *Service) TouchUserCoalesced(ctx context.Context, orbID string) {
 	window := time.Second
-	if half := s.cfg.Idle.UserIdle.D() / 2; half < window {
+	if half := s.idleCfg().UserIdle.D() / 2; half < window {
 		window = half
 	}
 	for {

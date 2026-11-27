@@ -37,6 +37,7 @@ import InputSettings from "./settings/InputSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settings/registry";
 import SecretsSettings from "./settings/SecretsSettings";
+import ServerSettings from "./settings/ServerSettings";
 import { SettingsNav } from "./settings/SettingsNav";
 import SharingSettings from "./settings/SharingSettings";
 
@@ -56,6 +57,7 @@ const VIEWS: Record<SettingsSection, () => ReactNode> = {
 	"agent-config": () => <AgentConfigSettings />,
 	automations: () => <AutomationsSettings />,
 	compute: () => <ComputeSettings />,
+	server: () => <ServerSettings />,
 	secrets: () => <SecretsSettings />,
 	ssh: () => <SshPage />,
 	git: () => <GitSettings />,

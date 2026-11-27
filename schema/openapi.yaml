@@ -2763,6 +2763,39 @@ paths:
               schema: { $ref: '#/components/schemas/LanguageSettings' }
         default: { $ref: '#/components/responses/Error' }
 
+  /api/v1/server/ops-settings:
+    get:
+      tags: [settings]
+      operationId: getOpsSettings
+      summary: 控制面运维参数：生效值、YAML 值与覆盖情况
+      responses:
+        '200':
+          description: 当前状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpsSettingsState' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [settings]
+      operationId: patchOpsSettings
+      summary: 部分覆盖控制面运维参数
+      description: 字段给 null = 删除覆盖、回落 orynd.yaml；未出现的字段不变。未知键、类型错误或「基线 + 覆盖」整体校验失败 → 400 invalid_request（message 为具体原因）。只接受网页会话与 App 会话。
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpsSettingsPatch' }
+      responses:
+        '200':
+          description: 写入后的状态
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpsSettingsState' }
+        default: { $ref: '#/components/responses/Error' }
+
   /api/v1/settings/selection-actions:
     get:
       tags: [settings]
@@ -14036,6 +14069,76 @@ components:
           type: integer
           format: int64
           description: 用量 / 工具调用 / 回合事实行
+    OpsSettings:
+      type: object
+      description: 控制面运维参数（原始配置值，不做缺省换算）
+      required: [idle, statsRetention, repos, snapshots]
+      properties:
+        idle:
+          type: object
+          required: [agentIdleMs, userIdleMs, stopAfterFrozenMs, wakeOnFocus]
+          properties:
+            agentIdleMs: { type: integer, format: int64, minimum: 1, description: agent 静止多久算空闲 }
+            userIdleMs: { type: integer, format: int64, minimum: 1, description: 用户离开多久算空闲 }
+            stopAfterFrozenMs: { type: integer, format: int64, minimum: 1, description: 冻结多久后停机 }
+            wakeOnFocus: { type: boolean, description: 打开线程时自动唤醒冻结的 orb }
+        statsRetention: { $ref: '#/components/schemas/StatsRetention' }
+        repos:
+          type: object
+          required: [maxMirrorGb, minFreeGb, maxLfsCacheGb]
+          properties:
+            maxMirrorGb: { type: integer, minimum: 0, description: 仓库镜像上限；0 = 缺省 5 }
+            minFreeGb: { type: integer, minimum: 0, description: 磁盘至少留空；0 = 缺省 2 }
+            maxLfsCacheGb: { type: integer, minimum: 0, description: LFS 缓存上限；0 = 缺省 2 }
+        snapshots:
+          type: object
+          required: [maxTotalGb, maxSnapshotGb]
+          properties:
+            maxTotalGb: { type: integer, minimum: 1, description: 快照总量上限 }
+            maxSnapshotGb: { type: integer, minimum: 0, description: '单个快照上限；0 = min(10, maxTotalGb)' }
+    OpsSettingsPatch:
+      type: object
+      description: 与 OpsSettings 同形；字段全部可选，null = 删除覆盖
+      properties:
+        idle:
+          type: object
+          properties:
+            agentIdleMs: { type: integer, format: int64, nullable: true }
+            userIdleMs: { type: integer, format: int64, nullable: true }
+            stopAfterFrozenMs: { type: integer, format: int64, nullable: true }
+            wakeOnFocus: { type: boolean, nullable: true }
+        statsRetention:
+          type: object
+          properties:
+            samplesMs: { type: integer, format: int64, nullable: true }
+            eventsMs: { type: integer, format: int64, nullable: true }
+            usageMs: { type: integer, format: int64, nullable: true }
+        repos:
+          type: object
+          properties:
+            maxMirrorGb: { type: integer, nullable: true }
+            minFreeGb: { type: integer, nullable: true }
+            maxLfsCacheGb: { type: integer, nullable: true }
+        snapshots:
+          type: object
+          properties:
+            maxTotalGb: { type: integer, nullable: true }
+            maxSnapshotGb: { type: integer, nullable: true }
+    OpsSettingsState:
+      type: object
+      required: [effective, yaml, overridden, updatedAt]
+      properties:
+        effective: { $ref: '#/components/schemas/OpsSettings' }
+        yaml: { $ref: '#/components/schemas/OpsSettings' }
+        overridden:
+          type: array
+          description: 被覆盖的键（YAML 点路径，如 idle.agent_idle），升序
+          items: { type: string }
+        updatedAt:
+          type: integer
+          format: int64
+          nullable: true
+          description: 现存覆盖里最近一次写入的 UTC 毫秒时间；没有覆盖时为 null
     StatsMeta:
       type: object
       required: [now, factsVersion, retention]

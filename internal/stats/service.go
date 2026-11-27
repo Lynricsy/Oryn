@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -68,6 +69,21 @@ type Service struct {
 	ready    map[string]bool          // 去抖到期、待采样的线程
 	sampling map[string]bool          // 正在采样的线程
 	wake     chan struct{}
+
+	// ret 是运行时覆盖的保留期（SetRetention；nil = 用 cfg.Retention）。
+	ret atomic.Pointer[config.StatsRetention]
+}
+
+// SetRetention 在运行时换掉保留期（控制面运维参数，见 internal/opsconf）。Meta 立即反映；清理等下一次每小时一次的
+// Sweep，这里不主动触发，留出撤回的时间。
+func (s *Service) SetRetention(r config.StatsRetention) { s.ret.Store(&r) }
+
+// retention 返回当前生效的保留期。
+func (s *Service) retention() config.StatsRetention {
+	if p := s.ret.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.Retention
 }
 
 // pendingSample 是一个去抖中的采样计时器；gen 区分被取代的旧计时器。
@@ -147,12 +163,13 @@ func (s *Service) sampleWorker(ctx context.Context) {
 
 // Meta 返回服务端时间、事实行版本、回填进度、最早的用量时间与保留期。
 func (s *Service) Meta(ctx context.Context) (apigen.StatsMeta, error) {
+	r := s.retention()
 	out := apigen.StatsMeta{
 		Now: s.Now(),
 		Retention: apigen.StatsRetention{
-			SamplesMs: s.cfg.Retention.Samples.D().Milliseconds(),
-			EventsMs:  s.cfg.Retention.Events.D().Milliseconds(),
-			UsageMs:   s.cfg.Retention.Usage.D().Milliseconds(),
+			SamplesMs: r.Samples.D().Milliseconds(),
+			EventsMs:  r.Events.D().Milliseconds(),
+			UsageMs:   r.Usage.D().Milliseconds(),
 		},
 	}
 	v, ok, err := s.stateInt(ctx, stateFactsVersion)

@@ -116,7 +116,7 @@ func (s *Service) serveSmartHTTP(w http.ResponseWriter, r *http.Request, dir str
 	}
 
 	if push {
-		if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.cfg.MinFreeBytes {
+		if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.minFreeBytes() {
 			smartError(w, http.StatusServiceUnavailable, "oryn: 控制面磁盘空间不足")
 			return
 		}
@@ -225,7 +225,7 @@ func (s *Service) watchFree(ctx context.Context, cancel context.CancelCauseFunc)
 				return
 			case <-t.C:
 			}
-			if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.cfg.MinFreeBytes {
+			if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.minFreeBytes() {
 				cancel(errSyncNoSpace)
 				return
 			}

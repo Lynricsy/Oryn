@@ -279,7 +279,7 @@ func (s *Service) lfsReceiveObject(w http.ResponseWriter, r *http.Request, prj d
 		return
 	}
 	defer release()
-	if free, err := freeBytes(s.cfg.Dir); err == nil && free-n < s.cfg.MinFreeBytes {
+	if free, err := freeBytes(s.cfg.Dir); err == nil && free-n < s.minFreeBytes() {
 		lfs.WriteError(w, http.StatusInsufficientStorage, "oryn: 磁盘空间不足")
 		return
 	}
@@ -366,7 +366,7 @@ type freeWatchWriter struct {
 func (fw *freeWatchWriter) Write(b []byte) (int, error) {
 	if fw.since += int64(len(b)); fw.since >= lfsFreeCheckEvery {
 		fw.since = 0
-		if free, err := freeBytes(fw.s.cfg.Dir); err == nil && free-max(fw.total-fw.wrote, 0) < fw.s.cfg.MinFreeBytes {
+		if free, err := freeBytes(fw.s.cfg.Dir); err == nil && free-max(fw.total-fw.wrote, 0) < fw.s.minFreeBytes() {
 			return 0, errLFSPutNoDisk
 		}
 	}

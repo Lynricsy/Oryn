@@ -427,6 +427,41 @@ function json(body: unknown, status = 200): Response {
 	});
 }
 
+const OPS_HOUR = 3_600_000;
+
+/** 控制面运维参数在 orynd.yaml 里的值（mock 取内建缺省）。 */
+const OPS_YAML: Schemas["OpsSettings"] = {
+	idle: {
+		agentIdleMs: 5 * 60_000,
+		userIdleMs: 20 * 60_000,
+		stopAfterFrozenMs: 24 * OPS_HOUR,
+		wakeOnFocus: true,
+	},
+	statsRetention: {
+		samplesMs: 720 * OPS_HOUR,
+		eventsMs: 8760 * OPS_HOUR,
+		usageMs: 0,
+	},
+	repos: { maxMirrorGb: 0, minFreeGb: 0, maxLfsCacheGb: 0 },
+	snapshots: { maxTotalGb: 40, maxSnapshotGb: 0 },
+};
+
+/** 可覆盖的字段：JSON 路径（分组.字段）→ YAML 点路径（`overridden` 的元素），同 internal/opsconf 的键表。 */
+const OPS_KEYS: Readonly<Record<string, string>> = {
+	"idle.agentIdleMs": "idle.agent_idle",
+	"idle.userIdleMs": "idle.user_idle",
+	"idle.stopAfterFrozenMs": "idle.stop_after_frozen",
+	"idle.wakeOnFocus": "idle.wake_on_focus",
+	"statsRetention.samplesMs": "stats.retention.samples",
+	"statsRetention.eventsMs": "stats.retention.events",
+	"statsRetention.usageMs": "stats.retention.usage",
+	"repos.maxMirrorGb": "repos.max_mirror_gb",
+	"repos.minFreeGb": "repos.min_free_gb",
+	"repos.maxLfsCacheGb": "repos.max_lfs_cache_gb",
+	"snapshots.maxTotalGb": "snapshots.max_total_gb",
+	"snapshots.maxSnapshotGb": "snapshots.max_snapshot_gb",
+};
+
 /** 托管仓库的克隆地址（同 orbs.HostedCloneURL；mock 的 public_url 是 https://oryn.example.com）。 */
 function hostedCloneUrl(projectId: string): string {
 	return `https://oryn.example.com/git/${projectId}.git`;
@@ -688,6 +723,8 @@ export class MockServer {
 	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
 	/** 全局语言设置（`owner.language`）。 */
 	languageSettings: Schemas["LanguageSettings"] = { language: "zh-CN" };
+	/** 控制面运维参数的覆盖：JSON 路径（分组.字段）→ 值与写入时间。 */
+	opsOverrides = new Map<string, { value: number | boolean; at: number }>();
 	/** 自定义选区快捷动作（`owner.selection_actions`，M22）。 */
 	selectionActions: Schemas["SelectionActions"] = { actions: [] };
 	/** config.yml 解析失败的原因（模拟 `configError`）。 */
@@ -2001,6 +2038,73 @@ export class MockServer {
 				this.languageSettings = { language: b.language };
 			}
 			return json(this.languageSettings);
+		}
+		if (p === "server/ops-settings") {
+			if (m === "PATCH") {
+				const b = (await body()) as Record<string, unknown>;
+				const changes: [string, number | boolean | null][] = [];
+				for (const [section, group] of Object.entries(b)) {
+					if (!group || typeof group !== "object" || Array.isArray(group))
+						return json(
+							{ code: "invalid_request", message: `${section} 必须是对象` },
+							400,
+						);
+					for (const [name, v] of Object.entries(group)) {
+						const path = `${section}.${name}`;
+						const ok =
+							path in OPS_KEYS &&
+							(v === null ||
+								(name === "wakeOnFocus"
+									? typeof v === "boolean"
+									: Number.isInteger(v) && (v as number) >= 0));
+						if (!ok)
+							return json(
+								{ code: "invalid_request", message: `${path} 无效` },
+								400,
+							);
+						if (
+							section === "statsRetention" &&
+							typeof v === "number" &&
+							v > 0 &&
+							v < 86_400_000
+						)
+							return json(
+								{
+									code: "invalid_request",
+									message: `stats.retention.${name.replace(/Ms$/, "")} 必须为 0 或不短于 24h`,
+								},
+								400,
+							);
+						changes.push([path, v as number | boolean | null]);
+					}
+				}
+				const at = Date.now();
+				for (const [path, v] of changes) {
+					if (v === null) this.opsOverrides.delete(path);
+					else this.opsOverrides.set(path, { value: v, at });
+				}
+			}
+			const effective = structuredClone(OPS_YAML);
+			const sections = effective as unknown as Record<
+				string,
+				Record<string, number | boolean>
+			>;
+			let updatedAt: number | null = null;
+			for (const [path, o] of this.opsOverrides) {
+				const [section = "", name = ""] = path.split(".");
+				const group = sections[section];
+				if (group) group[name] = o.value;
+				updatedAt = Math.max(updatedAt ?? 0, o.at);
+			}
+			const state: Schemas["OpsSettingsState"] = {
+				effective,
+				yaml: OPS_YAML,
+				overridden: [...this.opsOverrides.keys()]
+					.map((k) => OPS_KEYS[k] ?? k)
+					.sort(),
+				updatedAt,
+			};
+			return json(state);
 		}
 		if (p === "settings/selection-actions") {
 			if (m === "PUT") {

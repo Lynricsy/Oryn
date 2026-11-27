@@ -208,7 +208,7 @@ func (s *Service) syncOnce(ctx context.Context, projectID string) {
 		s.fail(ctx, prj, row, rm, err)
 		return
 	}
-	if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.cfg.MinFreeBytes {
+	if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.minFreeBytes() {
 		s.fail(ctx, prj, row, rm, errSyncNoSpace)
 		return
 	}
@@ -244,7 +244,7 @@ func (s *Service) syncOnce(ctx context.Context, projectID string) {
 	if err != nil {
 		slog.Warn("统计项目仓库镜像大小", "project", projectID, "err", err)
 	}
-	if size > s.cfg.MaxBytes {
+	if size > s.maxBytes() {
 		if err := removeRepoDir(dir, false); err != nil {
 			slog.Warn("删除超限的项目仓库镜像", "project", projectID, "err", err)
 		}
@@ -401,11 +401,11 @@ func (s *Service) watch(ctx context.Context, cancel context.CancelCauseFunc, dir
 				return
 			case <-t.C:
 			}
-			if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.cfg.MinFreeBytes {
+			if free, err := freeBytes(s.cfg.Dir); err == nil && free < s.minFreeBytes() {
 				cancel(errSyncNoSpace)
 				return
 			}
-			if n, _ := dirSize(dir); n > s.cfg.MaxBytes {
+			if n, _ := dirSize(dir); n > s.maxBytes() {
 				cancel(errSyncTooLarge)
 				return
 			}

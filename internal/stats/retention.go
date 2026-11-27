@@ -13,7 +13,7 @@ const budgetLedgerKeep = 33 * 24 * time.Hour
 // 被运行逻辑依赖，永不删）；Usage → 用量 / 工具调用 / 回合事实行。值为 0 的一项不清理。错误只记日志。
 func (s *Service) Sweep(ctx context.Context) {
 	now := s.Now()
-	r := s.cfg.Retention
+	r := s.retention()
 	type step struct {
 		name string
 		fn   func(context.Context, int64) (int64, error)

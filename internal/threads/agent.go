@@ -2122,7 +2122,7 @@ func (s *Service) Focus(ctx context.Context, connID, threadID string) {
 	s.observer().Seen(t.id)
 	t.mu.Unlock()
 	s.touchUser(orbID)
-	if s.cfg.WakeOnFocus && needWake {
+	if s.wakeOnFocus() && needWake {
 		s.wake(threadID, orbID)
 	}
 }

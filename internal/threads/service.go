@@ -149,10 +149,24 @@ type Service struct {
 
 	events eventQueue
 
+	// wakeFocus 是运行时覆盖的 idle.wake_on_focus（SetWakeOnFocus；nil = 用 cfg.WakeOnFocus）。
+	wakeFocus atomic.Pointer[bool]
+
 	// afterIngestCommit（仅测试）在条目入库事务提交后、内存状态更新前调用。
 	afterIngestCommit func()
 	// afterSpacePrecheck（仅测试）在 Create / Patch 的 Space 预检之后、写引用的事务之前调用（契约 C4）。
 	afterSpacePrecheck func()
+}
+
+// SetWakeOnFocus 在运行时换掉 idle.wake_on_focus（控制面运维参数，见 internal/opsconf）；下一次聚焦线程时生效。
+func (s *Service) SetWakeOnFocus(v bool) { s.wakeFocus.Store(&v) }
+
+// wakeOnFocus 返回当前生效的 idle.wake_on_focus。
+func (s *Service) wakeOnFocus() bool {
+	if p := s.wakeFocus.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.WakeOnFocus
 }
 
 // orbCache 是 orb 状态缓存；seq 为得出该状态的 orb_events.id，用于丢弃乱序到达的过时事件（CP9）。

@@ -82,7 +82,7 @@ var apiDomains = []struct{ Name, Desc string }{
 	{"memory", "Engineering memory: settings, documents, search, mental models"},
 	{"owner-memory", "Your memory about the owner: topics, facts, sources, exclusions"},
 	{"notifications", "Notifications, notification channels and push subscriptions"},
-	{"settings", "Global language, identities and avatars, git identity, composer and selection actions, global agent configuration, secrets vault, devices"},
+	{"settings", "Global language, identities and avatars, git identity, composer and selection actions, global agent configuration, secrets vault, devices, control-plane operating limits (read-only)"},
 	{"insights", "Search, usage and cost statistics, budget, the automation log, system status"},
 }
 
@@ -285,7 +285,8 @@ func buildAPIPolicy() map[string]opPolicy {
 
 	// settings
 	set("settings", opRead, none, "getGitIdentity", "getAgentIdentity", "listRoleIdentities", "listAgentAvatars", "getComposerPrefs",
-		"getLanguageSettings", "getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices")
+		"getLanguageSettings", "getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices",
+		"getOpsSettings")
 	set("settings", opRead, opPolicy{Check: func(path map[string]string) error {
 		// 与 Home.Get 同一套规范化（agentcfg.CleanPath）：./mcp.json、x/../mcp.json 之类的等价路径同样拒绝。
 		// 规范化失败的路径 Home.Get 也会以同一错误拒绝、读不到文件，交给处理器回原有错误码。
@@ -300,7 +301,7 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("settings", opDeny, deny(denyBinary("write files one by one with putAgentConfigFile")), "importAgentConfig")
 	set("settings", opDeny, deny(denyClient), "getMe")
 	set("settings", opDeny, deny(denyHuman), "authSetupBegin", "authSetupFinish", "authLoginBegin", "authLoginFinish", "authRecovery",
-		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll")
+		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll", "patchOpsSettings")
 
 	// insights
 	set("insights", opRead, none, "getHealthz", "searchMessages", "getStatsMeta", "getUsageStats", "exportUsageRecords", "getToolStats",

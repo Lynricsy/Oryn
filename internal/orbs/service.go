@@ -14,6 +14,7 @@ import (
 	"math"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -196,6 +197,10 @@ type Service struct {
 	// 托管路由一律 403）。
 	hostedGit egress.HostedGitServer
 	now       func() time.Time
+
+	// idle / snaps 是运行时覆盖的空闲策略与快照配置（SetOps；nil = 用 cfg 里构造时的初值）。
+	idle  atomic.Pointer[config.Idle]
+	snaps atomic.Pointer[config.Snapshots]
 
 	mu      sync.Mutex
 	links   map[string]*orbLink
@@ -1690,12 +1695,36 @@ func (s *Service) EvaluateIdle(ctx context.Context) {
 	}
 }
 
+// SetOps 在运行时换掉空闲策略与快照配置（控制面运维参数，见 internal/opsconf）。空闲三项在下一个评估周期生效；
+// 快照上限在下一次建快照时生效，调小不会退役已有快照。
+func (s *Service) SetOps(idle config.Idle, snaps config.Snapshots) {
+	s.idle.Store(&idle)
+	s.snaps.Store(&snaps)
+}
+
+// idleCfg 返回当前生效的空闲策略。
+func (s *Service) idleCfg() config.Idle {
+	if p := s.idle.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.Idle
+}
+
+// snapCfg 返回当前生效的快照配置。
+func (s *Service) snapCfg() config.Snapshots {
+	if p := s.snaps.Load(); p != nil {
+		return *p
+	}
+	return s.cfg.Snapshots
+}
+
 // idleReady 判断 ready 的 orb 是否已超过 agent 与用户空闲时长。
 func (s *Service) idleReady(orb db.Orb) bool {
 	now := s.nowMs()
 	agent := max(orb.StateChangedAt, deref64(orb.LastAgentActivityAt))
 	user := max(orb.StateChangedAt, deref64(orb.LastUserInteractionAt))
-	return now-agent >= s.cfg.Idle.AgentIdle.D().Milliseconds() && now-user >= s.cfg.Idle.UserIdle.D().Milliseconds()
+	idle := s.idleCfg()
+	return now-agent >= idle.AgentIdle.D().Milliseconds() && now-user >= idle.UserIdle.D().Milliseconds()
 }
 
 // retired 判断 orb 是否只剩已归档的线程（至少有一个线程，且都已归档）。协调 orb 与助手的电脑不属于线程，不在此列；
@@ -1714,7 +1743,7 @@ func (s *Service) retired(ctx context.Context, orb db.Orb) bool {
 
 // idleFrozenTooLong 判断 frozen 的 orb 是否已冻结超过 stop_after_frozen。
 func (s *Service) idleFrozenTooLong(orb db.Orb) bool {
-	return s.nowMs()-orb.StateChangedAt >= s.cfg.Idle.StopAfterFrozen.D().Milliseconds()
+	return s.nowMs()-orb.StateChangedAt >= s.idleCfg().StopAfterFrozen.D().Milliseconds()
 }
 
 // Close 关闭全部 link 与 egress 服务，并等待后台流程结束（最多 ShutdownGrace+15 秒）。

@@ -39,6 +39,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/memory/relayroute"
 	"github.com/Lynricsy/Oryn/internal/modelcat"
 	"github.com/Lynricsy/Oryn/internal/notify"
+	"github.com/Lynricsy/Oryn/internal/opsconf"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/orbtls"
 	"github.com/Lynricsy/Oryn/internal/ownermem"
@@ -135,6 +136,8 @@ type Server struct {
 	Coord     *coord.Service
 	// Stats 是 M10 的统计后台（提交采样、保留期、预算）与 meta / 预算接口。
 	Stats *stats.Service
+	// Ops 是控制面运维参数的覆盖层（设置→控制面）：Config 是纯 YAML，Ops.Current() 才是叠上覆盖后的生效值。
+	Ops *opsconf.Conf
 	// GitHub 是 M14 的 GitHub 集成。
 	GitHub *github.Service
 	// SSH 是 M18 的 SSH 主机目录与控制面 SSH 网关。
@@ -235,13 +238,18 @@ func (s *Server) init(ctx context.Context) error {
 		// 全局助手的内置技能 oryn（只下发到协调宿主）
 		CoordinatorSkill: coord.SkillFiles,
 	}
+	// 运维参数覆盖层须在第一个用到这些参数的服务（orbs）之前建立
+	if s.Ops, err = opsconf.New(ctx, s.Store, cfg); err != nil {
+		return err
+	}
+	live := s.Ops.Current()
 	s.Orbs = orbs.New(orbs.Config{
-		Idle: cfg.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
-		PortalURLTemplate: base.Template(), Snapshots: cfg.Snapshots, Pool: cfg.Pool, OrbCAPEM: string(s.OrbCAPEM),
+		Idle: live.Idle, Defaults: cfg.OrbDefaults, PublicURL: cfg.PublicURL, TokenKey: key, EvalInterval: evalInterval,
+		PortalURLTemplate: base.Template(), Snapshots: live.Snapshots, Pool: cfg.Pool, OrbCAPEM: string(s.OrbCAPEM),
 	}, s.Store, s.Jobs, setup, s.Vault)
 	// 线程服务须在 orb 服务接受 link / 发出事件之前构造：它在构造时注册 entries.* / agent.* 处理器
 	s.Threads = threads.New(threads.Config{
-		DataDir: cfg.DataDir, WakeOnFocus: cfg.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
+		DataDir: cfg.DataDir, WakeOnFocus: live.Idle.WakeOnFocus, PortalURLTemplate: threadPortalTemplate, Memory: lazyMemory{s},
 		Projects: s.ProjectHomes,
 		BoxThreadsChanged: func() {
 			if s.Boxes != nil {
@@ -437,16 +445,17 @@ func (s *Server) init(ctx context.Context) error {
 	s.Orbs.SetMemory(memory.NewGateway(s.Memory))
 	// M10：统计（提交采样观察线程转入 idle；预算告警经 notify 的系统通知送达）；M14：采样落库后按提交关联 GitHub PR
 	s.Stats = stats.New(stats.Config{
-		Now: statsNow, Retention: cfg.Stats.Retention, BudgetInterval: statsBudgetInterval, CommitsSampled: s.GitHub.ThreadCommitsSampled,
+		Now: statsNow, Retention: live.Stats.Retention, BudgetInterval: statsBudgetInterval, CommitsSampled: s.GitHub.ThreadCommitsSampled,
 	}, s.Store, s.Orbs, s.Notify)
 	s.GitHub.SetSampler(s.Stats)
 	s.Threads.AddObserver(s.Stats)
 	// M24：项目仓库的控制面裸镜像。git 不可用不是错误（仓库浏览停用）；担保主机拉取沿用进程的代理变量
+	maxBytes, minFreeBytes, maxLFSCacheBytes := repoLimits(live.Repos)
 	if s.Repos, err = repos.New(repos.Config{
 		Dir: cfg.ReposDir(), Git: cfg.Repos.Git, GitHubWebURL: cfg.GitHub.WebURL,
-		MaxBytes:         int64(cmp.Or(cfg.Repos.MaxMirrorGB, 5)) << 30,
-		MinFreeBytes:     int64(cmp.Or(cfg.Repos.MinFreeGB, 2)) << 30,
-		MaxLFSCacheBytes: int64(cmp.Or(cfg.Repos.MaxLFSCacheGB, 2)) << 30,
+		MaxBytes:         maxBytes,
+		MinFreeBytes:     minFreeBytes,
+		MaxLFSCacheBytes: maxLFSCacheBytes,
 		ProxyEnv:         proxyEnv(os.Environ()),
 		Changed:          s.Hub.ProjectRepoChanged,
 		PublicURL:        cfg.PublicURL,
@@ -456,6 +465,13 @@ func (s *Server) init(ctx context.Context) error {
 		return err
 	}
 	s.closers = append(s.closers, s.Repos.Close)
+	// 设置页改了运维参数 → 推给四个服务（orbs / threads / stats / repos 都已建好）
+	s.Ops.Subscribe(func(c config.Orynd) {
+		s.Orbs.SetOps(c.Idle, c.Snapshots)
+		s.Threads.SetWakeOnFocus(c.Idle.WakeOnFocus)
+		s.Stats.SetRetention(c.Stats.Retention)
+		s.Repos.SetLimits(repoLimits(c.Repos))
+	})
 	// GitHub push 事件 → 绑定项目的镜像后台拉取（步骤 2.6）
 	s.GitHub.SetRepoSync(s.Repos)
 	// 出站代理观察到的成功推送 → 镜像拉取后展开成「提交 → 线程」（步骤 2.7）
@@ -613,6 +629,7 @@ func (s *Server) init(ctx context.Context) error {
 	s.API.Research = &api.ResearchDeps{Service: s.Research}
 	s.API.Schedules = &api.ScheduleDeps{Service: s.Schedules}
 	s.API.Stats = &api.StatsDeps{Service: s.Stats}
+	s.API.Ops = &api.OpsDeps{Conf: s.Ops}
 	s.API.Search = &api.SearchDeps{Service: search.New(s.Store)}
 	s.API.GitHub = &api.GitHubDeps{Service: s.GitHub}
 	s.API.Memory = &api.MemoryDeps{Service: s.Memory}
@@ -705,6 +722,11 @@ func lowerAll(hosts []string) []string {
 		}
 	}
 	return out
+}
+
+// repoLimits 把 repos 配置换成字节数上限，0 取缺省（镜像 5 GB、留空 2 GB、LFS 缓存 2 GB）。
+func repoLimits(r config.Repos) (maxBytes, minFreeBytes, maxLFSCacheBytes int64) {
+	return int64(cmp.Or(r.MaxMirrorGB, 5)) << 30, int64(cmp.Or(r.MinFreeGB, 2)) << 30, int64(cmp.Or(r.MaxLFSCacheGB, 2)) << 30
 }
 
 // proxyEnv 从进程环境里挑出代理变量（HTTPS_PROXY / HTTP_PROXY / NO_PROXY 及小写形式），交给项目仓库镜像在拉取

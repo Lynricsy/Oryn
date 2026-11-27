@@ -1387,6 +1387,7 @@
 		"agent-config": "配置文件",
 		"automations": "自动化",
 		"compute": "算力",
+		"server": "控制面",
 		"secrets": "密钥",
 		"ssh": "SSH 主机",
 		"git": "Git 与 GitHub",
@@ -1414,6 +1415,7 @@
 			"agent-config": "配置文件 config.yml models.yml mcp.json 高级 advanced",
 			"automations": "定时 计划 schedule cron 自动化",
 			"compute": "Provider Runner 节点 令牌 orb 类型 算力",
+			"server": "空闲 冻结 停机 回收 保留期 磁盘 快照 镜像 上限",
 			"secrets": "密钥 环境变量 代理 secret env",
 			"ssh": "SSH 主机 钥匙 审计 host key",
 			"git": "Git 身份 提交者 邮箱 GitHub OAuth 仓库 webhook",
@@ -1503,6 +1505,79 @@
 		"unbind": "解除绑定",
 		"noClients": "没有在线的 Chrome 扩展",
 		"approvalBanner": "Agent 正在等待你在 Chrome 扩展（{{name}}）中确认授权（{{count}} 项待处理）。请点击 Chrome 工具栏中的扩展图标批准或拒绝，批准后 agent 会自动重试。"
+	},
+	"serverSettings": {
+		"groups": {
+			"idle": "空闲回收",
+			"retention": "数据保留",
+			"disk": "磁盘上限"
+		},
+		"fields": {
+			"agentIdleMs": {
+				"title": "Agent 空闲时长",
+				"hint": "agent 没有动作这么久算空闲；agent 与你都空闲时冻结 orb"
+			},
+			"userIdleMs": {
+				"title": "离开时长",
+				"hint": "你没有查看或操作这么久算离开"
+			},
+			"stopAfterFrozenMs": {
+				"title": "冻结多久后停机",
+				"hint": "orb 冻结满这么久后停机"
+			},
+			"wakeOnFocus": {
+				"title": "打开线程时自动唤醒",
+				"hint": "冻结的 orb 在你打开它的线程时自动唤醒"
+			},
+			"samplesMs": {
+				"title": "资源采样",
+				"hint": "0 = 永久保留，最短 1 天"
+			},
+			"eventsMs": {
+				"title": "环境事件与预算告警记录",
+				"hint": "0 = 永久保留，最短 1 天"
+			},
+			"usageMs": {
+				"title": "用量与回合记录",
+				"hint": "0 = 永久保留，最短 1 天"
+			},
+			"maxMirrorGb": {
+				"title": "仓库镜像上限",
+				"hint": "0 = 默认 5 GB"
+			},
+			"minFreeGb": {
+				"title": "磁盘至少留空",
+				"hint": "0 = 默认 2 GB"
+			},
+			"maxLfsCacheGb": {
+				"title": "LFS 缓存上限",
+				"hint": "0 = 默认 2 GB"
+			},
+			"maxTotalGb": {
+				"title": "快照总量上限",
+				"hint": "调小后不会删除已有快照，下次建快照时生效"
+			},
+			"maxSnapshotGb": {
+				"title": "单个快照上限",
+				"hint": "0 = 自动（不超过 10 GB 和总量上限）"
+			}
+		},
+		"units": {
+			"minutes": "分钟",
+			"hours": "小时",
+			"days": "天",
+			"gb": "GB"
+		},
+		"on": "开启",
+		"off": "关闭",
+		"fromYaml": "已在这里改过 · 配置文件里是 {{value}}",
+		"restore": "恢复",
+		"restoreLabel": "恢复「{{name}}」为配置文件里的值",
+		"invalidNumber": "请输入不小于 0 的数字",
+		"invalidInteger": "请输入不小于 0 的整数",
+		"shortenTitle": "缩短「{{name}}」的保留期？",
+		"shortenBody": "超出新保留期的旧记录会在下一次清理（每小时一次）时永久删除。",
+		"shorten": "缩短"
 	},
 	"compute": {
 		"new": "新建",

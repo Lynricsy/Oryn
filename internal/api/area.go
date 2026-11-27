@@ -22,6 +22,8 @@ type area struct {
 	Schedules *ScheduleDeps
 	// Stats 是 M10 的统计 meta 与预算（stats.go）；nil 时这两类接口回 501（只读聚合不依赖它）。
 	Stats *StatsDeps
+	// Ops 是控制面运维参数（ops_settings.go）；nil 时回 501。
+	Ops *OpsDeps
 	// Library 是 M13 的全局助手文件库（library.go）；nil 时文件库接口回 501。
 	Library *LibraryDeps
 	// Search 是对话内容全文搜索（search.go）；nil 时回 501。

@@ -61,6 +61,8 @@ docker0 地址因机器而异，用 `ip -4 addr show docker0` 查看（例如有
 
 三个数值写 0 都按缺省值处理，负数启动时报错。
 
+`idle` 的四项、`repos` 的三个上限，以及 `stats.retention.*`、`snapshots.max_total_gb` / `max_snapshot_gb`，都可以在「设置 → 控制面」里覆盖，覆盖优先于本文件；在那里点「恢复」删除覆盖后回落到本文件的值。覆盖存在 `oryn.db` 里，改完不用重启。
+
 `data_dir` 里的 `repos/` 不全是可再生的缓存：Oryn 托管仓库（[features.md「托管仓库」](features.md#托管仓库)）的正本也在这里（`<data_dir>/repos/<项目 id>.git`，目录里有标记文件 `oryn-hosted`），没有别的副本，**备份 `data_dir` 时必须包含 `repos/`**，并与 `oryn.db` 一起备份、一起恢复。把库恢复到旧备份后，找不到项目行的托管仓库在 orynd 启动时会被移到 `<data_dir>/repos/orphaned/<项目 id>.git-<Unix 秒>` 而不是删除（日志记一条错误），镜像的任何清理逻辑都不会删带标记的目录。
 
 ### 移动 App 推送

@@ -135,3 +135,20 @@ func TestLFSCacheServiceWiring(t *testing.T) {
 	assert.True(t, ok)
 	assert.FileExists(t, e.svc.lfsCache.path(keep, oid))
 }
+
+// 运行时调小上限（控制面运维参数）立刻淘汰最久未用的对象。
+func TestLFSCacheSetMaxEvicts(t *testing.T) {
+	c, err := openLFSCache(filepath.Join(t.TempDir(), ".lfs-cache"), 10)
+	require.NoError(t, err)
+	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	lfsCachePut(t, c, "prj_A", a, "aaaa")
+	lfsCachePut(t, c, "prj_A", b, "bbbb")
+
+	c.setMax(5)
+	_, ok := c.get("prj_A", a)
+	assert.False(t, ok, "较旧的 a 被淘汰")
+	assert.NoFileExists(t, c.path("prj_A", a))
+	_, ok = c.get("prj_A", b)
+	assert.True(t, ok)
+	assert.Equal(t, int64(4), c.total)
+}

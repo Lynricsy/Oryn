@@ -1387,6 +1387,7 @@
 		"agent-config": "Config files",
 		"automations": "Automations",
 		"compute": "Compute",
+		"server": "Control plane",
 		"secrets": "Secrets",
 		"ssh": "SSH hosts",
 		"git": "Git & GitHub",
@@ -1414,6 +1415,7 @@
 			"agent-config": "config files config.yml models.yml mcp.json advanced 配置",
 			"automations": "schedules cron timers automation 定时",
 			"compute": "providers runners nodes tokens orb types compute",
+			"server": "idle freeze stop reclaim retention disk snapshot mirror limit",
 			"secrets": "secrets environment variables proxy env 密钥",
 			"ssh": "ssh hosts keys audit",
 			"git": "git identity committer email github oauth repositories webhook",
@@ -1503,6 +1505,79 @@
 		"unbind": "Unbind",
 		"noClients": "No online Chrome extension",
 		"approvalBanner": "Agent is waiting for your confirmation in the Chrome extension ({{name}}, {{count}} pending). Click the extension icon in Chrome to approve or deny; the agent will retry once approved."
+	},
+	"serverSettings": {
+		"groups": {
+			"idle": "Idle reclaim",
+			"retention": "Data retention",
+			"disk": "Disk limits"
+		},
+		"fields": {
+			"agentIdleMs": {
+				"title": "Agent idle after",
+				"hint": "An agent with no activity this long is idle; the orb freezes when both the agent and you are idle"
+			},
+			"userIdleMs": {
+				"title": "Away after",
+				"hint": "You count as away after not viewing or interacting this long"
+			},
+			"stopAfterFrozenMs": {
+				"title": "Stop after frozen for",
+				"hint": "An orb is stopped once it has been frozen this long"
+			},
+			"wakeOnFocus": {
+				"title": "Wake when a thread is opened",
+				"hint": "A frozen orb wakes up automatically when you open its thread"
+			},
+			"samplesMs": {
+				"title": "Resource samples",
+				"hint": "0 = keep forever, minimum 1 day"
+			},
+			"eventsMs": {
+				"title": "Environment events and budget alerts",
+				"hint": "0 = keep forever, minimum 1 day"
+			},
+			"usageMs": {
+				"title": "Usage and turn records",
+				"hint": "0 = keep forever, minimum 1 day"
+			},
+			"maxMirrorGb": {
+				"title": "Repository mirror limit",
+				"hint": "0 = default 5 GB"
+			},
+			"minFreeGb": {
+				"title": "Keep disk free",
+				"hint": "0 = default 2 GB"
+			},
+			"maxLfsCacheGb": {
+				"title": "LFS cache limit",
+				"hint": "0 = default 2 GB"
+			},
+			"maxTotalGb": {
+				"title": "Total snapshot limit",
+				"hint": "Lowering it doesn't delete existing snapshots; it applies when the next snapshot is taken"
+			},
+			"maxSnapshotGb": {
+				"title": "Single snapshot limit",
+				"hint": "0 = automatic (at most 10 GB and the total limit)"
+			}
+		},
+		"units": {
+			"minutes": "min",
+			"hours": "h",
+			"days": "d",
+			"gb": "GB"
+		},
+		"on": "on",
+		"off": "off",
+		"fromYaml": "Changed here · config file: {{value}}",
+		"restore": "Reset",
+		"restoreLabel": "Reset “{{name}}” to the config file value",
+		"invalidNumber": "Enter a number of 0 or more",
+		"invalidInteger": "Enter a whole number of 0 or more",
+		"shortenTitle": "Shorten retention for “{{name}}”?",
+		"shortenBody": "Records older than the new retention period are permanently deleted at the next hourly cleanup.",
+		"shorten": "Shorten"
 	},
 	"compute": {
 		"new": "New",

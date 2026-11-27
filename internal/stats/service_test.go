@@ -451,3 +451,13 @@ func TestMeta(t *testing.T) {
 	assert.EqualValues(t, 10, m.Backfill.Total)
 	assert.EqualValues(t, 1234, *m.EarliestTS)
 }
+
+// SetRetention（控制面运维参数）之后 Meta 立即反映新的保留期。
+func TestSetRetentionMeta(t *testing.T) {
+	f := newFixture(t)
+	s := New(Config{Retention: config.StatsRetention{Samples: config.Duration(720 * time.Hour)}}, f.st, nil, nil)
+	s.SetRetention(config.StatsRetention{Samples: config.Duration(48 * time.Hour)})
+	m, err := s.Meta(f.ctx)
+	require.NoError(t, err)
+	assert.EqualValues(t, 48*3600*1000, m.Retention.SamplesMs)
+}

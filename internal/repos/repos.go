@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
@@ -142,6 +143,37 @@ type Service struct {
 	mu      sync.Mutex
 	closed  bool
 	flights map[string]*flight
+
+	// lim 是运行时覆盖的镜像大小上限与磁盘留空（SetLimits；nil = 用 cfg 里构造时的初值）。
+	lim atomic.Pointer[repoLimits]
+}
+
+// repoLimits 是可在运行时换掉的两项字节数上限。
+type repoLimits struct{ maxBytes, minFreeBytes int64 }
+
+// SetLimits 在运行时换掉镜像大小上限、磁盘留空与 LFS 缓存上限（控制面运维参数，见 internal/opsconf；调用方已做缺省
+// 换算）。下一次检查时生效；LFS 缓存调小时立刻淘汰。
+func (s *Service) SetLimits(maxBytes, minFreeBytes, maxLFSCacheBytes int64) {
+	s.lim.Store(&repoLimits{maxBytes: maxBytes, minFreeBytes: minFreeBytes})
+	if s.lfsCache != nil {
+		s.lfsCache.setMax(maxLFSCacheBytes)
+	}
+}
+
+// maxBytes 返回当前生效的单个镜像大小上限。
+func (s *Service) maxBytes() int64 {
+	if p := s.lim.Load(); p != nil {
+		return p.maxBytes
+	}
+	return s.cfg.MaxBytes
+}
+
+// minFreeBytes 返回当前生效的数据盘留空下限。
+func (s *Service) minFreeBytes() int64 {
+	if p := s.lim.Load(); p != nil {
+		return p.minFreeBytes
+	}
+	return s.cfg.MinFreeBytes
 }
 
 // New 定位 git 并准备目录与守卫代理。git 不可用不是错误：Available 报告原因，仓库浏览停用。

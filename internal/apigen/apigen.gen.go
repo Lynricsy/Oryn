@@ -9171,6 +9171,82 @@ type NtfyChannelConfig struct {
 // OmpFrame omp RPC 的命令、应答或帧，控制面不解释其内容。权威类型见 agent 仓库 `rpc-types.ts`。
 type OmpFrame map[string]interface{}
 
+// OpsSettings 控制面运维参数（原始配置值，不做缺省换算）
+type OpsSettings struct {
+	Idle struct {
+		// AgentIdleMs agent 静止多久算空闲
+		AgentIdleMs int64 `json:"agentIdleMs"`
+
+		// StopAfterFrozenMs 冻结多久后停机
+		StopAfterFrozenMs int64 `json:"stopAfterFrozenMs"`
+
+		// UserIdleMs 用户离开多久算空闲
+		UserIdleMs int64 `json:"userIdleMs"`
+
+		// WakeOnFocus 打开线程时自动唤醒冻结的 orb
+		WakeOnFocus bool `json:"wakeOnFocus"`
+	} `json:"idle"`
+	Repos struct {
+		// MaxLfsCacheGb LFS 缓存上限；0 = 缺省 2
+		MaxLfsCacheGb int `json:"maxLfsCacheGb"`
+
+		// MaxMirrorGb 仓库镜像上限；0 = 缺省 5
+		MaxMirrorGb int `json:"maxMirrorGb"`
+
+		// MinFreeGb 磁盘至少留空；0 = 缺省 2
+		MinFreeGb int `json:"minFreeGb"`
+	} `json:"repos"`
+	Snapshots struct {
+		// MaxSnapshotGb 单个快照上限；0 = min(10, maxTotalGb)
+		MaxSnapshotGb int `json:"maxSnapshotGb"`
+
+		// MaxTotalGb 快照总量上限
+		MaxTotalGb int `json:"maxTotalGb"`
+	} `json:"snapshots"`
+
+	// StatsRetention 保留期（毫秒）；0 = 永久
+	StatsRetention StatsRetention `json:"statsRetention"`
+}
+
+// OpsSettingsPatch 与 OpsSettings 同形；字段全部可选，null = 删除覆盖
+type OpsSettingsPatch struct {
+	Idle *struct {
+		AgentIdleMs       *int64 `json:"agentIdleMs,omitempty"`
+		StopAfterFrozenMs *int64 `json:"stopAfterFrozenMs,omitempty"`
+		UserIdleMs        *int64 `json:"userIdleMs,omitempty"`
+		WakeOnFocus       *bool  `json:"wakeOnFocus,omitempty"`
+	} `json:"idle,omitempty"`
+	Repos *struct {
+		MaxLfsCacheGb *int `json:"maxLfsCacheGb,omitempty"`
+		MaxMirrorGb   *int `json:"maxMirrorGb,omitempty"`
+		MinFreeGb     *int `json:"minFreeGb,omitempty"`
+	} `json:"repos,omitempty"`
+	Snapshots *struct {
+		MaxSnapshotGb *int `json:"maxSnapshotGb,omitempty"`
+		MaxTotalGb    *int `json:"maxTotalGb,omitempty"`
+	} `json:"snapshots,omitempty"`
+	StatsRetention *struct {
+		EventsMs  *int64 `json:"eventsMs,omitempty"`
+		SamplesMs *int64 `json:"samplesMs,omitempty"`
+		UsageMs   *int64 `json:"usageMs,omitempty"`
+	} `json:"statsRetention,omitempty"`
+}
+
+// OpsSettingsState defines model for OpsSettingsState.
+type OpsSettingsState struct {
+	// Effective 控制面运维参数（原始配置值，不做缺省换算）
+	Effective OpsSettings `json:"effective"`
+
+	// Overridden 被覆盖的键（YAML 点路径，如 idle.agent_idle），升序
+	Overridden []string `json:"overridden"`
+
+	// UpdatedAt 现存覆盖里最近一次写入的 UTC 毫秒时间；没有覆盖时为 null
+	UpdatedAt *int64 `json:"updatedAt"`
+
+	// Yaml 控制面运维参数（原始配置值，不做缺省换算）
+	Yaml OpsSettings `json:"yaml"`
+}
+
 // Orb defines model for Orb.
 type Orb struct {
 	AgentVersion *string `json:"agentVersion,omitempty"`
@@ -15276,6 +15352,9 @@ type PutScheduleWebhookJSONRequestBody = ScheduleWebhookInput
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
 
+// PatchOpsSettingsJSONRequestBody defines body for PatchOpsSettings for application/json ContentType.
+type PatchOpsSettingsJSONRequestBody = OpsSettingsPatch
+
 // PutAgentAvatarJSONRequestBody defines body for PutAgentAvatar for application/json ContentType.
 type PutAgentAvatarJSONRequestBody = AgentAvatarInput
 
@@ -18860,6 +18939,12 @@ type ServerInterface interface {
 	// PutSecret 写入密钥
 	// (PUT /api/v1/secrets/{name})
 	PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath)
+	// GetOpsSettings 控制面运维参数：生效值、YAML 值与覆盖情况
+	// (GET /api/v1/server/ops-settings)
+	GetOpsSettings(w http.ResponseWriter, r *http.Request)
+	// PatchOpsSettings 部分覆盖控制面运维参数
+	// (PATCH /api/v1/server/ops-settings)
+	PatchOpsSettings(w http.ResponseWriter, r *http.Request)
 	// ListAgentAvatars 子 agent 的头像（内置 agent + omp-home `agents/*.md` + 只剩头像的遗留项）
 	// (GET /api/v1/settings/agent-avatars)
 	ListAgentAvatars(w http.ResponseWriter, r *http.Request)
@@ -20915,6 +21000,18 @@ func (_ Unimplemented) DeleteSecret(w http.ResponseWriter, r *http.Request, name
 // PutSecret 写入密钥
 // (PUT /api/v1/secrets/{name})
 func (_ Unimplemented) PutSecret(w http.ResponseWriter, r *http.Request, name SecretNamePath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetOpsSettings 控制面运维参数：生效值、YAML 值与覆盖情况
+// (GET /api/v1/server/ops-settings)
+func (_ Unimplemented) GetOpsSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PatchOpsSettings 部分覆盖控制面运维参数
+// (PATCH /api/v1/server/ops-settings)
+func (_ Unimplemented) PatchOpsSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -30459,6 +30556,34 @@ func (siw *ServerInterfaceWrapper) PutSecret(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// GetOpsSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetOpsSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOpsSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchOpsSettings operation middleware
+func (siw *ServerInterfaceWrapper) PatchOpsSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchOpsSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListAgentAvatars operation middleware
 func (siw *ServerInterfaceWrapper) ListAgentAvatars(w http.ResponseWriter, r *http.Request) {
 
@@ -33690,6 +33815,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/settings/language", wrapper.PutLanguageSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/server/ops-settings", wrapper.GetOpsSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/v1/server/ops-settings", wrapper.PatchOpsSettings)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/settings/selection-actions", wrapper.GetSelectionActions)

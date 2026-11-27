@@ -2345,6 +2345,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/server/ops-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 控制面运维参数：生效值、YAML 值与覆盖情况 */
+        get: operations["getOpsSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 部分覆盖控制面运维参数
+         * @description 字段给 null = 删除覆盖、回落 orynd.yaml；未出现的字段不变。未知键、类型错误或「基线 + 覆盖」整体校验失败 → 400 invalid_request（message 为具体原因）。只接受网页会话与 App 会话。
+         */
+        patch: operations["patchOpsSettings"];
+        trace?: never;
+    };
     "/api/v1/settings/selection-actions": {
         parameters: {
             query?: never;
@@ -10656,6 +10677,83 @@ export interface components {
              */
             usageMs: number;
         };
+        /** @description 控制面运维参数（原始配置值，不做缺省换算） */
+        OpsSettings: {
+            idle: {
+                /**
+                 * Format: int64
+                 * @description agent 静止多久算空闲
+                 */
+                agentIdleMs: number;
+                /**
+                 * Format: int64
+                 * @description 用户离开多久算空闲
+                 */
+                userIdleMs: number;
+                /**
+                 * Format: int64
+                 * @description 冻结多久后停机
+                 */
+                stopAfterFrozenMs: number;
+                /** @description 打开线程时自动唤醒冻结的 orb */
+                wakeOnFocus: boolean;
+            };
+            statsRetention: components["schemas"]["StatsRetention"];
+            repos: {
+                /** @description 仓库镜像上限；0 = 缺省 5 */
+                maxMirrorGb: number;
+                /** @description 磁盘至少留空；0 = 缺省 2 */
+                minFreeGb: number;
+                /** @description LFS 缓存上限；0 = 缺省 2 */
+                maxLfsCacheGb: number;
+            };
+            snapshots: {
+                /** @description 快照总量上限 */
+                maxTotalGb: number;
+                /** @description 单个快照上限；0 = min(10, maxTotalGb) */
+                maxSnapshotGb: number;
+            };
+        };
+        /** @description 与 OpsSettings 同形；字段全部可选，null = 删除覆盖 */
+        OpsSettingsPatch: {
+            idle?: {
+                /** Format: int64 */
+                agentIdleMs?: number | null;
+                /** Format: int64 */
+                userIdleMs?: number | null;
+                /** Format: int64 */
+                stopAfterFrozenMs?: number | null;
+                wakeOnFocus?: boolean | null;
+            };
+            statsRetention?: {
+                /** Format: int64 */
+                samplesMs?: number | null;
+                /** Format: int64 */
+                eventsMs?: number | null;
+                /** Format: int64 */
+                usageMs?: number | null;
+            };
+            repos?: {
+                maxMirrorGb?: number | null;
+                minFreeGb?: number | null;
+                maxLfsCacheGb?: number | null;
+            };
+            snapshots?: {
+                maxTotalGb?: number | null;
+                maxSnapshotGb?: number | null;
+            };
+        };
+        OpsSettingsState: {
+            effective: components["schemas"]["OpsSettings"];
+            yaml: components["schemas"]["OpsSettings"];
+            /** @description 被覆盖的键（YAML 点路径，如 idle.agent_idle），升序 */
+            overridden: string[];
+            /**
+             * Format: int64
+             * @description 现存覆盖里最近一次写入的 UTC 毫秒时间；没有覆盖时为 null
+             */
+            updatedAt: number | null;
+        };
         StatsMeta: {
             now: components["schemas"]["TimestampMs"];
             /** @description 已完成的事实行版本（回填完成前为旧值或 0） */
@@ -16685,6 +16783,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LanguageSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOpsSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSettingsState"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    patchOpsSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpsSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description 写入后的状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsSettingsState"];
                 };
             };
             default: components["responses"]["Error"];

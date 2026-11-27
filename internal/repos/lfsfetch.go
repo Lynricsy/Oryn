@@ -592,7 +592,7 @@ func (s *Service) lfsFly(prj db.Project, p lfs.Pointer) error {
 // lfsFetch 检查磁盘、取对象，写到 <cache>/<pid>/tmp-<oid>-<rand>，校验通过后改名进缓存。失败不留临时文件。
 func (s *Service) lfsFetch(ctx context.Context, prj db.Project, p lfs.Pointer) error {
 	// 写入量以 p.Size（≤ lfsInlineMax）为上界，开始前查一次即可
-	if free, err := freeBytes(s.cfg.Dir); err == nil && free-p.Size < s.cfg.MinFreeBytes {
+	if free, err := freeBytes(s.cfg.Dir); err == nil && free-p.Size < s.minFreeBytes() {
 		return errLFSNoSpace
 	}
 	rm, err := s.lfsRemote(ctx, prj)

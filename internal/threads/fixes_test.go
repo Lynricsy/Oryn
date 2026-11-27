@@ -574,6 +574,22 @@ func TestFocusWakesFrozenOrb(t *testing.T) {
 	}
 }
 
+// 以 WakeOnFocus=false 构造，运行时 SetWakeOnFocus(true)（控制面运维参数）之后 focus 会唤醒。
+func TestFocusWakesAfterSetWakeOnFocus(t *testing.T) {
+	f := newFixture(t, Config{})
+	f.s.SetWakeOnFocus(true)
+	orb := f.orb("frozen")
+	th := f.thread(orb, StateIdle)
+	attach(th, fakeAgent(8), apigen.AgentStatusReady)
+	f.s.Focus(f.ctx, "conn-1", th.id)
+	select {
+	case id := <-f.orbs.wakes:
+		assert.Equal(t, orb, id)
+	case <-time.After(5 * time.Second):
+		t.Fatal("focus 没有唤醒冻结的 orb")
+	}
+}
+
 // 停机的 orb 冷启动代价高：focus 不唤醒（只读浏览走 offline fs），发消息照常唤醒。
 func TestFocusSkipsStoppedOrb(t *testing.T) {
 	for _, st := range []string{"stopping", "stopped"} {

@@ -416,3 +416,15 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// SetOps（控制面运维参数）换掉空闲时长后，原先不满足的空闲判定变为满足。
+func TestSetOpsIdle(t *testing.T) {
+	b := newBare(t, nil)
+	orb := db.Orb{StateChangedAt: b.svc.nowMs() - 1000}
+	require.False(t, b.svc.idleReady(orb))
+	require.False(t, b.svc.idleFrozenTooLong(orb))
+	b.svc.SetOps(config.Idle{AgentIdle: config.Duration(time.Millisecond), UserIdle: config.Duration(time.Millisecond), StopAfterFrozen: config.Duration(time.Millisecond)}, config.Snapshots{MaxTotalGB: 7})
+	assert.True(t, b.svc.idleReady(orb))
+	assert.True(t, b.svc.idleFrozenTooLong(orb))
+	assert.Equal(t, int64(7)<<30, b.svc.snapCfg().MaxTotalBytes())
+}

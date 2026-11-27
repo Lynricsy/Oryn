@@ -327,6 +327,12 @@ type BudgetAlert struct {
 	CreatedAt int64   `json:"createdAt"`
 }
 
+type ConfigOverride struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
 type CoordAction struct {
 	ID             string  `json:"id"`
 	Ts             int64   `json:"ts"`

@@ -123,6 +123,7 @@ const SECTIONS = [
 	"agent-config",
 	"automations",
 	"compute",
+	"server",
 	"secrets",
 	"ssh",
 	"git",
