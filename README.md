@@ -417,6 +417,8 @@ oryn sandbox ls && oryn sandbox rm $id                       # 列出本机的�
 
 ## 文档
 
+完整的使用与部署文档在 **[docs.oryn.best](https://docs.oryn.best)**；下表是仓库内的工程文档。
+
 | 文档 | 内容 |
 |---|---|
 | [`docs/features.md`](docs/features.md) | 每项能力的完整行为、边界与约束 |
