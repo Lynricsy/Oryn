@@ -9,9 +9,18 @@
 
 **自托管的 Coding Agent 工作台：每个对话线程独占一台隔离环境，模型与 Git 凭据默认经控制面出站代理注入，<br>在浏览器、桌面、手机与终端里接续同一份工作。**
 
-[快速开始](#快速开始) · [功能详解](docs/features.md) · [生产部署](docs/deploy.md) · [桌面端](docs/desktop.md) · [移动端](docs/mobile.md) · [协议](docs/protocol.md)
+[快速开始](#快速开始) · [🤖 让 Agent 部署](#让-agent-替你部署) · [功能详解](docs/features.md) · [生产部署](docs/deploy.md) · [桌面端](docs/desktop.md) · [移动端](docs/mobile.md) · [协议](docs/protocol.md)
 
 </div>
+
+### 让 Agent 替你部署
+
+> [!TIP]
+> 有一台 Linux 服务器和一个域名就够了。把下面这段话发给你的 Coding Agent（Claude Code、Codex、omp 等能执行命令的都行），它会按 [代部署手册](docs/deploy-agent.md) 自行探测环境、一次问完必要信息、逐步验证，最后把能用的 Oryn 交给你；你只需在浏览器里注册管理员 Passkey。
+
+```text
+请阅读 https://raw.githubusercontent.com/Lynricsy/Oryn/main/docs/deploy-agent.md ，严格按照其中的步骤在这台服务器上部署 Oryn。
+```
 
 <br>
 
