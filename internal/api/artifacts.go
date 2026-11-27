@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -448,7 +449,7 @@ func (s *Server) OpenArtifactLink(w http.ResponseWriter, r *http.Request, id api
 	WriteJSON(w, http.StatusOK, apigen.ArtifactOpenLink{URL: url})
 }
 
-// ImportArtifact 对应 `POST artifacts/import?projectId=&name=`：流式读 multipart，每个 part 的字段名是相对路径。
+// ImportArtifact 对应 `POST artifacts/import?projectId=&threadId=&name=`：流式读 multipart，每个 part 的字段名是相对路径。
 func (s *Server) ImportArtifact(w http.ResponseWriter, r *http.Request, params apigen.ImportArtifactParams) {
 	svc, ok := s.artifactsSvc(w)
 	if !ok {
@@ -464,6 +465,9 @@ func (s *Server) ImportArtifact(w http.ResponseWriter, r *http.Request, params a
 	if params.ProjectID != nil {
 		p.ProjectID = *params.ProjectID
 	}
+	if params.ThreadID != nil {
+		p.ThreadID = *params.ThreadID
+	}
 	if params.Name != nil {
 		p.Name = *params.Name
 	}
@@ -473,6 +477,31 @@ func (s *Server) ImportArtifact(w http.ResponseWriter, r *http.Request, params a
 		return
 	}
 	WriteJSON(w, http.StatusCreated, a.API())
+}
+
+// UploadArtifactVersion 对应 `POST artifacts/{id}/upload?baseVersion=`：请求体是整个 Office 文件，作者是用户。
+func (s *Server) UploadArtifactVersion(w http.ResponseWriter, r *http.Request, id apigen.ArtifactIDPath, params apigen.UploadArtifactVersionParams) {
+	svc, ok := s.artifactsSvc(w)
+	if !ok {
+		return
+	}
+	if params.BaseVersion < 1 {
+		WriteError(w, http.StatusBadRequest, artifacts.CodeInvalid, "baseVersion 必须从 1 开始")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, artifacts.MaxOfficeFileBytes+1<<20)
+	a, err := svc.UploadVersion(r.Context(), id, params.BaseVersion, r.Body)
+	var mbe *http.MaxBytesError
+	if errors.As(err, &mbe) {
+		WriteError(w, http.StatusRequestEntityTooLarge, artifacts.CodeTooLarge,
+			fmt.Sprintf("文件超过单文件上限 %d MiB。", artifacts.MaxOfficeFileBytes>>20))
+		return
+	}
+	if err != nil {
+		writeArtifactErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, a.API())
 }
 
 // ExportArtifact 对应 `GET artifacts/{id}/export?version=&format=`：`html` 回单个文件，`zip` 流式打包，`md` 回文档

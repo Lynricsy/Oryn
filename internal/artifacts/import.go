@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"path"
 	"strings"
 	"unicode/utf8"
 
@@ -24,16 +25,19 @@ const (
 	CodeNotUTF8   = "not_utf8"
 )
 
-// ImportBodyLimit 是导入请求体的上限：一个版本的总字节，外加 multipart 头与被跳过的隐藏文件的余量。
-const ImportBodyLimit = MaxVersionBytes + 16<<20
+// ImportBodyLimit 是导入请求体的上限：单个 Office 文件的上限，外加 multipart 头与被跳过的隐藏文件的余量
+// （HTML 文件夹另受 MaxVersionBytes 的总量限制）。
+const ImportBodyLimit = MaxOfficeFileBytes + 16<<20
 
 // untitled 是既没有 <title> 也没有上传名时的标题。
 const untitled = "未命名"
 
 // ImportParams 是 Import 的参数。
 type ImportParams struct {
-	// ProjectID 为空表示「无项目」。
+	// ProjectID 为空表示「无项目」；给了 ThreadID 而 ProjectID 为空时取线程的项目。
 	ProjectID string
+	// ThreadID 非空时 artifact 归属该线程（文件面板「转为 artifact」）。
+	ThreadID string
 	// Name 是上传时的文件名或文件夹名（没有 <title> 时作标题）。
 	Name string
 }
@@ -41,6 +45,17 @@ type ImportParams struct {
 // Import 流式读取 multipart 请求体，把每个 part 作为一个文件（字段名是相对路径）导入成新 artifact：
 // origin = import、没有创建线程、作者是用户。任何一段以点开头的路径（.DS_Store、.git/…）被跳过。
 func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportParams) (Artifact, error) {
+	if p.ThreadID != "" {
+		th, err := s.st.Q.GetThread(ctx, p.ThreadID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Artifact{}, opErr(CodeInvalid, "线程 %s 不存在。", p.ThreadID)
+		} else if err != nil {
+			return Artifact{}, err
+		}
+		if p.ProjectID == "" && th.ProjectID != nil {
+			p.ProjectID = *th.ProjectID
+		}
+	}
 	if p.ProjectID != "" {
 		if _, err := s.st.Q.GetProject(ctx, p.ProjectID); errors.Is(err, sql.ErrNoRows) {
 			return Artifact{}, opErr(CodeInvalid, "项目 %s 不存在。", p.ProjectID)
@@ -88,7 +103,8 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 		if err != nil {
 			return Artifact{}, err
 		}
-		if total += f.size; total > MaxVersionBytes {
+		// 单个 Office 文件可以到 MaxOfficeFileBytes（importPart 已按单文件上限截断）；其余按版本总量
+		if total += f.size; total > MaxVersionBytes && (len(paths) > 0 || !officeName(name)) {
 			return Artifact{}, opErr(CodeTooLarge, "导入的文件总共不能超过 %d MiB。", MaxVersionBytes>>20)
 		}
 		// 第一个文件若是 HTML 也先留着字节：只上传了这一个文件时它就是页面本身（见下）
@@ -98,6 +114,14 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 		f.data = nil // 只为标题保留 index.html 的字节
 		st.writes[name] = f
 		paths = append(paths, name)
+	}
+	if len(paths) == 1 && !strings.Contains(paths[0], "/") {
+		if typ := OfficeTypeByExt(paths[0]); typ != "" {
+			return s.importOffice(ctx, p, typ, paths[0], st)
+		}
+		if target, ok := LegacyOfficeExt(paths[0]); ok {
+			return Artifact{}, opErr(CodeUnsupportedFormat, "%s 是旧版或 OpenDocument 格式。把文件交给 Agent 转成 %s，或部署 Office 引擎后再导入。", paths[0], target)
+		}
 	}
 	if c := CaseClash(paths); c != "" {
 		return Artifact{}, opErr(CodeBadName, "%s 与另一个文件只差大小写。", c)
@@ -123,8 +147,30 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 		}
 	}
 	return s.create(ctx, CreateParams{
-		Title: importTitle(index, p.Name), ProjectID: p.ProjectID, Origin: OriginImport,
+		Title: importTitle(index, p.Name), ProjectID: p.ProjectID, ThreadID: p.ThreadID, Origin: OriginImport,
 	}, &st)
+}
+
+// officeName 报告文件名是否是 Office 文件（含旧版与 OpenDocument，它们同样按 Office 单文件上限收下再判断）。
+func officeName(name string) bool {
+	_, legacy := LegacyOfficeExt(name)
+	return legacy || OfficeTypeByExt(name) != ""
+}
+
+// importOffice 把单个 Office 文件导入成类型化 artifact：入口改名为该类型的 Entry，标题取文件名去掉扩展名；
+// 校验不过回 bad_office 并保留问题说明。
+func (s *Service) importOffice(ctx context.Context, p ImportParams, typ, name string, st staged) (Artifact, error) {
+	st.writes = map[string]stored{TypeEntry(typ): st.writes[name]}
+	base := path.Base(name)
+	title := clipTitle(strings.TrimSuffix(base, path.Ext(base)))
+	if title == "" {
+		title = untitled
+	}
+	a, err := s.create(ctx, CreateParams{Title: title, Type: typ, ProjectID: p.ProjectID, ThreadID: p.ThreadID, Origin: OriginImport}, &st)
+	if oe, ok := AsOpError(err); ok && oe.Code == CodeInvalid {
+		return Artifact{}, &OpError{Code: CodeBadOffice, Message: oe.Message}
+	}
+	return a, err
 }
 
 // importPart 校验一个 part 的路径并把内容落进内容存储；HTML 文件另做 UTF-8 校验。
@@ -135,9 +181,13 @@ func (s *Service) importPart(part io.Reader, name string, st *staged) (stored, e
 	if _, dup := st.writes[name]; dup {
 		return stored{}, opErr(CodeBadName, "文件 %s 出现了两次。", name)
 	}
-	f, err := s.c.put(part, MaxFileBytes, IsHTML(name))
+	limit := int64(MaxFileBytes)
+	if officeName(name) {
+		limit = MaxOfficeFileBytes
+	}
+	f, err := s.c.put(part, limit, IsHTML(name))
 	if errors.Is(err, errFileTooLarge) {
-		return stored{}, opErr(CodeTooLarge, "文件 %s 超过单文件上限 %d MiB。", name, MaxFileBytes>>20)
+		return stored{}, opErr(CodeTooLarge, "文件 %s 超过单文件上限 %d MiB。", name, limit>>20)
 	}
 	if err != nil {
 		return stored{}, importBodyErr(err)
@@ -152,7 +202,7 @@ func (s *Service) importPart(part io.Reader, name string, st *staged) (stored, e
 func importBodyErr(err error) error {
 	var mbe *http.MaxBytesError
 	if errors.As(err, &mbe) {
-		return opErr(CodeTooLarge, "导入的内容总共不能超过 %d MiB。", MaxVersionBytes>>20)
+		return opErr(CodeTooLarge, "导入的内容超过上限（Office 文件 %d MiB，其余总共 %d MiB）。", MaxOfficeFileBytes>>20, MaxVersionBytes>>20)
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) || strings.HasPrefix(err.Error(), "multipart: ") {
 		return opErr(CodeInvalid, "上传的内容不完整或格式不对：%v", err)

@@ -34,6 +34,7 @@ const (
 	ExportProject   = "project"
 	ExportMockupPNG = "mockup-png"
 	ExportMockupPDF = "mockup-pdf"
+	ExportOriginal  = "original"
 )
 
 // 样机布局常量（与 web/sandbox/overview/main.ts 同值）。
@@ -170,15 +171,43 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 			return zw.Close()
 		}}, nil
 	case ExportPDF:
-		if a.Type != TypeSlides {
-			return Export{}, opErr(CodeInvalid, "artifact %s 不是幻灯片，不能导出为 pdf。", id)
+		var out []byte
+		switch a.Type {
+		case TypeSlides:
+			out, err = s.slidesPDF(ctx, a.ID, v.Version)
+		case TypeDocx, TypeDocm, TypePptx, TypePptm:
+			out, err = s.officePDF(ctx, a.ID, v.Version, a.Type)
+		case TypePDF:
+			return Export{}, opErr(CodeInvalid, "这已经是 PDF，直接导出原件。")
+		case TypeXlsx, TypeXlsm:
+			return Export{}, opErr(CodeInvalid, "%s 的 PDF 导出需要 Office 引擎；可以导出原件。", typeLabel(a.Type))
+		default:
+			return Export{}, opErr(CodeInvalid, "artifact %s 不是幻灯片或 Office 文档，不能导出为 pdf。", id)
 		}
-		out, err := s.slidesPDF(ctx, a.ID, v.Version)
 		if err != nil {
 			return Export{}, err
 		}
 		return Export{Name: base + ".pdf", ContentType: "application/pdf", write: func(w io.Writer) error {
 			_, err := w.Write(out)
+			return err
+		}}, nil
+	case ExportOriginal:
+		if !IsBinaryType(a.Type) {
+			return Export{}, opErr(CodeInvalid, "artifact %s 不是 Office 文件，没有原件可导出。", id)
+		}
+		entry := TypeEntry(a.Type)
+		i := slices.IndexFunc(files, func(f File) bool { return f.Path == entry })
+		if i < 0 {
+			return Export{}, opErr(CodeInvalid, "版本 %d 里没有入口文件 %s。", v.Version, entry)
+		}
+		f := files[i]
+		return Export{Name: base + OfficeExt(a.Type), ContentType: MimeOf(entry), write: func(w io.Writer) error {
+			rc, err := s.c.open(f.Sha256)
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
+			_, err = io.Copy(w, rc)
 			return err
 		}}, nil
 	case ExportProject:
@@ -188,7 +217,7 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 	case ExportMockupPDF:
 		return s.exportMockup(ctx, a, v, base, true, opts)
 	}
-	return Export{}, opErr(CodeInvalid, "artifact %s 不能导出为 %q（页面与画布可导出为 html 或 zip，画布另可导出为 mockup-png / mockup-pdf，设计画布另可导出为 project，文档另可导出为 md，幻灯片另可导出为 pdf）。", id, format)
+	return Export{}, opErr(CodeInvalid, "artifact %s 不能导出为 %q（页面与画布可导出为 html 或 zip，画布另可导出为 mockup-png / mockup-pdf，设计画布另可导出为 project，文档另可导出为 md，幻灯片另可导出为 pdf；Office 文件可导出为 original，Word 与 PowerPoint 另可导出为 pdf）。", id, format)
 }
 
 // exportProject 把设计画布的一个版本导出为工程 zip（M29 D2）：版本里的 src/**、designengine 的工程外壳
@@ -290,6 +319,28 @@ func (s *Service) slidesPDF(ctx context.Context, id string, version int) ([]byte
 	}
 	_ = json.Unmarshal(entry, &deck) // 入口已通过校验；万一解析不了按缺省的 16:9
 	width, height := slideSize(deck.Aspect)
+	r := s.renderer()
+	if r == nil {
+		return nil, opErr(CodeRenderUnavailable, "控制面没有配置渲染器，不能导出 PDF。")
+	}
+	out, err := r.Run(ctx, render.Job{ArtifactID: id, Version: version, Query: "view=print",
+		Width: width, Height: height, Scale: 1, PDF: true})
+	if errors.Is(err, render.ErrUnavailable) {
+		return nil, opErr(CodeRenderUnavailable, "控制面现在不能渲染（%s），所以不能导出 PDF。", err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("把 artifact %s 版本 %d 打印成 PDF 失败：%w", id, version, err)
+	}
+	return out, nil
+}
+
+// officePDF 用控制面渲染器把 Word / PowerPoint 某个版本的查看器打印视图（`?view=print`）打印成 PDF：
+// 窗口 Word 用 A4（794×1123），PowerPoint 用 16:9（1280×720），倍率 1；页面尺寸由查看器注入的 @page 决定。
+func (s *Service) officePDF(ctx context.Context, id string, version int, typ string) ([]byte, error) {
+	width, height := 794, 1123
+	if typ == TypePptx || typ == TypePptm {
+		width, height = 1280, 720
+	}
 	r := s.renderer()
 	if r == nil {
 		return nil, opErr(CodeRenderUnavailable, "控制面没有配置渲染器，不能导出 PDF。")
