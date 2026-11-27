@@ -134,4 +134,56 @@ describe("PlanProposalDialog", () => {
 		);
 		expect(lastNotice()).toBeUndefined();
 	});
+
+	it("档位：默认带 defaultTier，改选后批准时发出所选 role", async () => {
+		cmd.mockResolvedValue({ approved: true, dispatched: true });
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<MemoryRouter>
+					<PlanProposalDialog
+						threadId="T-1"
+						proposal={{
+							...proposal,
+							tiers: [
+								{
+									role: "default",
+									provider: "anthropic",
+									model: "claude-sonnet-4-5",
+									name: "Claude Sonnet 4.5",
+								},
+								{
+									role: "slow",
+									provider: "anthropic",
+									model: "claude-opus-4-6",
+									name: "Claude Opus 4.6",
+								},
+							],
+							defaultTier: "default",
+						}}
+					/>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+		const picker = screen.getByRole("combobox", {
+			name: i18n.t("plan.continueWith"),
+		});
+		expect(picker).toHaveTextContent(i18n.t("roles.names.default"));
+		fireEvent.click(picker);
+		fireEvent.click(
+			screen.getByRole("option", {
+				name: new RegExp(i18n.t("roles.names.slow")),
+			}),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: i18n.t("plan.option.keep_context") }),
+		);
+		await waitFor(() =>
+			expect(cmd.mock.calls[0]?.[1]).toEqual({
+				type: "plan_approval",
+				approved: true,
+				option: "keep_context",
+				role: "slow",
+			}),
+		);
+	});
 });

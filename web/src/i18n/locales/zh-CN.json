@@ -781,6 +781,8 @@
 	"plan": {
 		"title": "计划提案：{{title}}",
 		"feedback": "修改意见…",
+		"saveHint": "相对路径按 agent 的工作目录解析。",
+		"continueWith": "继续使用",
 		"pending": "待审计划：{{title}}",
 		"review": "审阅",
 		"option": {

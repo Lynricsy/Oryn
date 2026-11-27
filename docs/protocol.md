@@ -1646,7 +1646,7 @@ firecracker:
 - `oryn thread rpc <id> <json> [--timeout 5m]`：`<json>` 须是带字符串 `type` 的 JSON 对象，经 WS `cmd` 下发，应答缩进打印；`success: false` 时错误打到 stderr 并以 1 退出。托管命令被拒（`managed_by_oryn` 等）沿用现有错误路径。
 - `oryn thread abort <id>`：下发 `{type: "abort"}`。
 - `oryn thread fork <id> [--entry <entryId>] [--env share|copy] [--json]`：`POST /api/v1/threads/{id}/fork`，`--env` 缺省 `share`。
-- `oryn thread attach` 支持计划审批：快照里的 `agent.planProposal` 或 `plan_proposal` 帧到达时打印 `[plan] <标题>`、计划原文与编号选项；输入编号或选项名（`execute` / `compact` / `keep_context`）→ `plan_approval{approved: true, option}`；`save <绝对路径>` → `option: "save", savePath`；其它文字 → `approved: false, feedback`。有未决 UI 请求时仍先答它；`plan.resolved` 后输入恢复为普通消息。
+- `oryn thread attach` 支持计划审批：快照里的 `agent.planProposal` 或 `plan_proposal` 帧到达时打印 `[plan] <标题>`、计划原文与编号选项；输入编号或选项名（`execute` / `compact` / `keep_context`）→ `plan_approval{approved: true, option}`（不带 `role`，在恢复的进入前模型上执行）；`save <路径>` → `option: "save", savePath`（相对路径由 Core 按会话工作目录解析）；其它文字 → `approved: false, feedback`。有未决 UI 请求时仍先答它；`plan.resolved` 后输入恢复为普通消息。Web 的计划对话框另有「继续使用」档位选择：提案带 `tiers`（两个以上）时初始选中 `defaultTier`，批准执行类选项时带上 `role`。
 - `oryn thread attach` 的 stdin 是管道时也读取输入，管道结束后继续查看（终端上 EOF 仍退出）；`oryn thread abort` 另有 `--timeout`（缺省 1m）。
 - 以上命令在 orb 内不可用。
 

@@ -474,7 +474,7 @@ func TestAttachPlanProposal(t *testing.T) {
 	r.out.waitFor(t, "其它文字作为修改意见发回")
 	assert.Equal(t, "[ask] Pick\n  1) A\n  2) B\n（输入编号选择）\n"+
 		"[plan] Ship it\n# Plan\n- step one\n  1) execute\n  2) compact\n  3) keep_context\n  4) save\n  5) refine\n"+
-		"（输入编号；save 需写成 \"save <绝对路径>\"；其它文字作为修改意见发回）\n", r.out.String())
+		"（输入编号；save 需写成 \"save <路径>\"，相对路径按 agent 工作目录解析；其它文字作为修改意见发回）\n", r.out.String())
 
 	// 有未决 UI 请求时先答它
 	r.line(t, "2")
@@ -493,19 +493,18 @@ func TestAttachPlanProposal(t *testing.T) {
 		assert.Equal(t, attachThread, m["threadId"])
 		assert.Equal(t, want, m["frame"])
 	}
-	// refine 的编号、单独的 save、相对路径、越界编号：提示且不发送；编号 1 → options[0]
-	for _, l := range []string{"5", "refine", "4", "save plan.md", "9", "1"} {
+	// refine 的编号、单独的 save、越界编号：提示且不发送；编号 1 → options[0]
+	for _, l := range []string{"5", "refine", "4", "9", "1"} {
 		r.line(t, l)
 	}
 	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "execute"})
 	errs := r.errb.String()
 	assert.Equal(t, 2, strings.Count(errs, "请直接输入修改意见\n"), errs)
-	assert.Contains(t, errs, "save 需写成 \"save <绝对路径>\"\n")
-	assert.Contains(t, errs, "save 的路径必须是绝对路径")
+	assert.Contains(t, errs, "save 需写成 \"save <路径>\"\n")
 	assert.Contains(t, errs, "请输入选项编号（1-5）或修改意见\n")
 
-	r.line(t, "save /work/plans/ship.md")
-	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "save", "savePath": "/work/plans/ship.md"})
+	r.line(t, "save plans/ship.md")
+	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "save", "savePath": "plans/ship.md"})
 	r.line(t, "keep_context")
 	planCmd(map[string]any{"type": "plan_approval", "approved": true, "option": "keep_context"})
 	r.line(t, "please split step one")

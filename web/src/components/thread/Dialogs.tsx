@@ -18,6 +18,7 @@ import {
 } from "../../lib/format";
 import { rasterMime } from "../../lib/image-src";
 import { modelBrand, shortModelName } from "../../lib/model-brand";
+import { BUILTIN_ROLE_NAMES, type BuiltinRole } from "../../lib/model-roles";
 import type { ReportKind } from "../../lib/slash";
 import type {
 	OmpCommand,
@@ -1702,7 +1703,13 @@ export function PlanProposalDialog({
 	const { t } = useTranslation();
 	const [choice, setChoice] = useState<PlanChoice | null>(null);
 	const [feedback, setFeedback] = useState("");
+	// 相对路径由 Core 按会话工作目录解析（同 omp TUI），默认文件名即可直接保存
 	const [savePath, setSavePath] = useState(proposal.suggestedFileName);
+	// 执行档位（omp TUI 的「continue with」滑条）：Core 给出两个以上才可选，初始为 defaultTier
+	const tiers = (proposal.tiers?.length ?? 0) > 1 ? proposal.tiers : undefined;
+	const [tier, setTier] = useState(
+		proposal.defaultTier ?? proposal.tiers?.[0]?.role ?? "",
+	);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
 	// 收起时记下当时的 `planReviewNonce`：`/plan-review`（uiStore.reviewPlan）递增它，胶囊即回到对话框
@@ -1730,7 +1737,13 @@ export function PlanProposalDialog({
 					option: "save",
 					savePath,
 				};
-			else frame = { type: "plan_approval", approved: true, option: c };
+			else
+				frame = {
+					type: "plan_approval",
+					approved: true,
+					option: c,
+					...(tiers && tier ? { role: tier } : {}),
+				};
 			const data = await realtime.cmd(threadId, frame, 600_000);
 			getThreadStore(threadId).getState().patchLocal({ planProposal: null });
 			// 对话框随即卸载：保存路径、未派发的原因落成转录里的本地提示
@@ -1780,10 +1793,34 @@ export function PlanProposalDialog({
 						/>
 					)}
 					{choice === "save" && (
-						<TextInput
-							value={savePath}
-							onChange={(e) => setSavePath(e.target.value)}
-						/>
+						<>
+							<TextInput
+								value={savePath}
+								onChange={(e) => setSavePath(e.target.value)}
+							/>
+							<p className="text-faint text-xs">{t("plan.saveHint")}</p>
+						</>
+					)}
+					{tiers && choice !== "save" && choice !== "refine" && (
+						<div className="flex min-w-0 items-center gap-2 text-sm">
+							<span className="shrink-0 text-faint">
+								{t("plan.continueWith")}
+							</span>
+							<Select
+								size="sm"
+								className="w-auto min-w-0"
+								aria-label={t("plan.continueWith")}
+								value={tier}
+								onChange={setTier}
+								options={tiers.map((x) => ({
+									value: x.role,
+									label: Object.hasOwn(BUILTIN_ROLE_NAMES, x.role)
+										? t(`roles.names.${x.role as BuiltinRole}`)
+										: x.role,
+									hint: shortModelName(x.name, modelBrand(x.model, x.provider)),
+								}))}
+							/>
+						</div>
 					)}
 					<ErrorText error={error} />
 					{/* 手机上五个按钮一行放不下：主操作「执行」独占一行，其余两两成列，不留单个孤零零的折行按钮 */}

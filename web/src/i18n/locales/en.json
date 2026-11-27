@@ -781,6 +781,8 @@
 	"plan": {
 		"title": "Plan proposal: {{title}}",
 		"feedback": "What should change…",
+		"saveHint": "Relative paths resolve against the agent's working directory.",
+		"continueWith": "Continue with",
 		"pending": "Plan awaiting review: {{title}}",
 		"review": "Review",
 		"option": {

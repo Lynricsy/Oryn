@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path"
 	"strconv"
 	"strings"
 	"syscall"
@@ -716,7 +715,7 @@ func (a *attacher) printPlan() {
 	if a.o.in == nil {
 		fmt.Fprintln(a.o.out, "（等待审批）")
 	} else {
-		fmt.Fprintln(a.o.out, `（输入编号；save 需写成 "save <绝对路径>"；其它文字作为修改意见发回）`)
+		fmt.Fprintln(a.o.out, `（输入编号；save 需写成 "save <路径>"，相对路径按 agent 工作目录解析；其它文字作为修改意见发回）`)
 	}
 }
 
@@ -730,17 +729,14 @@ func planAnswer(p planProposal, line string) (frame map[string]any, hint string)
 		choice, numbered = p.Options[n-1], true
 	}
 	if rest, ok := strings.CutPrefix(choice, "save "); ok && !numbered {
-		dst := strings.TrimSpace(rest)
-		if !path.IsAbs(dst) {
-			return nil, `save 的路径必须是绝对路径（"save <绝对路径>"）`
-		}
-		return map[string]any{"type": "plan_approval", "approved": true, "option": "save", "savePath": dst}, ""
+		// 输入行已去掉首尾空白，rest 非空；相对路径由 Core 按会话工作目录解析
+		return map[string]any{"type": "plan_approval", "approved": true, "option": "save", "savePath": strings.TrimSpace(rest)}, ""
 	}
 	switch {
 	case choice == "refine":
 		return nil, "请直接输入修改意见"
 	case choice == "save":
-		return nil, `save 需写成 "save <绝对路径>"`
+		return nil, `save 需写成 "save <路径>"`
 	case numbered || approveOptions[choice]:
 		return map[string]any{"type": "plan_approval", "approved": true, "option": choice}, ""
 	}
@@ -923,7 +919,7 @@ var threadAttachCmd = &cobra.Command{
 	Short: "挂到线程上：流式打印转录，可输入消息（steer）、作答待答请求或审批计划；挂着即算正在查看该线程",
 	Long: "退出码（--exit-on-idle）：见到一个回合结束后，线程 idle → 0、awaiting_input → 3、error → 4。\n" +
 		"输入：每行一条；有待答请求时作为作答（编号或文字）；有待审批的计划时输入编号或选项名批准，\n" +
-		"\"save <绝对路径>\" 保存计划，其它文字作为修改意见发回；否则 steer 当前回合。/abort 中断，/quit 退出；\n" +
+		"\"save <路径>\" 保存计划（相对路径按 agent 工作目录解析），其它文字作为修改意见发回；否则 steer 当前回合。/abort 中断，/quit 退出；\n" +
 		"终端上 EOF 或 Ctrl-C 退出（agent 继续），管道输入结束后继续查看。",
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

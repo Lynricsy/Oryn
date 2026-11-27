@@ -5851,6 +5851,16 @@ type OrynRpcResponse = {
 	success: true;
 	data: OrynMarkSessionStartResult;
 };
+interface RpcPlanExecutionTier {
+	role: string;
+	provider: string;
+	/** 模型 id。 */
+	model: string;
+	/** 模型显示名（没有时同 id）。 */
+	name: string;
+	/** role 显式配置的思考级别。 */
+	thinkingLevel?: ConfiguredThinkingLevel;
+}
 type OrynUiParityRpcCommand = {
 	id?: string;
 	type: "oryn_cancel_job";
@@ -6453,7 +6463,10 @@ export type RpcCommand = {
 	approved: boolean;
 	option?: RpcPlanApprovalOption;
 	feedback?: string;
+	/** Oryn: relative paths resolve against the session cwd (as in the TUI). */
 	savePath?: string;
+	/** Oryn: execution tier (`plan_proposal.tiers[].role`); ignored by `save`. */
+	role?: string;
 } | {
 	id?: string;
 	type: "get_vibe_mode";
@@ -7629,6 +7642,10 @@ export interface RpcPlanProposalFrame {
 	suggestedFileName: string;
 	planContent: string;
 	options: string[];
+	/** Oryn: execution tiers (the TUI's "continue with" slider); omitted when fewer than two. */
+	tiers?: RpcPlanExecutionTier[];
+	/** Oryn: the tier a host should preselect (`default` when present). */
+	defaultTier?: string;
 }
 export interface RpcVibeModeState {
 	enabled: boolean;

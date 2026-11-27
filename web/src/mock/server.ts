@@ -4392,7 +4392,10 @@ export class MockServer {
 								approved: true,
 								dispatched: false,
 								reason: "saved",
-								savedPath: frame.savePath,
+								// 同 Core：相对路径按会话工作目录解析
+								savedPath: String(frame.savePath).startsWith("/")
+									? frame.savePath
+									: `/home/user/workspace/repo/${frame.savePath}`,
 								freshSessionStarted: true,
 							}
 						: { approved: frame.approved === true, dispatched: true },
@@ -4843,6 +4846,28 @@ export class MockServer {
 				planContent:
 					"## 步骤\n\n1. 指数退避\n2. afterSeq 补拉\n3. 端到端测试\n",
 				options: ["execute", "compact", "keep_context", "save", "refine"],
+				tiers: [
+					{
+						role: "smol",
+						provider: "anthropic",
+						model: "claude-haiku-4-5",
+						name: "Claude Haiku 4.5",
+					},
+					{
+						role: "default",
+						provider: "anthropic",
+						model: "claude-sonnet-4-5",
+						name: "Claude Sonnet 4.5",
+					},
+					{
+						role: "slow",
+						provider: "anthropic",
+						model: "claude-opus-4-6",
+						name: "Claude Opus 4.6",
+						thinkingLevel: "high",
+					},
+				],
+				defaultTier: "default",
 			};
 			this.planProposals.set(threadId, proposal);
 			this.frame(threadId, proposal);
