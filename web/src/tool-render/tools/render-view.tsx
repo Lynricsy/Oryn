@@ -72,6 +72,7 @@ function ViewFailed({ p }: { p: ToolInlineProps }): ReactNode {
 		<div
 			ref={p.rootRef}
 			data-testid="view-failed"
+			data-view-call={p.toolCallId}
 			className="text-faint text-xs"
 			title={reason ? reason.slice(0, 600) : undefined}
 		>
@@ -87,6 +88,7 @@ function ViewPending({ p }: { p: ToolInlineProps }): ReactNode {
 		<div
 			ref={p.rootRef}
 			data-testid="view-pending"
+			data-view-call={p.toolCallId}
 			className="h-16 animate-pulse rounded-lg border border-border bg-inset px-3 py-2 text-faint text-xs"
 		>
 			{t("view.state.loading")}
@@ -111,7 +113,12 @@ function RenderUiInline(p: ToolInlineProps): ReactNode {
 	if (!spec)
 		return p.result || p.started ? <ViewFailed p={p} /> : <ViewPending p={p} />;
 	return (
-		<div ref={p.rootRef} data-testid="view-ui" className="min-w-0">
+		<div
+			ref={p.rootRef}
+			data-testid="view-ui"
+			data-view-call={p.toolCallId}
+			className="min-w-0"
+		>
 			<UiView
 				spec={spec}
 				toolCallId={p.toolCallId}
@@ -141,7 +148,12 @@ function RenderHtmlInline(p: ToolInlineProps): ReactNode {
 		(p.started === true ||
 			(p.result !== undefined && (p.result.isError !== true || call.owner)));
 	return (
-		<div ref={p.rootRef} data-testid="view-html" className="min-w-0">
+		<div
+			ref={p.rootRef}
+			data-testid="view-html"
+			data-view-call={p.toolCallId}
+			className="min-w-0"
+		>
 			<HtmlView
 				toolCallId={p.toolCallId}
 				spec={spec}
