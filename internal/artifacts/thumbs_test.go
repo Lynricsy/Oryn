@@ -339,13 +339,14 @@ func TestScreenshot(t *testing.T) {
 	assert.Equal(t, CodeRenderUnavailable, code(err))
 }
 
-// 真渲染一张缩略图（ORYN_TEST_CHROMIUM=1）：得到 720×450 的 JPEG。
-func TestThumbChromium(t *testing.T) {
+// chromiumRenderer 起一个真 Chromium 渲染器（ORYN_TEST_CHROMIUM=1，否则跳过）并装到 e 上；asset 是帧服务的
+// 嵌入产物（查看器、页面运行时）。
+func chromiumRenderer(t *testing.T, e *env, asset func(string) ([]byte, bool)) {
+	t.Helper()
 	if os.Getenv("ORYN_TEST_CHROMIUM") != "1" {
 		t.Skip("set ORYN_TEST_CHROMIUM=1 to run Chromium integration tests")
 	}
-	e := newEnv(t)
-	h := newHost(t, e, "localhost", noAsset)
+	h := newHost(t, e, "localhost", asset)
 	cfg := render.Config{Site: h, CDNs: CDNs}
 	if os.Geteuid() == 0 {
 		if _, err := user.Lookup("nobody"); err != nil {
@@ -365,11 +366,17 @@ func TestThumbChromium(t *testing.T) {
 	r, err := render.New(cfg)
 	require.NoError(t, err)
 	t.Cleanup(r.Close)
-	ctx := context.Background()
-	r.Preflight(ctx)
+	r.Preflight(context.Background())
 	ok, reason := r.Status()
 	require.True(t, ok, reason)
 	withRenderer(e, r)
+}
+
+// 真渲染一张缩略图（ORYN_TEST_CHROMIUM=1）：得到 720×450 的 JPEG。
+func TestThumbChromium(t *testing.T) {
+	e := newEnv(t)
+	chromiumRenderer(t, e, noAsset)
+	ctx := context.Background()
 
 	a := mkPage(t, e, put("index.html", `<!doctype html><html><body style="margin:0;background:#fff">`+
 		`<h1 style="color:#f00;font-size:120px">红色标题</h1></body></html>`))

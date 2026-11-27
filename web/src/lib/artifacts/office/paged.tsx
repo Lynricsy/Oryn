@@ -7,6 +7,7 @@ import {
 	useCallback,
 	useEffect,
 	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
@@ -337,7 +338,7 @@ function ThumbnailPage({
 }
 
 function PrintPages({
-	source,
+	source: raw,
 	strings,
 	label,
 	onReady,
@@ -347,6 +348,17 @@ function PrintPages({
 	const onSettled = useCallback(
 		(i: number) => setDone((d) => Math.max(d, i + 1)),
 		[],
+	);
+	// 页框取整到整像素、与 @page 一致：差零点几像素也会溢出到下一张纸，多出空白页
+	const source = useMemo<PageSource>(
+		() => ({
+			...raw,
+			size: (i) => {
+				const s = raw.size(i);
+				return { w: Math.floor(s.w), h: Math.floor(s.h) };
+			},
+		}),
+		[raw],
 	);
 	if (source.count > MAX_PRINT_PAGES)
 		return <div className="oryn-o-state">{strings.tooManyPages}</div>;
@@ -370,10 +382,10 @@ function PrintPages({
 	return (
 		<div className="oryn-o-print">
 			<PrintPageStyle w={first.w} h={first.h} />
-			{pages}
 			{done >= source.count ? (
 				<ReadyMark pages={source.count} strings={strings} onReady={onReady} />
 			) : null}
+			{pages}
 		</div>
 	);
 }

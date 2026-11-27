@@ -3,12 +3,16 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
+	"github.com/Lynricsy/Oryn/internal/webui"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -210,3 +214,47 @@ func TestThumbOfficeTooLarge(t *testing.T) {
 	_, _, err = e.s.Thumbnail(ctx, a.ID, 1)
 	assert.Equal(t, CodeNoThumbnail, code(err), "旧的大版本不拿新版本的图顶替")
 }
+
+// 真 Chromium 渲染 Office 样本（ORYN_TEST_CHROMIUM=1，需要 make web）：缩略图画出了文档内容（不是「正在加载」），
+// Word 的打印 PDF 每页一张纸。渲染管线用虚拟时间，查看器靠 frame-timer-shim 才等得到 worker 里的解析与 rAF。
+func TestThumbChromiumOffice(t *testing.T) {
+	if _, ok := webui.Asset("sandbox/viewers/docx.js"); !ok && os.Getenv("ORYN_TEST_CHROMIUM") == "1" {
+		t.Skip("嵌入的 Web 产物里没有 Office 查看器：先 make web")
+	}
+	e := newEnv(t)
+	chromiumRenderer(t, e, webui.Asset)
+	ctx := context.Background()
+	data, err := os.ReadFile("../../web/sandbox/viewers/testdata/office/sample.docx")
+	require.NoError(t, err)
+	a := mkOffice(t, e, TypeDocx, data)
+
+	require.NoError(t, e.s.ensureThumb(ctx, a.ID, 1))
+	p, _, err := e.s.Thumbnail(ctx, a.ID, 1)
+	require.NoError(t, err)
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	img, err := jpeg.Decode(bytes.NewReader(b))
+	require.NoError(t, err)
+	// 样本第一页的内嵌图是蓝底橙圆：数得到橙色像素才说明页面真的画出来了
+	orange := 0
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y += 2 {
+		for x := bounds.Min.X; x < bounds.Max.X; x += 2 {
+			cr, cg, cb, _ := img.At(x, y).RGBA()
+			if cr>>8 > 0xd0 && cg>>8 > 0x50 && cg>>8 < 0xa0 && cb>>8 < 0x60 {
+				orange++
+			}
+		}
+	}
+	assert.Greater(t, orange, 50, "缩略图里应有样本图片的橙色圆")
+
+	x, err := e.s.Export(ctx, a.ID, 0, ExportPDF)
+	require.NoError(t, err)
+	var pdf bytes.Buffer
+	require.NoError(t, x.Write(&pdf))
+	require.True(t, bytes.HasPrefix(pdf.Bytes(), []byte("%PDF-")))
+	assert.Len(t, pdfPageRe.FindAll(pdf.Bytes(), -1), 2, "样本两页，打印 PDF 也是两页")
+}
+
+// pdfPageRe 匹配 PDF 里的页对象（`/Type /Page`，不含页树的 `/Pages`）。
+var pdfPageRe = regexp.MustCompile(`/Type\s*/Page[^s]`)

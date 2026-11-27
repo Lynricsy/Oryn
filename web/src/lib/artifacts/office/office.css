@@ -195,12 +195,20 @@
 	background: #fff;
 }
 
+/* 打印视图：块级排版（flex 容器里的强制分页不可靠），一页一块，最后一块后面不再分页 */
+.oryn-o:has(> .oryn-o-print),
 .oryn-o-print {
+	display: block;
+	height: auto;
 	background: #fff;
 }
 
 .oryn-o-print-page {
 	break-after: page;
+}
+
+.oryn-o-print-page:last-child {
+	break-after: auto;
 }
 
 .oryn-o-sheet-host {
