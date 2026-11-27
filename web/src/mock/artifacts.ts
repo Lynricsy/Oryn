@@ -808,6 +808,11 @@ export class MockArtifacts {
 				render: false,
 				renderReason: "mock 模式没有渲染器",
 				sample: false,
+				office: {
+					edit: false,
+					convert: false,
+					reason: "mock 模式没有 Office 引擎",
+				},
 			} satisfies Schemas["ArtifactCapabilities"]);
 		if (p === "artifacts/import" && m === "POST")
 			return this.importFiles(req, url);

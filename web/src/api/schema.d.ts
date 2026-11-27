@@ -3734,6 +3734,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/artifacts/{id}/office-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 打开 Office 编辑会话（需要配置 Office 引擎）；同一 artifact 已有编辑占用时加入同一文档 */
+        post: operations["openArtifactOfficeSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-office-sessions/{sessionId}/beat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["ArtifactOfficeSessionIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 编辑会话心跳（编辑器每 60 秒一次），刷新占用的活动时间 */
+        post: operations["beatArtifactOfficeSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/artifact-office-sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["ArtifactOfficeSessionIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 关闭编辑会话（引擎的退出保存在宽限期内仍可提交；不存在也回 204） */
+        delete: operations["closeArtifactOfficeSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/{id}/comments": {
         parameters: {
             query?: never;
@@ -8296,6 +8353,8 @@ export interface components {
             };
             /** @description 创建线程与写过版本的线程（还存在的），先创建线程后按最近写入 */
             threads: components["schemas"]["ArtifactThreadRef"][];
+            /** @description 该 artifact 当前有 Office 编辑占用（编辑器里有人在编辑，写入会回 423 locked） */
+            editing?: boolean;
         };
         ArtifactState: {
             /** @description 当前最新版本 */
@@ -8390,6 +8449,33 @@ export interface components {
             renderReason?: string;
             /** @description 页面能否用 `sample` 能力向模型提问 */
             sample: boolean;
+            /** @description Office 引擎能力（M32）；没有配置引擎时两项都为 false */
+            office: {
+                /** @description 能否在浏览器里编辑 Word / Excel / PowerPoint */
+                edit: boolean;
+                /** @description 能否用引擎转换（导入旧版与 OpenDocument 格式、Excel 的 PDF 导出与高保真 PDF） */
+                convert: boolean;
+                /** @description 不可用时的原因 */
+                reason?: string;
+            };
+        };
+        /** @description `aos_<ulid>`（Office 编辑会话） */
+        ArtifactOfficeSessionId: string;
+        ArtifactOfficeSessionRequest: {
+            /** @description 编辑器界面语言（如 `zh-CN`） */
+            locale?: string;
+        };
+        ArtifactOfficeSession: {
+            sessionId: components["schemas"]["ArtifactOfficeSessionId"];
+            /** @description 引擎编辑页地址（已带 WOPISrc 与 lang） */
+            actionUrl: string;
+            /** @description WOPI 访问令牌（只此一次给出） */
+            accessToken: string;
+            /**
+             * Format: int64
+             * @description 令牌过期时刻（UTC 毫秒，WOPI 约定的 access_token_ttl）
+             */
+            accessTokenTtl: number;
         };
         /** @description `act_<ulid>`（artifact 评论串） */
         ArtifactCommentThreadId: string;
@@ -13388,6 +13474,7 @@ export interface components {
         AttachmentIdPath: components["schemas"]["AttachmentId"];
         AssistantFileIdPath: components["schemas"]["AssistantFileId"];
         ArtifactIdPath: components["schemas"]["ArtifactId"];
+        ArtifactOfficeSessionIdPath: components["schemas"]["ArtifactOfficeSessionId"];
         ArtifactVersionPath: number;
         ArtifactCommentThreadIdPath: components["schemas"]["ArtifactCommentThreadId"];
         SshHostIdPath: components["schemas"]["SshHostId"];
@@ -19365,6 +19452,83 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ArtifactCapabilities"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    openArtifactOfficeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ArtifactIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ArtifactOfficeSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description 会话；浏览器把 accessToken 与 accessTokenTtl 以表单 POST 到 actionUrl */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactOfficeSession"];
+                };
+            };
+            /** @description 错误：`invalid`（类型不支持编辑、引擎未配置或不可用）、`deleted`（410）、`not_found`（404） */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    beatArtifactOfficeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["ArtifactOfficeSessionIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已刷新 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    closeArtifactOfficeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["ArtifactOfficeSessionIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已关闭 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

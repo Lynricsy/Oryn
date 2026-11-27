@@ -5170,6 +5170,18 @@ type ArtifactCapabilities struct {
 	// Frames `host` 泛域名（配置了 `portal_domain`）；`path` 主域回退路径
 	Frames ArtifactCapabilitiesFrames `json:"frames"`
 
+	// Office Office 引擎能力（M32）；没有配置引擎时两项都为 false
+	Office struct {
+		// Convert 能否用引擎转换（导入旧版与 OpenDocument 格式、Excel 的 PDF 导出与高保真 PDF）
+		Convert bool `json:"convert"`
+
+		// Edit 能否在浏览器里编辑 Word / Excel / PowerPoint
+		Edit bool `json:"edit"`
+
+		// Reason 不可用时的原因
+		Reason *string `json:"reason,omitempty"`
+	} `json:"office"`
+
 	// Render 控制面能否渲染（缩略图、PNG、PDF）
 	Render bool `json:"render"`
 
@@ -5399,7 +5411,10 @@ type ArtifactDetail struct {
 	// Canvas 画布 artifact 该版本的 `canvas.json`（解析后的对象）；其它类型省略
 	Canvas       map[string]interface{} `json:"canvas,omitempty"`
 	Capabilities []ArtifactCapability   `json:"capabilities"`
-	Files        []ArtifactFile         `json:"files"`
+
+	// Editing 该 artifact 当前有 Office 编辑占用（编辑器里有人在编辑，写入会回 423 locked）
+	Editing *bool          `json:"editing,omitempty"`
+	Files   []ArtifactFile `json:"files"`
 
 	// Head 最新版本
 	Head int `json:"head"`
@@ -5468,6 +5483,30 @@ type ArtifactKind string
 // ArtifactList defines model for ArtifactList.
 type ArtifactList struct {
 	Artifacts []Artifact `json:"artifacts"`
+}
+
+// ArtifactOfficeSession defines model for ArtifactOfficeSession.
+type ArtifactOfficeSession struct {
+	// AccessToken WOPI 访问令牌（只此一次给出）
+	AccessToken string `json:"accessToken"`
+
+	// AccessTokenTTL 令牌过期时刻（UTC 毫秒，WOPI 约定的 access_token_ttl）
+	AccessTokenTTL int64 `json:"accessTokenTtl"`
+
+	// ActionURL 引擎编辑页地址（已带 WOPISrc 与 lang）
+	ActionURL string `json:"actionUrl"`
+
+	// SessionID `aos_<ulid>`（Office 编辑会话）
+	SessionID ArtifactOfficeSessionID `json:"sessionId"`
+}
+
+// ArtifactOfficeSessionID `aos_<ulid>`（Office 编辑会话）
+type ArtifactOfficeSessionID = string
+
+// ArtifactOfficeSessionRequest defines model for ArtifactOfficeSessionRequest.
+type ArtifactOfficeSessionRequest struct {
+	// Locale 编辑器界面语言（如 `zh-CN`）
+	Locale *string `json:"locale,omitempty"`
 }
 
 // ArtifactOpenLink defines model for ArtifactOpenLink.
@@ -14111,6 +14150,9 @@ type ArtifactCommentThreadIDPath = ArtifactCommentThreadID
 // ArtifactIDPath `art_<ulid>`（M14 artifact）
 type ArtifactIDPath = ArtifactID
 
+// ArtifactOfficeSessionIDPath `aos_<ulid>`（Office 编辑会话）
+type ArtifactOfficeSessionIDPath = ArtifactOfficeSessionID
+
 // ArtifactVersionPath defines model for ArtifactVersionPath.
 type ArtifactVersionPath = int
 
@@ -15249,6 +15291,9 @@ type EditArtifactElementJSONRequestBody = ArtifactElementEdit
 
 // OpenArtifactFrameJSONRequestBody defines body for OpenArtifactFrame for application/json ContentType.
 type OpenArtifactFrameJSONRequestBody = ArtifactFrameRequest
+
+// OpenArtifactOfficeSessionJSONRequestBody defines body for OpenArtifactOfficeSession for application/json ContentType.
+type OpenArtifactOfficeSessionJSONRequestBody = ArtifactOfficeSessionRequest
 
 // OpenArtifactLinkJSONRequestBody defines body for OpenArtifactLink for application/json ContentType.
 type OpenArtifactLinkJSONRequestBody = ArtifactFrameRequest
@@ -18204,6 +18249,12 @@ type ServerInterface interface {
 	// CloseArtifactFrame 关闭渲染帧（查看器卸载时调用；不存在也回 204）
 	// (DELETE /api/v1/artifact-frames/{token})
 	CloseArtifactFrame(w http.ResponseWriter, r *http.Request, token ArtifactFrameToken)
+	// CloseArtifactOfficeSession 关闭编辑会话（引擎的退出保存在宽限期内仍可提交；不存在也回 204）
+	// (DELETE /api/v1/artifact-office-sessions/{sessionId})
+	CloseArtifactOfficeSession(w http.ResponseWriter, r *http.Request, sessionID ArtifactOfficeSessionIDPath)
+	// BeatArtifactOfficeSession 编辑会话心跳（编辑器每 60 秒一次），刷新占用的活动时间
+	// (POST /api/v1/artifact-office-sessions/{sessionId}/beat)
+	BeatArtifactOfficeSession(w http.ResponseWriter, r *http.Request, sessionID ArtifactOfficeSessionIDPath)
 	// ListArtifactPublications 全部已发布的 artifact
 	// (GET /api/v1/artifact-publications)
 	ListArtifactPublications(w http.ResponseWriter, r *http.Request)
@@ -18267,6 +18318,9 @@ type ServerInterface interface {
 	// OpenArtifactFrame 申请一个渲染帧（独立源里的沙箱页面）；帧令牌就是访问凭证，orynd 重启后全部失效
 	// (POST /api/v1/artifacts/{id}/frames)
 	OpenArtifactFrame(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
+	// OpenArtifactOfficeSession 打开 Office 编辑会话（需要配置 Office 引擎）；同一 artifact 已有编辑占用时加入同一文档
+	// (POST /api/v1/artifacts/{id}/office-sessions)
+	OpenArtifactOfficeSession(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
 	// OpenArtifactLink 申请「在浏览器中打开」的顶层地址（短时有效的顶层帧，地址自带令牌、不需要登录态）
 	// (POST /api/v1/artifacts/{id}/open-link)
 	OpenArtifactLink(w http.ResponseWriter, r *http.Request, id ArtifactIDPath)
@@ -19437,6 +19491,18 @@ func (_ Unimplemented) CloseArtifactFrame(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// CloseArtifactOfficeSession 关闭编辑会话（引擎的退出保存在宽限期内仍可提交；不存在也回 204）
+// (DELETE /api/v1/artifact-office-sessions/{sessionId})
+func (_ Unimplemented) CloseArtifactOfficeSession(w http.ResponseWriter, r *http.Request, sessionID ArtifactOfficeSessionIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// BeatArtifactOfficeSession 编辑会话心跳（编辑器每 60 秒一次），刷新占用的活动时间
+// (POST /api/v1/artifact-office-sessions/{sessionId}/beat)
+func (_ Unimplemented) BeatArtifactOfficeSession(w http.ResponseWriter, r *http.Request, sessionID ArtifactOfficeSessionIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListArtifactPublications 全部已发布的 artifact
 // (GET /api/v1/artifact-publications)
 func (_ Unimplemented) ListArtifactPublications(w http.ResponseWriter, r *http.Request) {
@@ -19560,6 +19626,12 @@ func (_ Unimplemented) GetArtifactFile(w http.ResponseWriter, r *http.Request, i
 // OpenArtifactFrame 申请一个渲染帧（独立源里的沙箱页面）；帧令牌就是访问凭证，orynd 重启后全部失效
 // (POST /api/v1/artifacts/{id}/frames)
 func (_ Unimplemented) OpenArtifactFrame(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// OpenArtifactOfficeSession 打开 Office 编辑会话（需要配置 Office 引擎）；同一 artifact 已有编辑占用时加入同一文档
+// (POST /api/v1/artifacts/{id}/office-sessions)
+func (_ Unimplemented) OpenArtifactOfficeSession(w http.ResponseWriter, r *http.Request, id ArtifactIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -22010,6 +22082,58 @@ func (siw *ServerInterfaceWrapper) CloseArtifactFrame(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// CloseArtifactOfficeSession operation middleware
+func (siw *ServerInterfaceWrapper) CloseArtifactOfficeSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sessionId" -------------
+	var sessionID ArtifactOfficeSessionIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", chi.URLParam(r, "sessionId"), &sessionID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CloseArtifactOfficeSession(w, r, sessionID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeatArtifactOfficeSession operation middleware
+func (siw *ServerInterfaceWrapper) BeatArtifactOfficeSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sessionId" -------------
+	var sessionID ArtifactOfficeSessionIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sessionId", chi.URLParam(r, "sessionId"), &sessionID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sessionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeatArtifactOfficeSession(w, r, sessionID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListArtifactPublications operation middleware
 func (siw *ServerInterfaceWrapper) ListArtifactPublications(w http.ResponseWriter, r *http.Request) {
 
@@ -22814,6 +22938,32 @@ func (siw *ServerInterfaceWrapper) OpenArtifactFrame(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.OpenArtifactFrame(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenArtifactOfficeSession operation middleware
+func (siw *ServerInterfaceWrapper) OpenArtifactOfficeSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ArtifactIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenArtifactOfficeSession(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34515,6 +34665,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/capabilities", wrapper.GetArtifactCapabilities)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifacts/{id}/office-sessions", wrapper.OpenArtifactOfficeSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/artifact-office-sessions/{sessionId}/beat", wrapper.BeatArtifactOfficeSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/artifact-office-sessions/{sessionId}", wrapper.CloseArtifactOfficeSession)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/artifacts/{id}/comments", wrapper.ListArtifactComments)

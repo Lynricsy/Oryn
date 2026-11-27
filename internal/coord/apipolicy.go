@@ -228,7 +228,9 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("artifacts", opDeny, deny(denyNative("screenshot_artifact")), "getArtifactThumbnail", "renderArtifactPng")
 	set("artifacts", opDeny, deny(denyHuman), "createArtifactComment", "answerArtifactConsent")
 	set("artifacts", opDeny, deny(denyClient), "markArtifactOpened", "markArtifactCommentsSent", "openArtifactFrame",
-		"closeArtifactFrame", "openArtifactLink", "grantArtifactPublication")
+		"closeArtifactFrame", "openArtifactLink", "grantArtifactPublication",
+		// Office 编辑会话（M32）：只有浏览器里的编辑器用，令牌就是对文档的写权限
+		"openArtifactOfficeSession", "beatArtifactOfficeSession", "closeArtifactOfficeSession")
 
 	// schedules：REST 路径会把定时记成主人定义的，绕过 agent 定时的间隔、overlap、keepLast 与数量上限
 	set("schedules", opRead, none, "listSchedules", "getSchedule", "listScheduleRuns", "getThreadSchedule", "previewSchedule")

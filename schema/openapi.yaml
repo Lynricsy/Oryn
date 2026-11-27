@@ -4605,6 +4605,60 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ArtifactCapabilities' }
         default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifacts/{id}/office-sessions:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: openArtifactOfficeSession
+      summary: 打开 Office 编辑会话（需要配置 Office 引擎）；同一 artifact 已有编辑占用时加入同一文档
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArtifactOfficeSessionRequest' }
+      responses:
+        '201':
+          description: 会话；浏览器把 accessToken 与 accessTokenTtl 以表单 POST 到 actionUrl
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactOfficeSession' }
+        default:
+          description: 错误：`invalid`（类型不支持编辑、引擎未配置或不可用）、`deleted`（410）、`not_found`（404）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /api/v1/artifact-office-sessions/{sessionId}/beat:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactOfficeSessionIdPath' }
+    post:
+      tags: [artifacts]
+      operationId: beatArtifactOfficeSession
+      summary: 编辑会话心跳（编辑器每 60 秒一次），刷新占用的活动时间
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已刷新 }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/artifact-office-sessions/{sessionId}:
+    parameters:
+      - { $ref: '#/components/parameters/ArtifactOfficeSessionIdPath' }
+    delete:
+      tags: [artifacts]
+      operationId: closeArtifactOfficeSession
+      summary: 关闭编辑会话（引擎的退出保存在宽限期内仍可提交；不存在也回 204）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已关闭 }
+        default: { $ref: '#/components/responses/Error' }
   /api/v1/artifacts/{id}/comments:
     parameters:
       - { $ref: '#/components/parameters/ArtifactIdPath' }
@@ -7993,6 +8047,11 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/ArtifactId' }
+    ArtifactOfficeSessionIdPath:
+      name: sessionId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ArtifactOfficeSessionId' }
     ArtifactVersionPath:
       name: n
       in: path
@@ -10784,6 +10843,9 @@ components:
           type: array
           description: 创建线程与写过版本的线程（还存在的），先创建线程后按最近写入
           items: { $ref: '#/components/schemas/ArtifactThreadRef' }
+        editing:
+          type: boolean
+          description: 该 artifact 当前有 Office 编辑占用（编辑器里有人在编辑，写入会回 423 locked）
     ArtifactState:
       type: object
       required: [version, deleted]
@@ -10911,7 +10973,7 @@ components:
         autoNotes: { type: boolean }
     ArtifactCapabilities:
       type: object
-      required: [frames, render, sample]
+      required: [frames, render, sample, office]
       properties:
         frames:
           type: string
@@ -10927,6 +10989,46 @@ components:
         sample:
           type: boolean
           description: 页面能否用 `sample` 能力向模型提问
+        office:
+          type: object
+          description: Office 引擎能力（M32）；没有配置引擎时两项都为 false
+          required: [edit, convert]
+          properties:
+            edit:
+              type: boolean
+              description: 能否在浏览器里编辑 Word / Excel / PowerPoint
+            convert:
+              type: boolean
+              description: 能否用引擎转换（导入旧版与 OpenDocument 格式、Excel 的 PDF 导出与高保真 PDF）
+            reason:
+              type: string
+              description: 不可用时的原因
+    ArtifactOfficeSessionId:
+      type: string
+      pattern: '^aos_[0-9A-Z]{26}$'
+      description: '`aos_<ulid>`（Office 编辑会话）'
+    ArtifactOfficeSessionRequest:
+      type: object
+      properties:
+        locale:
+          type: string
+          maxLength: 16
+          description: 编辑器界面语言（如 `zh-CN`）
+    ArtifactOfficeSession:
+      type: object
+      required: [sessionId, actionUrl, accessToken, accessTokenTtl]
+      properties:
+        sessionId: { $ref: '#/components/schemas/ArtifactOfficeSessionId' }
+        actionUrl:
+          type: string
+          description: 引擎编辑页地址（已带 WOPISrc 与 lang）
+        accessToken:
+          type: string
+          description: WOPI 访问令牌（只此一次给出）
+        accessTokenTtl:
+          type: integer
+          format: int64
+          description: 令牌过期时刻（UTC 毫秒，WOPI 约定的 access_token_ttl）
     ArtifactCommentThreadId:
       type: string
       pattern: '^act_[0-9A-Z]{26}$'
