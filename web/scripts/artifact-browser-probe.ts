@@ -99,12 +99,14 @@ async function check(
 	await page.goto(t.url, { waitUntil: "networkidle" });
 	try {
 		await page.waitForFunction(
+			// biome-ignore lint/performance/useDomNodeTextContent: 探针断言的是排版后用户可见的文字，textContent 会把隐藏节点与内联数据也算进来
 			(w) => document.body.innerText.includes(w),
 			t.want,
 			// Office 样本要先加载解析器 wasm 再排版
 			{ timeout: t.shot ? 30_000 : 8000 },
 		);
 	} catch {
+		// biome-ignore lint/performance/useDomNodeTextContent: 失败时回显用户实际看到的文字
 		const body = (await page.evaluate(() => document.body.innerText))
 			.slice(0, 120)
 			.replace(/\s+/g, " ");
