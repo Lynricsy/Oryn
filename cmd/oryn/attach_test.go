@@ -621,13 +621,14 @@ func TestAttachInputShortcuts(t *testing.T) {
 	r := startAttach(t, ws, attachOpts{tail: 0}, true)
 	c := ws.accept()
 	c.expectSub()
-	c.send(snapshot("working", 0, nil))
+	// queue_update 先于快照发出：连接上的消息按序处理，而输入行要等快照处理完才执行（attacher.queued），
+	// 所以 sync 执行时 queue_update 一定已被消费。反过来发时 select 可能先取到输入行，空回车看不到队列（CI 偶发）。
 	c.send(map[string]any{
 		"type":     "frame",
 		"threadId": attachThread,
 		"frame":    map[string]any{"type": "queue_update", "steering": []string{"queued-1"}, "followUp": []string{}},
 	})
-	// 同步点：先发一条 prompt 确认 snapshot 与 queue_update 均已被 attacher 消费
+	c.send(snapshot("working", 0, nil))
 	r.line(t, "sync")
 	assert.Equal(t, map[string]any{"type": "prompt", "message": "sync", "streamingBehavior": "steer"}, c.next()["frame"])
 
