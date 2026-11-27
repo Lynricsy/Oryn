@@ -1,3 +1,5 @@
 - `updateProject` only changes the fields you pass.
-- A project's agent configuration (AGENTS.md, rules, skills, config.yml) is edited with the *ProjectAgentConfigFile operations: `path` is relative, for example `skills/review/SKILL.md`; `body` is the file text.
+- A project's agent configuration (AGENTS.md, rules, skills, extensions, tools, config.yml) is edited with the *ProjectAgentConfigFile operations: `path` is relative, for example `skills/review/SKILL.md`; `body` is the file text. It uses the same layout and `disabledExtensions` keys as the global configuration (skill://oryn/domains/settings.md); `models.yml` and `plans/` are global-only.
+- Multi-file entries (a skill directory with scripts, an extension or tool directory): use `applyProjectAgentConfigBatch` to write the whole entry in one request. Replace an entry by deleting its directory and writing all of its files in the same batch; remove it by deleting its directory. Binary files use `"encoding": "base64"`; executable scripts `"mode": 493`.
+- Extension, hook, tool and `SYSTEM.md` changes need a session restart: check `getAgentConfigApplyStatus`, then `restartAgentConfigSessions`.
 - Secret values are write-only; `listProjectSecrets` never returns them.

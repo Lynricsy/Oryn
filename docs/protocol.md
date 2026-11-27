@@ -39,6 +39,7 @@
 - WebAuthn 仪式：`begin` 返回 `{ceremonyId, options}`，`finish` 回传 `ceremonyId` 与浏览器凭据 JSON。恢复：`auth/recovery` 发放一次性会话后，以该会话调用 `auth/setup/*`（省略 `token`）重新注册 Passkey。
 - `ThreadPatch` / `ProjectPatch`：只改出现的字段；可选字符串传空串清除，`snoozedUntil` 传 0 清除（不使用 nullable 包装类型）。
 - `PUT agent-config/files/{path}` 请求体为原始字节（`application/octet-stream`），权限经查询参数 `mode`；`POST agent-config/import` 为 `application/x-tar`，整体替换 omp-home。项目级同形接口见「M12.2」。
+- `POST agent-config/batch`（`applyAgentConfigBatch`）一次增删多个文件，供多文件条目（`skills/<名称>/`、`extensions/<名称>/`、`tools/<名称>/`）的导入、替换与删除：体 `AgentConfigBatch{delete?, files?: [{path, content, encoding?: utf8|base64, mode?}]}` → `AgentConfigBatchResult{files, deleted, extractedSecrets, warnings}`。先删后写；`delete` 的一项删除该文件或该目录下全部文件，不匹配不算错；整批先校验再执行（路径非法 / 运行时数据、`files` 内路径重复、变更后同一路径既是文件又是目录、内容规则、base64 解码失败 → 400，超限 → 413），失败时不改任何文件；`delete` 与 `files` 都空 → 400。请求体上限同导入（合计上限 + 32 MiB）。全局助手经它一次确认装好整个条目（确认卡与审计里文件内容只显示字节数）。
 
 ## M3：终端 / 文件 / 改动 / 附件
 
@@ -1711,9 +1712,10 @@ firecracker:
 |`PUT /api/v1/projects/{id}/agent-config/files/{path}?mode=`|`putProjectAgentConfigFile`|体 `application/octet-stream` → `AgentConfigWriteResult`（`extractedSecrets` 恒为空）|
 |`DELETE /api/v1/projects/{id}/agent-config/files/{path}`|`deleteProjectAgentConfigFile`|→ 204|
 |`POST /api/v1/projects/{id}/agent-config/import`|`importProjectAgentConfig`|体 `application/x-tar` → `AgentConfigImportResult`；整体替换该项目的配置，被排除的路径静默跳过|
+|`POST /api/v1/projects/{id}/agent-config/batch`|`applyProjectAgentConfigBatch`|体 `AgentConfigBatch` → `AgentConfigBatchResult`；语义同全局 `applyAgentConfigBatch`（见「相对计划的补充与偏差」），项目规则与配额照常|
 
 - 参数复用 `ProjectIdPath` 与 `AgentConfigPath`（`/` 编码为 `%2F`）。鉴权同全局 `agent-config`：变更类方法要求 Cookie + `X-Oryn-CSRF: 1` 或设备 Bearer。
-- 错误：项目不存在 → 404 `not_found`（五个接口都先确认项目存在，不为不存在的项目建目录）；路径非法 / 被排除 / `models.yml` / `plans/` / `config.yml` 不是 YAML 映射 / `mode` 越界 / tar 无法解析 → 400 `invalid_request`；超配额（单文件、合计或文件数）→ 413 `invalid_request`；文件不存在 → 404 `not_found`。
+- 错误：项目不存在 → 404 `not_found`（六个接口都先确认项目存在，不为不存在的项目建目录）；路径非法 / 被排除 / `models.yml` / `plans/` / `config.yml` 不是 YAML 映射 / `mode` 越界 / tar 无法解析 → 400 `invalid_request`；超配额（单文件、合计或文件数）→ 413 `invalid_request`；文件不存在 → 404 `not_found`。
 - 导入体上限 = 合计上限 + 32 MiB 头部余量（全局与项目同一规则）。
 
 ### orb link：`setup.run` / `resume.run`（C3）
@@ -1827,7 +1829,7 @@ func (s *Saver) SaveRule(ctx context.Context, p threads.ConfigSaveParams) thread
 
 ### 控制面下发器（计划 6.2）
 
-- 触发：全局 `agent-config` 与项目层 `projects/{id}/agent-config` 的 `PUT files/{path}`、`DELETE files/{path}`、`POST import` 成功后，以及 `/omfg` 回写（M12.2）写入中央成功后，按层（全局 / 每个项目）防抖 1 秒下发一次；同一层期间再写会重新计时。各层下发串行进行。
+- 触发：全局 `agent-config` 与项目层 `projects/{id}/agent-config` 的 `PUT files/{path}`、`DELETE files/{path}`、`POST import`、`POST batch` 成功后，以及 `/omfg` 回写（M12.2）写入中央成功后，按层（全局 / 每个项目）防抖 1 秒下发一次；同一层期间再写会重新计时。各层下发串行进行。
 - 对象：状态为 `ready`、有已 hello 的 link 且 `features` 含 `omphome-apply` 的 orb（含在线的 runner，M21）；项目层只发给 `project_id` 为该项目的普通 orb（runner 的常驻 orb 不属于任何项目，只收全局层）。冻结、停机、恢复途中的 orb 跳过，它们在 `resume.run` / `setup.run` 时照常拿到最新配置；旧 orbd 不发。
 - 参数取自与 setup 同一份 `SetupSource.Plan`：`ompHome` 是渲染后的 omp-home（协调宿主只有 `coordinatorFiles`；runner 走 `planRunner`：开 `NoEnvFallback` 关闭 `ORYN_MODEL_KEY_<NAME>` 降级，不带 env 密钥、GitHub、git 主机或脚本，出站策略只有模型路由且 `NoGit: true`，`ssh` 只有全局主机），`projectConfig` 是该 orb 所属项目的项目层（没有项目或为 runner 则省略）。向 runner 下发前（全局层与 `agent.start` 的项目层均同），`agentcfg.ScreenSecrets` 逐个检查合法 UTF-8 且无 NUL 的文本文件，扫描形似密钥的串（抹掉 `oryn-ph-…` 占位符后）并比对长度 ≥ 8 的已知密钥明文（密钥库全部值 + 密码登录 SSH 主机的密码）；命中的文件扣下不发，扣下清单变化时写该 runner orb 的事件备注（全局层 `runner config withheld`，项目层 `runner project config withheld`）。各 orb 并发下发，单台应答上限 30 秒；成功后用同一份 Plan 的 `Egress` 替换该 orb 的出站策略（`models.yml` 改了 provider / baseUrl 时路由立即生效）。中央模型目录的缓存键本来就按 `models.yml` 与 `config.yml` 内容计算，不需要额外失效。
 - 基线：每层下发后在 `<data_dir>/omp-home-applied/`（项目层在其下 `projects/<id>/`）记下各文件原文的 sha256（`manifest.json`）与 `config.yml` 原文。下一次以此算出 `Changed`（新增、修改、删除的路径）与 `ConfigBefore`。没有基线时这一层的全部文件都算变化；全局层在 orynd 启动时若没有基线，先以当前 omp-home 建立基线。个别 orb 下发失败不影响基线（它在下次 setup / resume 时同步）。
