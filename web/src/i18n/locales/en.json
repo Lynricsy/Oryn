@@ -4689,16 +4689,25 @@
 				"empty": "No cells",
 				"output": "Output of cell {{n}}"
 			},
-			"pdf": {
-				"loading": "Loading PDF…",
-				"empty": "This PDF is empty",
-				"password": "This PDF is password-protected and can't be previewed",
-				"invalid": "Not a valid PDF, or the file is corrupted",
+			"office": {
+				"loading": "Loading…",
+				"tooLarge": "This file is too large to preview",
+				"failed": "Couldn't display this file: {{reason}}",
+				"rendered_one": "Rendered {{count}} page",
+				"rendered_other": "Rendered {{count}} pages",
+				"pageFailed": "Couldn't render page {{n}}",
+				"tooManyPages": "Too many pages to print",
+				"sheetNoPrint": "Spreadsheets have no print view",
+				"pageLabel": "Page {{n}}",
+				"slideLabel": "Slide {{n}}",
 				"pageNumber": "Page number",
 				"zoomIn": "Zoom in",
 				"zoomOut": "Zoom out",
 				"fitWidth": "Fit width",
-				"pageError": "Couldn't render page {{page}}"
+				"present": "Present",
+				"exitHint": "Press Esc to exit",
+				"prev": "Previous slide",
+				"next": "Next slide"
 			},
 			"archive": {
 				"failed": "Couldn't read archive",
@@ -4724,9 +4733,6 @@
 				"sample": "Sample text",
 				"samplePlaceholder": "Type text to preview",
 				"glyphs": "Glyphs"
-			},
-			"slides": {
-				"empty": "No slides to show. The file may be incomplete or use an unsupported format."
 			},
 			"model": {
 				"webglUnavailable": "WebGL isn't available, so 3D models can't be previewed",
