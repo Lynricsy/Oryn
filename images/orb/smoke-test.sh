@@ -38,7 +38,9 @@ docker compose version
 docker buildx version
 id -nG | tr ' ' '\n' | grep -qx docker
 
-# 桌面应用（M25）：清单按任务栏顺序列出六个应用，字段齐全，图标文件都在镜像里；VS Code 是官方发行版。
+# 桌面应用（M25）：清单按任务栏顺序列出六个应用，字段齐全，图标文件都在镜像里。
+# 代码编辑器：公开镜像是 VSCodium（/opt/vscodium）；本机派生镜像（Dockerfile.vscode）换成微软官方 VS Code（/opt/vscode），
+# 两者的命令都是 code，清单的 vscode 项要指向与之相符的桌面项。
 apps=/usr/local/share/oryn/desktop-apps.json
 jq -e '
 	map(.id) == ["chromium", "terminal", "vscode", "files", "editor", "libreoffice"]
@@ -56,11 +58,17 @@ while IFS=$'\t' read -r id icon desktop; do
 	test -f "/usr/share/applications/$desktop"
 done < <(jq -r '.[] | [.id, .icon, .desktopFile] | @tsv' "$apps")
 [[ "$(code --version | sed -n 1p)" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+editor_desktop="$(jq -r '.[] | select(.id == "vscode") | .desktopFile' "$apps")"
+case "$(readlink -f "$(command -v code)")" in
+/opt/vscodium/*) [[ "$editor_desktop" == codium.desktop ]] ;;
+/opt/vscode/*) [[ "$editor_desktop" == code.desktop ]] ;;
+*) echo "code 指向未知的发行版：$(readlink -f "$(command -v code)")" >&2; exit 1 ;;
+esac
 # LibreOffice 欢迎框靠 share/registry 下的 oryn.xcd 关掉：ooSetupLastVersion 必须等于已装版本的「主版本.次版本」。
 lo="$(pacman -Q libreoffice-fresh | awk '{ print $2 }' | cut -d. -f1,2)"
 grep -q "<value>$lo</value>" /usr/lib/libreoffice/share/registry/oryn.xcd
 [[ "${GLYCIN_DISABLE_SANDBOX:-}" == i-know-the-risks ]] # glycin 误判 bwrap 可用的绕过，见 Dockerfile
-printf '桌面应用清单 / 图标 / VS Code：通过\n'
+printf '桌面应用清单 / 图标 / 代码编辑器：通过\n'
 
 # 等宽字体：monospace（含中文语言环境）落到 JetBrains Maple Mono，它同时带中文与 Nerd 字形。
 for pattern in monospace 'monospace:lang=zh-cn'; do

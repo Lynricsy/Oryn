@@ -7,7 +7,7 @@ VERSION ?= $(shell git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev
 LDFLAGS := -s -w -X github.com/Lynricsy/Oryn/internal/version.Version=$(VERSION)
 BINS    := orynd orbd oryn fakeomp gemini-rerank oryn-push-gateway
 
-.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop android image fc-artifacts dev
+.PHONY: all gen gen-go gen-sqlc gen-web check-gen lint-spec build test web desktop android image image-vscode fc-artifacts dev
 
 all: build
 
@@ -65,6 +65,10 @@ android:
 
 image:
 	scripts/build-orb-image.sh
+
+## image-vscode：在 orb 镜像（BASE，默认 oryn-orb:dev）上换装微软官方 VS Code，产物只在本机使用、不要推送（许可限制）
+image-vscode:
+	scripts/build-orb-vscode-image.sh
 
 ## fc-artifacts：Firecracker provider 的产物 build/fc/{firecracker,jailer,vmlinux,rootfs.ext4}（x86_64；
 ## 根盘取 FC_IMAGE，默认 oryn-orb:dev，先 make image）。不需要宿主 root；安装见 docs/deploy.md。

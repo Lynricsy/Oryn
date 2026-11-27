@@ -1,0 +1,41 @@
+# 本机派生镜像：在 orb 镜像上换装微软官方 VS Code，任务栏的代码编辑器随之换成它。
+# 公开镜像里的编辑器是 VSCodium：微软许可不允许分享或发布 VS Code，所以官方版只能由部署方在本机构建、本机使用，
+# 产物不要推送到任何公开仓库。由 scripts/build-orb-vscode-image.sh 构建（`make image-vscode`），说明见 docs/deploy.md 第 1 节。
+#
+# 做法与公开镜像安装 VSCodium 相同：从微软更新 API 取 url 与 sha256hash，下载后校验摘要再解压到 /opt/vscode（约 1.1GB）。
+# `code` 改指官方版（/usr/local/bin 在 PATH 里排在 /usr/bin 前面）；VSCodium 留在原处，`codium` 仍可用。
+# 官方 tarball 不带桌面项，写入 code.desktop；桌面应用清单的 vscode 项改指它，图标换成官方图标。chrome-sandbox 的 setuid 位随 tarball 保留。
+ARG BASE=oryn-orb:dev
+FROM ${BASE}
+ARG TARGETARCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+USER root
+RUN case "$TARGETARCH" in amd64) va=linux-x64 ;; arm64) va=linux-arm64 ;; *) exit 1 ;; esac \
+ && release="$(curl -fsSL "https://update.code.visualstudio.com/api/update/${va}/stable/latest")" \
+ && url="$(jq -er .url <<< "$release")" && sha="$(jq -er .sha256hash <<< "$release")" \
+ && curl -fsSLo /tmp/vscode.tar.gz "$url" && echo "$sha  /tmp/vscode.tar.gz" | sha256sum -c - \
+ && install -d /opt/vscode \
+ && tar -xzf /tmp/vscode.tar.gz -C /opt/vscode --strip-components=1 --no-same-owner \
+ && rm /tmp/vscode.tar.gz \
+ && ln -sf /opt/vscode/bin/code /usr/local/bin/code \
+ && icon=/opt/vscode/resources/app/resources/linux/code.png && test -f "$icon" \
+ && printf '%s\n' '[Desktop Entry]' \
+      'Type=Application' \
+      'Name=Visual Studio Code' \
+      'GenericName=Text Editor' \
+      'Comment=Code Editing. Redefined.' \
+      'Exec=code %F' \
+      "Icon=$icon" \
+      'StartupNotify=false' \
+      'StartupWMClass=code' \
+      'Categories=TextEditor;Development;IDE;' \
+      'MimeType=text/plain;inode/directory;' > /usr/share/applications/code.desktop \
+ && share=/usr/local/share/oryn \
+ && rm -f "$share"/desktop-icons/vscode.* \
+ && install -m 0644 "$icon" "$share/desktop-icons/vscode.png" \
+ && jq '(.[] | select(.id == "vscode")) |= (.name = "VS Code" | .desktopFile = "code.desktop" | .icon = "vscode.png")' \
+      "$share/desktop-apps.json" > /tmp/desktop-apps.json \
+ && install -m 0644 /tmp/desktop-apps.json "$share/desktop-apps.json" && rm /tmp/desktop-apps.json \
+ && printf 'vscode %s\n' "$(jq -er .productVersion <<< "$release")" >> "$share/upstream-versions.txt"
+USER user

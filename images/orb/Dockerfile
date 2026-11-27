@@ -117,6 +117,11 @@ ENV ORYN_DESKTOP=1
 ENV GLYCIN_DISABLE_SANDBOX=i-know-the-risks
 
 # ARM 软件仓库缺少下列工具（PHP 的 phpactor 两边都缺）；双架构统一使用上游最新发行版并按 GitHub 发布的摘要校验。
+# 代码编辑器用 VSCodium（M25 桌面应用）：Code - OSS 的 MIT 许可构建，可以随公开镜像再分发，扩展走 Open VSX。
+# 不内置微软官方 VS Code：微软许可不允许分享或发布它，需要时由部署方在本机构建派生镜像（Dockerfile.vscode，`make image-vscode`）。
+# 不用 pacman 的 code（Code - OSS）：Arch Linux ARM 没有这个包。tarball 不带顶层目录，解到 /opt/vscodium，
+# chrome-sandbox 的 setuid 位随包保留；`code` 与 `codium` 都指向它。tarball 不带桌面项；写入 codium.desktop，
+# omp computer 的 apps.list 才能找到它。主窗口的 WM_CLASS 是 codium / codium（openbox-rc.xml 按它最大化）。
 RUN case "$TARGETARCH" in amd64) a=x86_64 ga=x64 pa=amd64 ;; arm64) a=aarch64 ga=arm64 pa=arm64 ;; *) exit 1 ;; esac \
  && fetch() { \
       local release asset url sha; \
@@ -135,37 +140,31 @@ RUN case "$TARGETARCH" in amd64) a=x86_64 ga=x64 pa=amd64 ;; arm64) a=aarch64 ga
  && fetch artempyanykh/marksman "marksman-linux-${ga}" /usr/local/bin/marksman \
  && fetch phpactor/phpactor phpactor.phar /usr/local/bin/phpactor \
  && chmod 0755 /usr/local/bin/rust-analyzer /usr/local/bin/marksman /usr/local/bin/phpactor \
- && rm /tmp/shellcheck.tar.xz /tmp/pandoc.tar.gz /tmp/rust-analyzer.gz \
- && { shellcheck --version | sed -n 2p; pandoc --version | head -1; rust-analyzer --version; \
-      printf 'marksman %s\n' "$(marksman --version)"; phpactor --version; } > /usr/local/share/oryn/upstream-versions.txt
-
-# VS Code（M25 桌面应用）：微软官方 tarball。不用 pacman 的 code：那是 Code - OSS，走 Open VSX，部分微软扩展装不了。
-# 与上面 fetch 同一种做法：从更新 API 取 url 与 sha256hash，下载后校验摘要再解压到 /opt/vscode（约 1.1GB）。
-# tarball 不带桌面项；写入 code.desktop，omp computer 的 apps.list 才能找到它。chrome-sandbox 的 setuid 位随 tarball 保留。
-RUN case "$TARGETARCH" in amd64) va=linux-x64 ;; arm64) va=linux-arm64 ;; *) exit 1 ;; esac \
- && release="$(curl -fsSL "https://update.code.visualstudio.com/api/update/${va}/stable/latest")" \
- && url="$(jq -er .url <<< "$release")" && sha="$(jq -er .sha256hash <<< "$release")" \
- && curl -fsSLo /tmp/vscode.tar.gz "$url" && echo "$sha  /tmp/vscode.tar.gz" | sha256sum -c - \
- && install -d /opt/vscode \
- && tar -xzf /tmp/vscode.tar.gz -C /opt/vscode --strip-components=1 --no-same-owner \
- && rm /tmp/vscode.tar.gz \
- && ln -s /opt/vscode/bin/code /usr/local/bin/code \
- && test -f /opt/vscode/resources/app/resources/linux/code.png \
+ && fetch VSCodium/vscodium "VSCodium-linux-${ga}-@V@.tar.gz" /tmp/vscodium.tar.gz \
+ && install -d /opt/vscodium \
+ && tar -xzf /tmp/vscodium.tar.gz -C /opt/vscodium --no-same-owner \
+ && test -u /opt/vscodium/chrome-sandbox \
+ && ln -s /opt/vscodium/bin/codium /usr/local/bin/codium \
+ && ln -s /opt/vscodium/bin/codium /usr/local/bin/code \
+ && test -f /opt/vscodium/resources/app/resources/linux/code.png \
  && printf '%s\n' '[Desktop Entry]' \
       'Type=Application' \
-      'Name=Visual Studio Code' \
+      'Name=VSCodium' \
       'GenericName=Text Editor' \
       'Comment=Code Editing. Redefined.' \
-      'Exec=code %F' \
-      'Icon=/opt/vscode/resources/app/resources/linux/code.png' \
+      'Exec=codium %F' \
+      'Icon=/opt/vscodium/resources/app/resources/linux/code.png' \
       'StartupNotify=false' \
-      'StartupWMClass=code' \
+      'StartupWMClass=codium' \
       'Categories=TextEditor;Development;IDE;' \
-      'MimeType=text/plain;inode/directory;' > /usr/share/applications/code.desktop \
- && printf 'vscode %s\n' "$(jq -er .productVersion <<< "$release")" >> /usr/local/share/oryn/upstream-versions.txt
+      'MimeType=text/plain;inode/directory;' > /usr/share/applications/codium.desktop \
+ && rm /tmp/shellcheck.tar.xz /tmp/pandoc.tar.gz /tmp/rust-analyzer.gz /tmp/vscodium.tar.gz \
+ && { shellcheck --version | sed -n 2p; pandoc --version | head -1; rust-analyzer --version; \
+      printf 'marksman %s\n' "$(marksman --version)"; phpactor --version; \
+      printf 'vscodium %s\n' "$(jq -er .version /opt/vscodium/resources/app/package.json)"; } > /usr/local/share/oryn/upstream-versions.txt
 
 # 等宽字体：JetBrains Maple Mono（JetBrains Mono + Maple Mono 合成：中英文 2:1 对齐，带 Nerd Font 字形）。
-# fontconfig 把 monospace 指向它，xfce4-terminal、VS Code 的编辑器与终端、mousepad、Chromium 网页里的等宽文本都用它。
+# fontconfig 把 monospace 指向它，xfce4-terminal、代码编辑器（VSCodium，或派生镜像里的 VS Code）的编辑器与终端、mousepad、Chromium 网页里的等宽文本都用它。
 # 选 NF-XX-NL-HT 版：带 Nerd 字形；不缩窄中文，保持 2:1 列对齐；不带连字，截图里的 != 仍是两个字符，agent 看屏幕不会误读；
 # 带 hinting，Xvnc 1280x800 这种低分辨率下更清楚。只装常规、粗体、斜体、粗斜体四个字重（约 74MB）。
 # 与上面 fetch 同一种做法：取上游最新发行版，按 GitHub 发布的摘要校验。

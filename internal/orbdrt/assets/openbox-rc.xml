@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- 由 orbd 生成（每次启动覆盖，请勿手改）：Oryn 桌面的 openbox 配置。
      一个桌面；键绑定只留 Alt+F4（关闭窗口）与 Alt+Tab（切换窗口）；不绑定根窗口菜单（任务栏由网页绘制）。
-     所有窗口都带装饰（标题栏只有最大化、关闭）；Chromium 与 VS Code（class="code"）启动时最大化，
+     所有窗口都带装饰（标题栏只有最大化、关闭）；Chromium 与代码编辑器（VSCodium 为 class="codium"，派生镜像里的 VS Code 为 class="code"）启动时最大化，
      其它窗口居中放置。根窗口底色由 orbd 用 xsetroot 设置。主题 Oryn 由 orbd 写到 ~/.themes/Oryn/openbox-3/，
      字体给 Noto Sans CJK SC Medium（"sans" 在镜像里落到 Nimbus Sans，又细又小）。 -->
 <openbox_config xmlns="http://openbox.org/3.4/rc" xmlns:xi="http://www.w3.org/2001/XInclude">
@@ -120,6 +120,9 @@
       <maximized>yes</maximized>
     </application>
     <application class="code">
+      <maximized>yes</maximized>
+    </application>
+    <application class="codium">
       <maximized>yes</maximized>
     </application>
   </applications>

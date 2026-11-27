@@ -63,11 +63,16 @@ docker build \
 	--platform "linux/${goarch}" \
 	--build-arg "TARGETARCH=${goarch}" \
 	--build-arg "DESIGN_ENGINE_VERSION=${design_engine_version}" \
+	--label "org.opencontainers.image.source=https://github.com/Lynricsy/Oryn" \
+	--label "org.opencontainers.image.version=${version}" \
 	-f images/orb/Dockerfile \
 	-t "$image" \
 	"$ctx"
 
 # 在默认非 root 用户下验证工具、权限和 shell 契约；禁止网络，避免首用下载掩盖漏装。
 docker run --rm --platform "linux/${goarch}" --network none --entrypoint bash "$image" /usr/local/lib/oryn/smoke-test.sh
+# 这个镜像会公开发布：不得内置微软官方 VS Code（许可不允许再分发；官方版只在本机派生镜像里装，见 Dockerfile.vscode）
+docker run --rm --platform "linux/${goarch}" --network none --entrypoint bash "$image" \
+	-c 'test ! -e /opt/vscode && [[ "$(readlink -f "$(command -v code)")" == /opt/vscodium/* ]]'
 
 docker image ls "$image"
