@@ -630,7 +630,13 @@ const PdfPage = memo(function PdfPage({
 			className="oryn-o-page"
 			style={style}
 		>
-			<div ref={canvasHostRef} className="oryn-o-canvas" />
+			{/* 只有画布层是 img；文本层、点选按钮与图钉都是它的兄弟元素，读屏器能读到 */}
+			<div
+				ref={canvasHostRef}
+				className="oryn-o-canvas"
+				role="img"
+				aria-label={strings.pageLabel(pageNumber)}
+			/>
 			{failed ? (
 				<div className="oryn-o-page-error">
 					{strings.pageFailed(pageNumber)}
@@ -640,7 +646,9 @@ const PdfPage = memo(function PdfPage({
 				<button
 					type="button"
 					className="oryn-pick"
-					aria-label={strings.pageLabel(pageNumber)}
+					aria-label={
+						strings.commentPage?.(pageNumber) ?? strings.pageLabel(pageNumber)
+					}
 					onClick={(e) => {
 						const { point, at } = pickPoint(e);
 						onPick(pageNumber, point, at);

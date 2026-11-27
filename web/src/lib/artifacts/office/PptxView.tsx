@@ -143,10 +143,12 @@ function PptxSlides({
 							void anchorAt(pres, i, point).then((a) => onPick(a, at));
 						}
 					: null,
+			pickLabel: (i) =>
+				strings.commentSlide?.(i + 1) ?? strings.slideLabel(i + 1),
 			pins: pins ?? NO_PINS,
 			locate: locate ?? null,
 		}),
-		[pres, pickable, onPick, pins, locate],
+		[pres, pickable, onPick, pins, locate, strings],
 	);
 
 	const header =

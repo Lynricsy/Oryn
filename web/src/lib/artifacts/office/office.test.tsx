@@ -125,6 +125,8 @@ const strings: OfficeStrings = {
 	sheetNoPrint: "表格不支持打印视图",
 	pageLabel: (n) => `第 ${n} 页`,
 	slideLabel: (n) => `第 ${n} 张`,
+	commentPage: (n) => `在第 ${n} 页添加评论`,
+	commentSlide: (n) => `在第 ${n} 张添加评论`,
 	pageNumber: "页码",
 	zoomIn: "放大",
 	zoomOut: "缩小",
@@ -329,8 +331,13 @@ describe("评论点选与图钉", () => {
 				/>,
 			);
 			expect(await screen.findByText("已渲染 2 页")).toBeInTheDocument();
-			const pick = container.querySelector('[data-page="1"] .oryn-pick');
-			fireEvent.click(pick as Element, { clientX: 200, clientY: 450 });
+			const pick = screen.getByRole("button", { name: "在第 1 页添加评论" });
+			// 按钮不在 img 的展示性子树里；img 只是画布层
+			expect(pick.closest('[role="img"]')).toBeNull();
+			expect(
+				container.querySelector('[data-page="1"] > [role="img"]'),
+			).toHaveAccessibleName("第 1 页");
+			fireEvent.click(pick, { clientX: 200, clientY: 450 });
 			await waitFor(() => expect(onPick).toHaveBeenCalledTimes(1));
 			expect(onPick).toHaveBeenCalledWith(
 				{
@@ -375,8 +382,12 @@ describe("评论点选与图钉", () => {
 				/>,
 			);
 			expect(await screen.findByText("已渲染 3 页")).toBeInTheDocument();
-			const pick = container.querySelector('[data-page="2"] .oryn-pick');
-			fireEvent.click(pick as Element, { clientX: 500, clientY: 100 });
+			const pick = screen.getByRole("button", { name: "在第 2 张添加评论" });
+			expect(pick.closest('[role="img"]')).toBeNull();
+			expect(pick.closest('[data-page="2"]')).toBe(
+				container.querySelector('[data-page="2"]'),
+			);
+			fireEvent.click(pick, { clientX: 500, clientY: 100 });
 			await waitFor(() => expect(onPick).toHaveBeenCalledTimes(1));
 			expect(onPick).toHaveBeenCalledWith(
 				{
@@ -399,6 +410,46 @@ describe("评论点选与图钉", () => {
 		}
 	});
 
+	it("PDF：点选按钮有可读名称且不在 img 子树里，点页面给出页号与坐标", async () => {
+		const onPick = vi.fn();
+		const rect = vi
+			.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+			.mockReturnValue(new DOMRect(0, 0, 200, 400));
+		try {
+			render(
+				<PdfView
+					bytes={small}
+					view="full"
+					assets={assets}
+					strings={strings}
+					pickable
+					onPick={onPick}
+					pins={[pin(7, 2, 0.5, 0.5)]}
+				/>,
+			);
+			expect(await screen.findByText("已渲染 2 页")).toBeInTheDocument();
+			expect(screen.getByRole("img", { name: "第 2 页" })).toBeInTheDocument();
+			const pick = screen.getByRole("button", { name: "在第 2 页添加评论" });
+			expect(pick.closest('[role="img"]')).toBeNull();
+			fireEvent.click(pick, { clientX: 50, clientY: 300 });
+			expect(onPick).toHaveBeenCalledWith(
+				{
+					page: { number: 2, name: "" },
+					x: 0.25,
+					y: 0.75,
+					range: null,
+					block: null,
+					text: "",
+				},
+				{ x: 50, y: 300 },
+			);
+			const dot = pick.parentElement?.querySelector(".oryn-pin");
+			expect(dot?.textContent).toBe("7");
+		} finally {
+			rect.mockRestore();
+		}
+	});
+
 	it("不可点选时没有点选层；缩略图与打印视图不画图钉", async () => {
 		const { container, unmount } = render(
 			<DocxView
@@ -411,6 +462,7 @@ describe("评论点选与图钉", () => {
 		);
 		expect(await screen.findByText("已渲染 2 页")).toBeInTheDocument();
 		expect(container.querySelector(".oryn-pick")).toBeNull();
+		expect(screen.queryByRole("button", { name: /添加评论/ })).toBeNull();
 		expect(container.querySelectorAll(".oryn-pin")).toHaveLength(1);
 		unmount();
 		for (const view of ["thumbnail", "print"] as const) {

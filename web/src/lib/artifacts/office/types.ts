@@ -34,6 +34,12 @@ export interface OfficeStrings {
 	sheetNoPrint: string;
 	pageLabel(n: number): string;
 	slideLabel(n: number): string;
+	/**
+	 * 评论模式下页 / 张上点选按钮的无障碍名称（「在第 N 页添加评论」）。只有会开评论模式的调用方（沙箱查看器）
+	 * 需要给；没给时按钮用 pageLabel / slideLabel。
+	 */
+	commentPage?(n: number): string;
+	commentSlide?(n: number): string;
 	pageNumber: string;
 	zoomIn: string;
 	zoomOut: string;

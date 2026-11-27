@@ -96,10 +96,12 @@ function DocxPages({
 							);
 						}
 					: null,
+			pickLabel: (i) =>
+				strings.commentPage?.(i + 1) ?? strings.pageLabel(i + 1),
 			pins: pins ?? NO_PINS,
 			locate: locate ?? null,
 		}),
-		[doc, pickable, onPick, pins, locate],
+		[doc, pickable, onPick, pins, locate, strings],
 	);
 	return (
 		<div className="oryn-o oryn-o-docx">

@@ -20,7 +20,7 @@ export interface ViewerStrings {
 	/** 评论模式下：块上的点选按钮、整篇评论按钮、幻灯片上的点选按钮。 */
 	commentBlock: string;
 	commentDocument: string;
-	commentSlide: string;
+	commentSlide(n: number): string;
 	slidesHint: string;
 	prev: string;
 	next: string;
@@ -85,7 +85,7 @@ const ZH: ViewerStrings = {
 	editBlock: "修改这一块",
 	commentBlock: "评论这一块",
 	commentDocument: "评论整篇文档",
-	commentSlide: "在这里评论",
+	commentSlide: (n) => `在第 ${n} 张添加评论`,
 	slidesHint: "点击幻灯片上的文字直接修改",
 	prev: "上一张",
 	next: "下一张",
@@ -107,6 +107,8 @@ const ZH: ViewerStrings = {
 		sheetNoPrint: "表格不支持打印视图",
 		pageLabel: (n) => `第 ${n} 页`,
 		slideLabel: (n) => `第 ${n} 张`,
+		commentPage: (n) => `在第 ${n} 页添加评论`,
+		commentSlide: (n) => `在第 ${n} 张添加评论`,
 		pageNumber: "页码",
 		zoomIn: "放大",
 		zoomOut: "缩小",
@@ -134,7 +136,7 @@ const EN: ViewerStrings = {
 	editBlock: "Edit this block",
 	commentBlock: "Comment on this block",
 	commentDocument: "Comment on the whole document",
-	commentSlide: "Comment here",
+	commentSlide: (n) => `Comment on slide ${n}`,
 	slidesHint: "Click any text on the slide to change it",
 	prev: "Previous slide",
 	next: "Next slide",
@@ -156,6 +158,8 @@ const EN: ViewerStrings = {
 		sheetNoPrint: "Spreadsheets have no print view",
 		pageLabel: (n) => `Page ${n}`,
 		slideLabel: (n) => `Slide ${n}`,
+		commentPage: (n) => `Comment on page ${n}`,
+		commentSlide: (n) => `Comment on slide ${n}`,
 		pageNumber: "Page number",
 		zoomIn: "Zoom in",
 		zoomOut: "Zoom out",

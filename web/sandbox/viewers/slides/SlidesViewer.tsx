@@ -153,7 +153,7 @@ export function SlidesViewer({
 					<button
 						type="button"
 						className="oryn-pick"
-						aria-label={strings.commentSlide}
+						aria-label={strings.commentSlide(current + 1)}
 						onClick={(e) => {
 							const { point, at } = pickPoint(e);
 							const name = "title" in slide ? (slide.title ?? "") : "";

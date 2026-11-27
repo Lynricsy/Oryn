@@ -110,6 +110,8 @@ interface PageBoxProps {
 	pins?: readonly AnchorPin[];
 	/** 评论模式下点了这一页：页序号（从 0 起）、页内归一化坐标、视口坐标。 */
 	onPick?: (i: number, point: Point, at: Point) => void;
+	/** 点选按钮的无障碍名称（如「在第 N 页添加评论」）。 */
+	pickLabel?: string;
 }
 
 function PageBox({
@@ -125,6 +127,7 @@ function PageBox({
 	onSettled,
 	pins = NO_PINS,
 	onPick,
+	pickLabel,
 }: PageBoxProps): ReactNode {
 	const host = useRef<HTMLDivElement>(null);
 	const [failed, setFailed] = useState(false);
@@ -169,16 +172,15 @@ function PageBox({
 		};
 	}, [source, index, near, renderScale, w, h]);
 
+	// 只有画布层是 img：点选按钮与图钉是它的兄弟元素，不在 img 的展示性子树里，读屏器能读到
 	return (
 		<div
 			ref={setBox}
 			data-page={index + 1}
 			className={className}
-			role="img"
-			aria-label={label}
 			style={{ width: w * scale, height: h * scale }}
 		>
-			<div ref={host} className="oryn-o-canvas" />
+			<div ref={host} className="oryn-o-canvas" role="img" aria-label={label} />
 			{failed ? (
 				<div className="oryn-o-page-error">{strings.pageFailed(index + 1)}</div>
 			) : null}
@@ -186,7 +188,7 @@ function PageBox({
 				<button
 					type="button"
 					className="oryn-pick"
-					aria-label={label}
+					aria-label={pickLabel ?? label}
 					onClick={(e) => {
 						const { point, at } = pickPoint(e);
 						onPick(index, point, at);
@@ -202,6 +204,8 @@ function PageBox({
 export interface PageComments {
 	/** 评论模式下点了第 i 页（从 0 起）；为空时不响应点选。 */
 	onPick: ((i: number, point: Point, at: Point) => void) | null;
+	/** 第 i 页（从 0 起）点选按钮的无障碍名称。 */
+	pickLabel(i: number): string;
 	pins: readonly AnchorPin[];
 	/** 要滚动定位到的锚点（按 `page.number` 与 `y`）。 */
 	locate: ViewerAnchor | null;
@@ -343,6 +347,7 @@ function ScrollPages({
 					onSettled={onSettled}
 					pins={byPage.get(i + 1)}
 					onPick={onPick}
+					pickLabel={onPick ? comments?.pickLabel(i) : undefined}
 				/>,
 			);
 

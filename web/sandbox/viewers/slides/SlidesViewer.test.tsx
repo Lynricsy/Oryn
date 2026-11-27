@@ -213,7 +213,9 @@ describe("SlidesViewer", () => {
 				/>,
 			);
 			expect(screen.queryByRole("button", { name: "编辑" })).toBeNull();
-			fireEvent.click(screen.getByRole("button", { name: "在这里评论" }), {
+			const button = screen.getByRole("button", { name: "在第 1 张添加评论" });
+			expect(button.closest('[role="img"]')).toBeNull();
+			fireEvent.click(button, {
 				clientX: 200,
 				clientY: 100,
 			});
@@ -255,7 +257,7 @@ describe("SlidesViewer", () => {
 			expect(pin?.textContent).toBe("1");
 			expect(pin?.style.left).toBe("50%");
 			expect(pin?.style.top).toBe("75%");
-			expect(screen.queryByRole("button", { name: "在这里评论" })).toBeNull();
+			expect(screen.queryByRole("button", { name: /添加评论/ })).toBeNull();
 		} finally {
 			rect.mockRestore();
 		}
