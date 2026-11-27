@@ -381,9 +381,9 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 | 模式 | 命令 | 行为 |
 |---|---|---|
 | 线程内定时 | `oryn schedule set` | 在单个已有线程内按 Cron 或固定间隔触发巡检提示词 |
-| 项目级定时 | `oryn schedule add` | 每次拉起全新隔离线程，按 `keepLast` 自动归档历史运行；可指定开场的 role（`--role`）或模型 |
+| 项目级定时 | `oryn schedule add` | 每次拉起全新隔离线程，按 `keepLast` 自动归档历史运行；可指定开场的 role（`--role`）或模型；`--manual` 不按时间触发，只由手动触发或[入站 Webhook](#入站-webhook) 触发 |
 
-**运行前闸门**：两种模式都可以挂一个闸门（`--gate-command` / `--gate-host` / `--gate-timeout`，或编辑定时的「运行前闸门」）。每次运行（含手动触发）前，控制面先执行这条命令，不启动 agent、不调用模型。命令以退出码 0 结束且最后一个非空输出行是 `{"wakeAgent": false}` 时，本次运行记为跳过（`gate`）；其余情况（其它输出、非 0 退出、超时、执行环境不可用）照常运行，闸门的输出或失败原因附在提示词前面交给 agent。闸门只能由主人设置，agent 改写定时时沿用现值。
+**运行前闸门**：两种模式都可以挂一个闸门（`--gate-command` / `--gate-host` / `--gate-timeout`，或编辑定时的「运行前闸门」）。每次运行（含手动与 Webhook 触发）前，控制面先执行这条命令，不启动 agent、不调用模型；Webhook 的请求内容不交给闸门。命令以退出码 0 结束且最后一个非空输出行是 `{"wakeAgent": false}` 时，本次运行记为跳过（`gate`）；其余情况（其它输出、非 0 退出、超时、执行环境不可用）照常运行，闸门的输出或失败原因附在提示词前面交给 agent。闸门只能由主人设置，agent 改写定时时沿用现值。
 
 执行位置有两种：
 
@@ -391,6 +391,35 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 - **SSH 主机（`--gate-host <名称>`）**：经 SSH 网关在登记的主机上执行，适合要读那台机器状态的检查。主机按定时的范围解析：全局主机加所在项目的主机；项目定时是全自动运行，主机须允许全自动线程使用。执行记入 SSH 审计。`oryn schedule update --gate-host ""` 可改回本机执行。
 
 **安静结束**：工作线程里全由自动化投递（定时、触发规则）开启的回合，如果 agent 的最后一条回复是 `[SILENT]`（整条，或独占第一行 / 最后一行，不区分大小写），这一回合按沉默结束：不置未读、不发完成通知，也不交给助手。主人亲自发过消息的回合、出错的回合不受影响；主线仍用 `stay_silent`。
+
+#### 入站 Webhook
+
+项目级定时可以开一个公开的调用地址，外部系统（CI、监控告警、表单、别家服务的 webhook）POST 一次就触发一次运行（运行记录里 `trigger = webhook`）。常与 `--manual` 搭配：这种定时没有时间触发、没有下次运行时间，只由手动触发（`oryn schedule run`）或 Webhook 触发。
+
+- **开启与地址**：`oryn schedule webhook <定时>` 开启，或在网页端定时的编辑对话框里开启。首次开启时生成地址 `<public_url>/api/v1/public/hooks/owh_…`，只显示这一次：控制面只存它的哈希，之后取不回，丢了只能换新。`--rotate` 换新地址，旧地址立即失效；`oryn schedule webhook rm <定时>` 关闭，地址立即失效（没开过也算成功）。只有主人能开启与换新，全局助手的 `oryn` 工具调不了。
+- **签名（可选）**：`--secret-stdin` 从标准输入读一个签名密钥（≤256 字符），`--clear-secret` 去掉签名，两者都不给时保留原值。设了签名密钥后，调用方必须带 `X-Oryn-Signature-256`（也认 GitHub 风格的 `X-Hub-Signature-256`）：`sha256=<hex(HMAC-SHA256(密钥, 原始请求体))>`。
+- **请求**：请求体是任意 UTF-8 文本，至多 64 KiB。它连同 `User-Agent`、名称含 `Event` / `Delivery` 的请求头（签名与凭据类的头不记）和查询参数，作为不可信数据块 `<untrusted-webhook-content>` 接在定时的提示词之后交给新线程，同时记在这次运行的记录里（`payload`），运行列表里可以查看。
+- **响应**：受理回 202，带本次运行的 `runId` 与 `status`；上一次运行还没结束（按定时的 `overlap`）时仍记一条跳过的运行，同样回 202（`status = skipped`）。地址无效 404，签名缺失或不符 401 `bad_signature`，定时已暂停 409 `schedule_paused`，项目已归档 409 `project_archived`，请求体超过 64 KiB 413，不是 UTF-8 400，同一来源 IP 调用过于频繁 429 `rate_limited`。
+
+```bash
+URL='https://oryn.example.com/api/v1/public/hooks/owh_…'
+BODY='{"alert":"db-1 磁盘使用率 95%"}'
+# 设了签名密钥时：对原始请求体算 HMAC-SHA256（没设签名密钥则去掉下面的 X-Oryn-Signature-256 头）
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
+curl -sS "$URL?source=grafana" \
+  -H 'Content-Type: application/json' \
+  -H "X-Oryn-Signature-256: sha256=$SIG" \
+  --data-binary "$BODY"
+```
+
+**Webhook 运行按不可信输入处理**（按时与手动触发的运行不受影响，行为与以前一样）：
+
+- 建出的线程一律是全自动线程，并标为不可信。
+- GitHub 只用 Agent 账号；Agent 账号不可用（未连接或需要重新授权）时这次运行失败（`github_agent_required`），不回退到我的账号。
+- SSH 只能用允许全自动线程使用的主机。
+- 开着「交给助手」时，结果只交给[主线](#主线)受限的一轮：只能读、能 `stay_silent`，与后台研究的网页、邮件发现同一机制。
+- 项目级密钥与环境变量照常注入该项目的线程：能调用这个地址的人就能把内容送到一个拿得到这些值的 agent 面前，与 GitHub 触发规则「任何人」档的边界相同。处理外部输入的定时放在不带敏感密钥的项目里。
+- 签名、数据块标签与运行前闸门只决定谁能触发、要不要运行，不能代替上面这些凭据与权限限制。
 
 ### 成本与产出统计
 
@@ -561,3 +590,7 @@ Windows / macOS / Linux 桌面端与 Android、iOS 客户端共用一套 Tauri 2
 - **Runner 单向边界**：控制面永不向 Runner 下发模型配置或环境变量密钥，只开一条仅通往记忆网关 `/memory/` 的专用通道（其它出站路径一律 403，Hindsight 的 key 不进 Runner）。
 - **谁能操控 Runner**：只有主人与全局助手。全局助手可以像主人一样在 Runner 上新建线程、发消息、读取、归档、读写线程目录里的文件，删除要主人点确认卡；Space 协调者与 orb 内 Agent 禁止读写或操控任何 Runner 线程，普通 orb 里产出的内容不能经它们变成你机器上的指令。
 - **协调沙箱**：全局助手所在的沙箱只有一个出口，即回环上的出站代理端口；联网与 MCP 都经 `orynd` 的正向代理（只连公网地址，MCP 鉴权头由 `orynd` 注入）。网页、搜索结果与 MCP 的返回都作为不可信数据交给助手。
+
+### 公开的自动化入口
+
+GitHub 触发规则的「任何人」档与定时的[入站 Webhook](#入站-webhook)让 Oryn 外面的人也能启动 agent。外部内容只放进 `<untrusted-…-content>` 数据块，不作为指令；真正的边界在凭据上：这类线程是全自动线程，GitHub 只用 Agent 账号、不回退到我的账号，SSH 只能用允许全自动线程的主机，交给助手时 Webhook 运行的结果只进主线受限的一轮。项目级密钥与环境变量仍会注入该项目的 orb，所以对外开放的入口放在不带敏感密钥的项目里。签名、闸门与限流只管谁能触发、要不要运行，不替代这些限制。

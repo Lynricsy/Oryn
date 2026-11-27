@@ -190,7 +190,7 @@ Web、Windows / macOS / Linux、Android、iOS 与 CLI，服务端升级即全端
 </picture>
 
 - **Space**：协调者在严格沙箱里拆解目标、并发派出工作线程（默认使用 `default`，可按需指定非 cycle 的 subagent 角色配置，以及覆盖模型与思考强度，并用 `list_models` 查询可用模型），需要你决策时汇总提醒。
-- **定时任务**：在已有线程里按 Cron 巡检，或每次拉起全新线程并自动归档旧运行；新线程可指定开场的 role 或模型。运行前闸门先跑一条检查命令（默认在控制面本机的沙箱里，也可放到 SSH 主机上），没事就跳过、不调模型；agent 回复 `[SILENT]` 即安静结束。
+- **定时任务**：在已有线程里按 Cron 巡检，或每次拉起全新线程并自动归档旧运行；新线程可指定开场的 role 或模型。运行前闸门先跑一条检查命令（默认在控制面本机的沙箱里，也可放到 SSH 主机上），没事就跳过、不调模型；agent 回复 `[SILENT]` 即安静结束。项目级定时还可以开一个[入站 Webhook](docs/features.md#入站-webhook)，让 CI、监控告警等外部系统 POST 一次就跑一次；请求按不可信输入处理，线程只用 Agent 的 GitHub 账号。
 - **成本统计**：按模型、项目、Space 穿透成本、缓存命中率与首字延迟，支持日 / 月预算告警。
 
 ## Agent 配置、记忆与集成
@@ -373,6 +373,9 @@ oryn schedule add --project myproj --every 6h --prompt "检查依赖安全更新
 oryn schedule add --project ops --name watch --cron "0 * * * *" --prompt-file watch.md \
   --gate-command "./check.sh"                                # 闸门在本机沙箱里跑数据目录 gates/ 下的脚本，输出 {"wakeAgent": false} 时跳过
 oryn schedule update <定时> --gate-host UltraServerUS --gate-command "python3 s2a_health.py --gate"   # 改到 SSH 主机上执行
+oryn schedule add --project ops --name on-alert --manual --prompt-file triage.md   # 不按时间触发，只手动或经 Webhook 触发
+oryn schedule webhook <定时> [--rotate] [--secret-stdin | --clear-secret]   # 开启 / 换新地址（只显示一次）、设置签名密钥
+oryn schedule webhook rm <定时>                              # 关闭 Webhook，地址立即失效
 oryn stats --since 30d --by model                            # 按模型汇总近 30 天 Token、缓存与成本（支持 --csv / --json）
 oryn stats budget set --daily 20 --monthly 300 --warn 80     # 配置日/月成本预算与预警百分比
 

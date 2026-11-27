@@ -113,6 +113,7 @@ sandbox: { enabled: true, max_per_orb: 2, max_total: 8, idle: "30m", max_lifetim
 2. 证书：主域名普通证书；泛域名在 1Panel「证书」里用 DNS 账号申请 `*.orb.example.com` 通配证书（ACME DNS-01）。
 3. 配置要点（示例文件已包含）：`proxy_http_version 1.1`、`Upgrade`/`Connection` 头（WebSocket 与 orb link）、`proxy_read_timeout 3600s`、`proxy_buffering off`、`client_max_body_size 600m`。
 4. 托管仓库（M24）：主域名另有 `location /git/ { client_max_body_size 0; … }`，其余各行与 `location /` 相同。主人本机的 `git push` 与 Git LFS 上传经这里到达 orynd，托管仓库不设大小上限，所以这条路径不限请求体，其余路径仍是 `600m`。数据盘由 orynd 自己保护（可用空间低于 `repos.min_free_gb` 时拒绝推送与上传）。orb 的推送与上传在 orb link 里传输，不受这条上限影响。自己写反代配置时同样要给 `/git/` 放开请求体上限并关闭请求缓冲（`proxy_request_buffering off`），否则大推送会被 413 拒绝，或先整个缓冲到反代的磁盘上。
+5. 公开入口：`/api/v1/public/` 下的路径不需要登录，必须能从公网直接到达，不要在反代上给它们加 IP 白名单、Basic Auth 或单点登录。其中 `/api/v1/public/github/webhook` 收 GitHub 的仓库 webhook，`/api/v1/public/hooks/` 收定时的入站 Webhook（M31，见 [features.md](features.md#入站-webhook)）。后者的请求体上限（64 KiB）与按来源 IP 的限流由 orynd 执行，不需要单独的 `location`；限流靠反代传来的 `X-Real-IP`（示例文件已设置），不传时所有调用方共用反代的回环地址、一起被限流。
 
 ## 4. 启动控制面并初始化
 
@@ -889,6 +890,7 @@ runner 线程与协调宿主不下发任何 GitHub 凭据。我的账号未连�
 
 - **不可信入口**：「任何人」档（`drivers=anyone`）的规则，以及外部 PR 评审规则（`pull_request_opened`），只用 Agent 账号。Agent 账号未连接或需要重新授权时**不回退**：不建线程，事件记为 `ignored:agent_required`，同时给你发一条通知（「GitHub trigger skipped」）。
 - **其余全自动线程**：设置为 `agent` 且 Agent 账号可用时用它，否则回退到我的账号，并在首条提示词末尾追加一行 `[Oryn: the Agent GitHub account is unavailable, so this automated thread uses the owner's GitHub account instead.]`。设置为 `user` 时一律用我的账号。
+- **定时的入站 Webhook（M31）**：Webhook 触发的运行同样只用 Agent 账号。Agent 账号不可用时这次运行失败（`error = github_agent_required`），不回退到我的账号；同一定时按时与手动触发的运行仍按上一条的规则。
 - 断开 Agent 账号**不会**把设置改回 `user`，Agent 账号未连接时也可以选 `agent`。`mention` 规则只能在 Agent 账号已连接时创建（否则 409 `github_agent_required`）。
 
 触发规则的「驱动者」档位决定谁的发言能驱动 agent。档位同样作用于已关联线程的跟进评论：
