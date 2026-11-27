@@ -7260,6 +7260,16 @@
 		"more": "更多操作"
 	},
 	"view": {
+		"html": {
+			"label": "HTML 视图",
+			"loading": "正在准备视图…",
+			"failed": "视图没有加载出来。",
+			"unavailable": "这里无法显示这个视图。",
+			"retry": "重试",
+			"sent": "已从这个视图发出",
+			"sendFailed": "没有发出：{{error}}",
+			"reload": "重新加载视图"
+		},
 		"receipt": {
 			"badge": "来自视图"
 		},

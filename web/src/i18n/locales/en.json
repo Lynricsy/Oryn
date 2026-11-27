@@ -7260,6 +7260,16 @@
 		"more": "More actions"
 	},
 	"view": {
+		"html": {
+			"label": "HTML view",
+			"loading": "Preparing the view…",
+			"failed": "The view couldn't load.",
+			"unavailable": "This view can't be shown here.",
+			"retry": "Retry",
+			"sent": "Sent from this view",
+			"sendFailed": "Couldn't send: {{error}}",
+			"reload": "Reload view"
+		},
 		"receipt": {
 			"badge": "From a view"
 		},

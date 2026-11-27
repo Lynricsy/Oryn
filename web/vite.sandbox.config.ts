@@ -1,9 +1,11 @@
-import { defineConfig } from "vite";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { defineConfig, type Plugin } from "vite";
 
 // 沙箱资源：运行在 artifact 页面（不可信、不透明源）里的脚本，由 orynd 内联或按固定名字提供，所以文件名不带哈希。
 // 在主构建之后执行，只往 dist/sandbox/ 里加文件，不清空 dist。库模式一次只能输出一个 IIFE，所以每个 IIFE
 // 入口单独构建一次，用 --mode 选：缺省（production）是页面运行时，`--mode overview` 是画布的只读概览页，
-// `--mode beacon` 是发布页的访客心跳，`--mode probe` 是设计检查的探针（M29）。
+// `--mode beacon` 是发布页的访客心跳，`--mode probe` 是设计检查的探针（M29），`--mode view` 是 HTML 视图的运行时（M33）。
 const iife: Record<string, { entry: string; name: string; file: string }> = {
 	production: {
 		entry: "sandbox/runtime/main.ts",
@@ -25,7 +27,33 @@ const iife: Record<string, { entry: string; name: string; file: string }> = {
 		name: "orynProbe",
 		file: "sandbox/probe.js",
 	},
+	view: {
+		entry: "sandbox/view/main.ts",
+		name: "orynView",
+		file: "sandbox/view.js",
+	},
 };
+
+// HTML 视图的内置库（render_html 的 libs）：orynd 把它们原样内联进视图文档，这里只把发布产物复制到 sandbox/lib/。
+const viewLibs: Record<string, string> = {
+	"sandbox/lib/chart.js": "./node_modules/chart.js/dist/chart.umd.min.js",
+	"sandbox/lib/tailwind.js":
+		"./node_modules/@tailwindcss/browser/dist/index.global.js",
+};
+
+function viewLibAssets(): Plugin {
+	return {
+		name: "oryn-view-libs",
+		generateBundle() {
+			for (const [fileName, src] of Object.entries(viewLibs))
+				this.emitFile({
+					type: "asset",
+					fileName,
+					source: readFileSync(fileURLToPath(new URL(src, import.meta.url))),
+				});
+		},
+	};
+}
 
 // 类型化 artifact 的查看器：ES module，自带 React，输出 `sandbox/viewers/<名字>.{js,css}`（orynd 只认 viewerAssets
 // 里的名字）。每个查看器单独构建一次（`--mode viewer-<名字>`）：多入口同构建会把 React 拆进带哈希的公共分块，
@@ -64,6 +92,7 @@ export default defineConfig(({ mode }) => {
 	if (!target) throw new Error(`未知的沙箱构建入口：${mode}`);
 	return {
 		publicDir: false,
+		plugins: mode === "view" ? [viewLibAssets()] : [],
 		build: {
 			outDir: "dist",
 			emptyOutDir: false,

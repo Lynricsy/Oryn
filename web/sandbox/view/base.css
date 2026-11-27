@@ -1,0 +1,510 @@
+/*
+ * HTML 视图（M33）的基础样式：由视图运行时注入帧里。全部放在 `@layer ov-base` 里、选择器零特异性，
+ * 模型自己的 CSS（未分层）与 Tailwind 工具类（后面的层）总是优先；裸 HTML 元素本身就像 Oryn 的控件。
+ * 主题值来自 --fg、--accent 等变量（父页面经 URL 片段与 theme 消息下发，见 messages.ts），这里只给缺省值。
+ */
+@layer ov-base, theme, base, components, utilities;
+
+:root {
+	--bg: #f6f6f7;
+	--surface: #ffffff;
+	--fg: #1d1d22;
+	--muted: #5f5f6b;
+	--border: #e2e2e6;
+	--accent: #0f8a7e;
+	--success: #2f8f55;
+	--warning: #b7791f;
+	--error: #c53b3b;
+	--c1: #4f7cff;
+	--c2: #14a38b;
+	--c3: #e0a225;
+	--c4: #e05a86;
+	--c5: #8a63d2;
+	--c6: #2fa3d6;
+	--font:
+		ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+		"Microsoft YaHei", sans-serif;
+	--mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	--radius: 12px;
+	--ov-fill: color-mix(in srgb, var(--fg) 6%, transparent);
+	--ov-fill-hover: color-mix(in srgb, var(--fg) 10%, transparent);
+	--ov-ring: color-mix(in srgb, var(--accent) 35%, transparent);
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-scheme]) {
+		--bg: #16161a;
+		--surface: #1e1e23;
+		--fg: #ececf0;
+		--muted: #a4a4ae;
+		--border: #34343b;
+		--accent: #3cc2b2;
+		--success: #4cc27c;
+		--warning: #e3b345;
+		--error: #ef6b6b;
+		color-scheme: dark;
+	}
+}
+
+@layer ov-base {
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
+	}
+	html,
+	body {
+		margin: 0;
+		background: transparent;
+		color: var(--fg);
+		font: 14px / 1.55 var(--font);
+		-webkit-font-smoothing: antialiased;
+	}
+	body {
+		padding: 2px;
+	}
+
+	:where(h1, h2, h3, h4) {
+		margin: 0 0 0.5em;
+		line-height: 1.25;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+	}
+	:where(h1) {
+		font-size: 22px;
+	}
+	:where(h2) {
+		font-size: 18px;
+	}
+	:where(h3) {
+		font-size: 15px;
+	}
+	:where(h4) {
+		font-size: 14px;
+	}
+	:where(p, ul, ol, dl) {
+		margin: 0 0 0.75em;
+	}
+	:where(a) {
+		color: var(--accent);
+		text-underline-offset: 3px;
+	}
+	:where(hr) {
+		height: 1px;
+		margin: 16px 0;
+		border: 0;
+		background: var(--border);
+	}
+	:where(code, kbd, samp) {
+		padding: 0.1em 0.4em;
+		border-radius: 6px;
+		background: var(--ov-fill);
+		font: 12.5px / 1.5 var(--mono);
+	}
+	:where(pre) {
+		margin: 0 0 0.75em;
+		padding: 12px 14px;
+		overflow: auto;
+		border-radius: var(--radius);
+		background: var(--ov-fill);
+		font: 12.5px / 1.6 var(--mono);
+	}
+	:where(pre code) {
+		padding: 0;
+		background: transparent;
+	}
+	:where(blockquote) {
+		margin: 0 0 0.75em;
+		padding: 2px 0 2px 14px;
+		border-left: 3px solid var(--border);
+		color: var(--muted);
+	}
+	:where(small) {
+		color: var(--muted);
+	}
+	:where(label) {
+		font-size: 13px;
+		font-weight: 500;
+	}
+
+	/* 文本类输入 */
+	:where(
+		input:not(
+			[type="checkbox"],
+			[type="radio"],
+			[type="range"],
+			[type="color"],
+			[type="file"],
+			[type="button"],
+			[type="submit"],
+			[type="reset"],
+			[type="image"]
+		),
+		select,
+		textarea
+	) {
+		width: 100%;
+		height: 36px;
+		padding: 0 12px;
+		border: 1px solid var(--border);
+		border-radius: calc(var(--radius) - 4px);
+		background: var(--surface);
+		color: inherit;
+		font: inherit;
+		outline: none;
+		transition:
+			border-color 0.15s,
+			box-shadow 0.15s;
+	}
+	:where(textarea) {
+		height: auto;
+		min-height: 84px;
+		padding: 8px 12px;
+		resize: vertical;
+		line-height: 1.5;
+	}
+	:where(input, select, textarea):where(:focus-visible) {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px var(--ov-ring);
+	}
+	:where(input, select, textarea, button):where(:disabled) {
+		opacity: 0.55;
+		cursor: not-allowed;
+	}
+	:where(input)::placeholder,
+	:where(textarea)::placeholder {
+		color: var(--muted);
+		opacity: 0.8;
+	}
+	:where(select:not([multiple]):not([size])) {
+		appearance: none;
+		padding-right: 34px;
+		cursor: pointer;
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%238a8a93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 11px center;
+	}
+	:where(select[multiple]) {
+		height: auto;
+		padding: 6px;
+	}
+
+	/* 复选、单选与开关 */
+	:where(input[type="checkbox"], input[type="radio"]) {
+		appearance: none;
+		flex: none;
+		width: 18px;
+		height: 18px;
+		margin: 0 6px 0 0;
+		vertical-align: -4px;
+		cursor: pointer;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--surface);
+		outline: none;
+		transition:
+			background 0.15s,
+			box-shadow 0.15s;
+	}
+	:where(input[type="radio"]) {
+		border-radius: 50%;
+	}
+	:where(input[type="checkbox"], input[type="radio"]):where(:focus-visible) {
+		box-shadow: 0 0 0 3px var(--ov-ring);
+	}
+	:where(input[type="checkbox"]:checked) {
+		border-color: var(--accent);
+		background:
+			var(--accent)
+			url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3.8 8.4 2.6 2.6 5.8-5.9'/%3E%3C/svg%3E")
+			center / 14px no-repeat;
+	}
+	:where(input[type="radio"]:checked) {
+		border-color: var(--accent);
+		background: radial-gradient(circle, var(--bg) 0 30%, var(--accent) 34%);
+	}
+	:where(input[type="checkbox"][role="switch"]) {
+		width: 34px;
+		height: 20px;
+		border-radius: 999px;
+		background: var(--ov-fill-hover);
+	}
+	:where(input[type="checkbox"][role="switch"]:checked) {
+		background: var(--accent);
+	}
+	:where(input[type="checkbox"][role="switch"])::after {
+		content: "";
+		display: block;
+		width: 14px;
+		height: 14px;
+		margin: 2px;
+		border-radius: 50%;
+		background: var(--surface);
+		box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+		transition: transform 0.15s;
+	}
+	:where(input[type="checkbox"][role="switch"]:checked)::after {
+		transform: translateX(14px);
+	}
+
+	/* 滑块：轨道按 --p 填色（运行时随输入更新） */
+	:where(input[type="range"]) {
+		appearance: none;
+		width: 100%;
+		height: 6px;
+		padding: 0;
+		border-radius: 999px;
+		cursor: pointer;
+		outline: none;
+		background: linear-gradient(
+			to right,
+			var(--accent) var(--p, 50%),
+			color-mix(in srgb, var(--fg) 15%, transparent) var(--p, 50%)
+		);
+	}
+	:where(input[type="range"])::-webkit-slider-thumb {
+		appearance: none;
+		width: 16px;
+		height: 16px;
+		border: 0;
+		border-radius: 50%;
+		background: var(--accent);
+		box-shadow:
+			0 0 0 3px var(--surface),
+			0 1px 3px rgb(0 0 0 / 0.3);
+	}
+	:where(input[type="range"])::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		border: 0;
+		border-radius: 50%;
+		background: var(--accent);
+		box-shadow: 0 0 0 3px var(--surface);
+	}
+	:where(input[type="range"]:focus-visible) {
+		box-shadow: 0 0 0 3px var(--ov-ring);
+	}
+	:where(input[type="color"]) {
+		width: 36px;
+		height: 36px;
+		padding: 4px;
+		border: 1px solid var(--border);
+		border-radius: calc(var(--radius) - 4px);
+		background: var(--surface);
+		cursor: pointer;
+	}
+
+	/* 按钮：缺省是次要按钮，submit 与 .ov-btn-primary 是主按钮 */
+	:where(
+		button,
+		input[type="button"],
+		input[type="submit"],
+		input[type="reset"],
+		.ov-btn
+	) {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		height: 34px;
+		padding: 0 16px;
+		border: 1px solid var(--border);
+		border-radius: calc(var(--radius) - 4px);
+		background: var(--surface);
+		color: inherit;
+		font: inherit;
+		font-weight: 500;
+		cursor: pointer;
+		outline: none;
+		text-decoration: none;
+		transition:
+			background 0.15s,
+			transform 0.08s;
+	}
+	:where(
+		button,
+		input[type="button"],
+		input[type="submit"],
+		input[type="reset"],
+		.ov-btn
+	):where(:hover:not(:disabled)) {
+		background: color-mix(in srgb, var(--fg) 6%, var(--surface));
+	}
+	:where(button, input[type="button"], input[type="submit"], .ov-btn):where(
+		:active:not(:disabled)
+	) {
+		transform: translateY(1px);
+	}
+	:where(button, .ov-btn):where(:focus-visible) {
+		box-shadow: 0 0 0 3px var(--ov-ring);
+	}
+	:where(button[type="submit"], input[type="submit"], .ov-btn-primary) {
+		border-color: transparent;
+		background: var(--accent);
+		color: var(--bg);
+	}
+	:where(button[type="submit"], input[type="submit"], .ov-btn-primary):where(
+		:hover:not(:disabled)
+	) {
+		background: color-mix(in srgb, var(--accent) 88%, var(--fg));
+	}
+
+	/* 标签页与标签按钮：用 ARIA 属性即可 */
+	:where([role="tablist"]) {
+		display: inline-flex;
+		gap: 2px;
+		padding: 3px;
+		border-radius: var(--radius);
+		background: var(--ov-fill);
+	}
+	:where([role="tablist"] > [role="tab"]) {
+		height: 30px;
+		padding: 0 14px;
+		border: 0;
+		background: transparent;
+		color: var(--muted);
+		font-size: 13px;
+	}
+	:where([role="tablist"] > [role="tab"]):where(:hover:not(:disabled)) {
+		background: transparent;
+		color: var(--fg);
+	}
+	:where([role="tablist"] > [role="tab"][aria-selected="true"]) {
+		background: var(--surface);
+		color: var(--fg);
+		box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+	}
+	:where(.ov-chip) {
+		height: 30px;
+		padding: 0 14px;
+		border-radius: 999px;
+		font-size: 13px;
+		color: var(--muted);
+	}
+	:where(.ov-chip[aria-pressed="true"]) {
+		border-color: transparent;
+		background: var(--accent);
+		color: var(--bg);
+	}
+
+	/* 面板与排版辅助类 */
+	:where(.ov-card) {
+		padding: 16px 18px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+	:where(.ov-stat) {
+		padding: 12px 14px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+	:where(.ov-stat-label) {
+		display: block;
+		font-size: 12px;
+		color: var(--muted);
+	}
+	:where(.ov-stat-value) {
+		display: block;
+		margin-top: 2px;
+		font-size: 22px;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		font-variant-numeric: tabular-nums;
+	}
+	:where(.ov-muted) {
+		color: var(--muted);
+	}
+	:where(.ov-grid) {
+		display: grid;
+		gap: 12px;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	}
+	:where(.ov-row) {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	:where(.ov-stack) {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	:where(.ov-label) {
+		display: block;
+		margin-bottom: 6px;
+		font-size: 13px;
+		font-weight: 500;
+	}
+	:where(.ov-badge) {
+		display: inline-flex;
+		align-items: center;
+		height: 22px;
+		padding: 0 9px;
+		border-radius: 999px;
+		font-size: 12px;
+		background: var(--ov-fill-hover);
+	}
+
+	:where(details) {
+		padding: 12px 16px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+	:where(details + details) {
+		margin-top: 8px;
+	}
+	:where(summary) {
+		cursor: pointer;
+		font-weight: 500;
+	}
+	:where(details[open] > summary) {
+		margin-bottom: 8px;
+	}
+
+	:where(progress, meter) {
+		appearance: none;
+		width: 100%;
+		height: 8px;
+		border: 0;
+		border-radius: 999px;
+		background: var(--ov-fill-hover);
+		overflow: hidden;
+	}
+	:where(progress)::-webkit-progress-bar {
+		background: transparent;
+	}
+	:where(progress)::-webkit-progress-value {
+		border-radius: 999px;
+		background: var(--accent);
+	}
+	:where(progress)::-moz-progress-bar {
+		background: var(--accent);
+	}
+
+	:where(table) {
+		border-collapse: collapse;
+		width: 100%;
+		font-variant-numeric: tabular-nums;
+	}
+	:where(th, td) {
+		padding: 8px 12px;
+		border-bottom: 1px solid var(--border);
+		text-align: left;
+	}
+	:where(th) {
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--muted);
+	}
+	:where(img, svg, canvas, video) {
+		max-width: 100%;
+	}
+	:where(img) {
+		border-radius: calc(var(--radius) - 4px);
+	}
+}

@@ -1566,6 +1566,12 @@ export class MockServer {
 		const path = url.pathname;
 		if (path === "/healthz") return json({ ok: true, version: "0.1.0-mock" });
 		if (!path.startsWith("/api/v1/")) return null;
+		// 视图帧（M33）：mock 没有帧服务，HtmlView 显示可重试的错误态；真实运行由 accept:m33 覆盖
+		if (/^\/api\/v1\/(threads|public\/shares)\/[^/]+\/view-frames$/.test(path))
+			return json(
+				{ code: "not_implemented", message: "view frames need orynd" },
+				501,
+			);
 		const notifyRes = await handleNotifyFetch(req, {
 			// 通知按钮作答 = 线程收到回复：等你处理 → 工作中
 			answered: (id) => {
