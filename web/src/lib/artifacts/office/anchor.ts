@@ -99,7 +99,14 @@ export function textAtPoint(
 	for (const el of document.elementsFromPoint(at.x, at.y)) {
 		if (el.closest(".oryn-pick, .oryn-pins")) continue;
 		if (!accept(el)) continue;
-		const text = clipText(el.textContent ?? "");
+		// 按排版在块（列表项、段落）之间留换行，textContent 会把「要点甲」「要点乙」直接拼在一起；
+		// jsdom 没有 innerText，回落到 textContent
+		const raw =
+			el instanceof HTMLElement && "innerText" in el
+				? // biome-ignore lint/performance/useDomNodeTextContent: 需要按排版断开块之间的文字
+					el.innerText
+				: el.textContent;
+		const text = clipText(raw ?? "");
 		if (text) return text;
 	}
 	return "";
