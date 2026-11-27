@@ -564,8 +564,8 @@ func (s *Service) readRange(ctx context.Context, id string, version int, path st
 // ---- design_head ----
 
 // agentDesignHead 是 design_head：最新版本号、它的 check_json 原文与 src/**、dist/** 的文件摘要，以及探针的审美配置
-// （aesthetic = 已选定设计方向或记下了方案主题，surface 取 artifact_designs，与 ServeRender 注入的 window.__orynProbe 同口径）。只认
-// 设计画布与还没有画框的画布（design.open 接管时用它校验）。
+// （aesthetic = 已选定设计方向或记下了方案主题，surface 取 artifact_designs，与 ServeRender 注入的 window.__orynProbe 同口径）
+// 与落选方案的帧（archivedFrameIDs）。只认设计画布与还没有画框的画布（design.open 接管时用它校验）。
 func (s *Service) agentDesignHead(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
 	var p idArgs
 	if err := decodeParams(params, &p); err != nil {
@@ -582,7 +582,8 @@ func (s *Service) agentDesignHead(ctx context.Context, c Caller, params json.Raw
 	if err != nil {
 		return Result{}, err
 	}
-	if doc, err := canvas.Parse(b); err != nil || (doc.Design == nil && len(doc.Pages) > 0) {
+	doc, err := canvas.Parse(b)
+	if err != nil || (doc.Design == nil && len(doc.Pages) > 0) {
 		return Result{}, opErr(CodeInvalid, "%s 是 HTML 画布（已有画框、没有 design），不能作为设计稿打开。新建一个设计画布再做。", a.ID)
 	}
 	v, err := s.Version(ctx, a.ID, a.Version)
@@ -593,7 +594,7 @@ func (s *Service) agentDesignHead(ctx context.Context, c Caller, params json.Raw
 	if err != nil {
 		return Result{}, err
 	}
-	head := orbsock.DesignHead{Version: v.Version, Check: v.Check, Files: []orbsock.DesignHeadFile{}}
+	head := orbsock.DesignHead{Version: v.Version, Check: v.Check, Files: []orbsock.DesignHeadFile{}, Archived: archivedFrameIDs(doc)}
 	switch row, err := s.st.Q.GetArtifactDesign(ctx, a.ID); {
 	case err == nil:
 		head.Aesthetic, head.Surface = designAesthetic(row), deref(row.Surface)
@@ -607,6 +608,19 @@ func (s *Service) agentDesignHead(ctx context.Context, c Caller, params json.Raw
 	}
 	text, _ := json.Marshal(head)
 	return Result{Text: string(text), Details: obj{"op": OpDesignHead, "id": a.ID, "version": v.Version}}, nil
+}
+
+// archivedFrameIDs 是 doc 里落选画框（canvas.Doc.Archived）经 source 换成的帧 id，按字典序；没有 source 的画框不计。
+func archivedFrameIDs(doc canvas.Doc) []string {
+	archived := doc.Archived()
+	var out []string
+	for _, p := range doc.Pages {
+		if archived[p.ID] && p.Source != "" {
+			out = append(out, strings.TrimSuffix(strings.TrimPrefix(p.Source, "src/frames/"), ".tsx"))
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // ---- fetch_design_runtime ----

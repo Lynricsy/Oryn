@@ -42,7 +42,8 @@ type frameCheck struct {
 }
 
 // agentCheckArtifact 是 check_artifact：参数 {id, path?}。设计画布检查每个带 source 的画框（dist/<id>.html），
-// 其它画布检查每个画框，网页检查入口；给了 path 只检查它（画框的文件或版本里的一个 HTML 文件）。
+// 其它画布检查每个画框，网页检查入口；落选方案的画框（canvas.Doc.Archived）不查。给了 path 只检查它（画框的文件或
+// 版本里的一个 HTML 文件）。
 // 渲染不可用时 status 为 unverified，不报错。只有不带 path 的完整检查才写进最新版本的 check_json（见 storeCheck）：
 // 单个页面的结论代表不了整个版本，写进去会让一张干净的帧盖掉别的帧已知的问题。
 func (s *Service) agentCheckArtifact(ctx context.Context, c Caller, params json.RawMessage) (Result, error) {
@@ -136,9 +137,10 @@ func (s *Service) checkTargets(ctx context.Context, a Artifact, version int, pat
 	if doc == nil {
 		return []checkTarget{{Path: EntryHTML, Width: checkWidth, Height: checkHeight}}, nil, nil
 	}
+	archived := doc.Archived()
 	var out []checkTarget
 	for _, pg := range doc.Pages {
-		if doc.Design == nil || pg.Source != "" {
+		if (doc.Design == nil || pg.Source != "") && !archived[pg.ID] {
 			out = append(out, pageTarget(pg))
 		}
 	}

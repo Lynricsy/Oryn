@@ -421,13 +421,15 @@ type DesignEjectResult struct {
 // 画框的画布）的最新版本号、该版本的 check_json 原文（design.Check 的形状，没检查过为空），以及该版本 `src/**`
 // （不含 node_modules）与 `dist/**` 的文件摘要。orbd 用它对账、判断封存要传哪些文件、回报 design.status 的检查。
 // Aesthetic、Surface 是探针的审美配置（已选定设计方向时打开审美规则；surface 为 app 时探针再关掉两条落地页规则），
-// design.check 把它们拼进页面地址（`__oryn_aesthetic=1`、`__oryn_surface=<landing|app>`）。
+// design.check 把它们拼进页面地址（`__oryn_aesthetic=1`、`__oryn_surface=<landing|app>`）。Archived 是落选方案的帧 id
+// （方案组已选定时本组其它方案的画框经 source 换成帧 id，按字典序）：design.check 与回合结束的检查都跳过它们。
 type DesignHead struct {
 	Version   int              `json:"version"`
 	Check     json.RawMessage  `json:"check,omitempty"`
 	Files     []DesignHeadFile `json:"files"`
 	Aesthetic bool             `json:"aesthetic,omitempty"`
 	Surface   string           `json:"surface,omitempty"`
+	Archived  []string         `json:"archived,omitempty"`
 }
 
 // DesignHeadFile 是 DesignHead 里一个文件的摘要。

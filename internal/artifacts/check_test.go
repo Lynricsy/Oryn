@@ -19,6 +19,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/artifacts/design"
 	"github.com/Lynricsy/Oryn/internal/artifacts/render"
+	"github.com/Lynricsy/Oryn/internal/orbsock"
 	"github.com/Lynricsy/Oryn/internal/webui"
 )
 
@@ -216,6 +217,89 @@ func TestCheckArtifactUnverified(t *testing.T) {
 	assert.Equal(t, design.CheckIssues, res.Details.(obj)["status"])
 	assert.Contains(t, res.Text, "\ndash-in-copy about - a—b (\"U+2014\")")
 	assert.Contains(t, res.Text, "\n未检查 home：页面里没有探针结果")
+}
+
+// M34 C4：落选方案的画框不参与 check_artifact 的完整检查（HTML 画布与设计画布都是）：问题只在落选画框上时仍是 clean；
+// 点名 path 照查。
+func TestCheckArtifactSkipsArchived(t *testing.T) {
+	e := newEnv(t)
+	mkThread(t, e.st, "thr_a", "")
+	c := threadCaller("thr_a")
+	ctx := context.Background()
+	doc := `{"format":3,"canvases":[{"id":"c1","name":"首页"}],"pages":[` +
+		`{"id":"p1","canvas":"c1","name":"甲","file":"a.html"},{"id":"p2","canvas":"c1","name":"乙","file":"b.html"},` +
+		`{"id":"p3","canvas":"c1","name":"丙","file":"c.html"}],"notes":[],` +
+		`"groups":[{"id":"hero","canvas":"c1","name":"首屏","variants":[{"id":"a","name":"A","pages":["p1"]},{"id":"b","name":"B","pages":["p2"]}],"picked":"b","pickedBy":null}]}`
+	a, err := e.s.Create(ctx, CreateParams{Title: "画布", ThreadID: "thr_a", Files: []FileChange{
+		put("canvas.json", doc), put("a.html", "<p>a</p>"), put("b.html", "<p>b</p>"), put("c.html", "<p>c</p>"),
+	}})
+	require.NoError(t, err)
+	require.Equal(t, KindCanvas, a.Kind)
+	r := &domRenderer{doms: map[string]string{
+		"a.html": probeDOM(`[{"rule":"dash-in-copy","text":"a—b"}]`),
+		"b.html": probeDOM(`[]`),
+		"c.html": probeDOM(`[]`),
+	}}
+	withRenderer(e, r)
+
+	res, err := e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`"}`))
+	require.NoError(t, err)
+	var paths []string
+	for _, j := range r.jobs {
+		paths = append(paths, j.Path)
+	}
+	assert.ElementsMatch(t, []string{"b.html", "c.html"}, paths, "落选画框 p1 不查")
+	assert.Equal(t, design.CheckClean, res.Details.(obj)["status"])
+	assert.Equal(t, 2, res.Details.(obj)["frames"])
+	assert.Equal(t, design.CheckClean, storedCheck(t, e, a.ID, 1).Status)
+
+	// 点名落选画框照查
+	res, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+a.ID+`","path":"a.html"}`))
+	require.NoError(t, err)
+	assert.Equal(t, design.CheckIssues, res.Details.(obj)["status"])
+
+	// 设计画布：落选画框 about-v（帧 about）不查
+	d := designCanvas(t, e, put("canvas.json", `{"format":3,"design":{"engine":1,"start":"home"},"canvases":[{"id":"c1","name":"首页"}],"pages":[`+
+		`{"id":"home","canvas":"c1","name":"首页","file":"dist/home.html","source":"src/frames/home.tsx","width":390,"height":844},`+
+		`{"id":"about-v","canvas":"c1","name":"关于","file":"dist/about.html","source":"src/frames/about.tsx"},`+
+		`{"id":"legacy","canvas":"c1","name":"旧页","file":"legacy.html"}],"notes":[],`+
+		`"groups":[{"id":"hero","canvas":"c1","name":"首屏","variants":[{"id":"a","name":"A","pages":["home"]},{"id":"b","name":"B","pages":["about-v"]}],"picked":"a","pickedBy":null}]}`))
+	r = &domRenderer{doms: map[string]string{
+		"dist/home.html":  probeDOM(`[]`),
+		"dist/about.html": probeDOM(`[{"rule":"dash-in-copy","text":"a—b"}]`),
+	}}
+	withRenderer(e, r)
+	res, err = e.s.agentCheckArtifact(ctx, c, json.RawMessage(`{"id":"`+d.ID+`"}`))
+	require.NoError(t, err)
+	require.Len(t, r.jobs, 1)
+	assert.Equal(t, "dist/home.html", r.jobs[0].Path)
+	assert.Equal(t, design.CheckClean, res.Details.(obj)["status"])
+}
+
+// M34 C4：design_head 的 archived 是落选画框经 source 换成的帧 id（画框 id 与帧 id 不同时取帧 id），按字典序；
+// 组没选定时为空。
+func TestDesignHeadArchived(t *testing.T) {
+	e := newEnv(t)
+	mkThread(t, e.st, "thr_a", "")
+	internal := threadCaller("thr_a")
+	internal.Internal = true
+	pages := `"pages":[` +
+		`{"id":"home","canvas":"c1","name":"首页","file":"dist/home.html","source":"src/frames/home.tsx"},` +
+		`{"id":"about-v","canvas":"c1","name":"关于","file":"dist/about.html","source":"src/frames/about.tsx"},` +
+		`{"id":"legacy","canvas":"c1","name":"旧页","file":"legacy.html"}],"notes":[]`
+	group := func(picked string) string {
+		return `{"format":3,"design":{"engine":1,"start":"home"},"canvases":[{"id":"c1","name":"首页"}],` + pages +
+			`,"groups":[{"id":"hero","canvas":"c1","name":"首屏","variants":[{"id":"a","name":"A","pages":["home"]},{"id":"b","name":"B","pages":["about-v","legacy"]}],"picked":` + picked + `,"pickedBy":null}]}`
+	}
+	head := func(id string) orbsock.DesignHead {
+		var h orbsock.DesignHead
+		require.NoError(t, json.Unmarshal([]byte(mustCall(t, e.s, internal, OpDesignHead, `{"id":"`+id+`"}`).Text), &h))
+		return h
+	}
+
+	assert.Equal(t, []string{"about"}, head(designCanvas(t, e, put("canvas.json", group(`"a"`))).ID).Archived, "legacy 没有 source，不计")
+	assert.Equal(t, []string{"home"}, head(designCanvas(t, e, put("canvas.json", group(`"b"`))).ID).Archived)
+	assert.Empty(t, head(designCanvas(t, e, put("canvas.json", group(`null`))).ID).Archived)
 }
 
 func TestCheckArtifactWebPage(t *testing.T) {

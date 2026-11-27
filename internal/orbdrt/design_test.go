@@ -698,6 +698,86 @@ func TestDesignCheckProbeConfig(t *testing.T) {
 	assert.Equal(t, apigen.ArtifactCheckStatus("stale"), e.status(id).Check.Status, "没进缓存：仍是 head 的检查（源码已变）")
 }
 
+// M34 C4：design_head 的落选帧不参与全帧 design.check（message 说明，点名照查）；问题只在落选帧上时结果与
+// design.status 都是 clean；落选帧集合变了，缓存的检查失效。
+func TestDesignCheckArchived(t *testing.T) {
+	e := newDesignEnv(t)
+	ctx := context.Background()
+	bin := writeExe(t, t.TempDir(), "chromium", fakeChromium)
+	e.rt.design.chromium = bin
+	res := e.open(orbsock.DesignOpenParams{ThreadID: testThread})
+	id := res.ID
+	writeSrc(t, res.Dir, "src/frames/home.tsx", "// probe: ["+clippedIssue+"]\nexport default () => <p>x</p>")
+	writeSrc(t, res.Dir, "src/frames/about.tsx", "export default () => <p>about</p>")
+	_, err := e.seal("turn-1")
+	require.NoError(t, err)
+	// pick 在最新版本的 canvas.json 上写一个方案组 hero（a = home，b = about），picked 为空表示未选定
+	pick := func(picked string) {
+		t.Helper()
+		v := e.head(id).Version
+		doc, err := canvas.Parse([]byte(readVersion(t, e.s, id, v, artifacts.EntryCanvas)))
+		require.NoError(t, err)
+		page := map[string]string{}
+		for _, p := range doc.Pages {
+			page[strings.TrimSuffix(strings.TrimPrefix(p.Source, "src/frames/"), ".tsx")] = p.ID
+		}
+		g := canvas.Group{ID: "hero", Canvas: doc.Canvases[0].ID, Name: "首屏", Variants: []canvas.Variant{
+			{ID: "a", Name: "A", Pages: []string{page["home"]}}, {ID: "b", Name: "B", Pages: []string{page["about"]}},
+		}}
+		if picked != "" {
+			g.Picked = &picked
+		}
+		doc.Groups = []canvas.Group{g}
+		_, err = e.s.Write(ctx, artifacts.WriteParams{ID: id, BaseVersion: v, Files: []artifacts.FileChange{
+			{Path: artifacts.EntryCanvas, Data: bytes.NewReader(doc.JSON())},
+		}})
+		require.NoError(t, err)
+	}
+
+	// 未选定：两帧都查，home 有问题
+	pick("")
+	got, err := e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "issues", got.Status)
+	assert.Equal(t, apigen.ArtifactCheckStatus("issues"), e.status(id).Check.Status)
+
+	// 选定 b：home 落选，缓存失效（head 上也没有检查）
+	pick("b")
+	assert.Nil(t, e.status(id).Check, "落选帧变了：缓存不再用")
+	n := len(chromiumCalls(t, bin))
+	got, err = e.check(orbsock.DesignCheckParams{ID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "clean", got.Status, "问题只在落选帧上")
+	assert.Empty(t, got.Issues)
+	assert.Contains(t, got.Message, "跳过落选方案的帧：home")
+	require.Len(t, chromiumCalls(t, bin), n+1)
+	assert.Regexp(t, `/frames/about\?`, lastURL(t, bin))
+	assert.Equal(t, apigen.ArtifactCheckStatus("clean"), e.status(id).Check.Status)
+
+	// 点名落选帧照查，不进缓存
+	got, err = e.check(orbsock.DesignCheckParams{ID: id, Frames: []string{"home"}})
+	require.NoError(t, err)
+	assert.Equal(t, "issues", got.Status)
+	assert.Equal(t, apigen.ArtifactCheckStatus("clean"), e.status(id).Check.Status)
+
+	// 改选 a：落选帧变成 about，缓存失效
+	pick("a")
+	assert.Nil(t, e.status(id).Check, "落选帧变了：缓存不再用")
+}
+
+// M34 C4：版本上的检查结果去掉落选帧的问题；去掉后一处不剩时 issues 记作 clean。
+func TestDesignCheckAPIArchived(t *testing.T) {
+	raw := json.RawMessage(`{"status":"issues","issues":[{"rule":"text-clipped","frame":"home"}],"fingerprint":"h"}`)
+	got := designAPICheck(raw, "h", []string{"home"})
+	require.NotNil(t, got)
+	assert.Equal(t, apigen.ArtifactCheckStatus("clean"), got.Status)
+	assert.Empty(t, got.Issues)
+	got = designAPICheck(raw, "h", []string{"about"})
+	assert.Equal(t, apigen.ArtifactCheckStatus("issues"), got.Status)
+	assert.Len(t, got.Issues, 1)
+	assert.Equal(t, apigen.ArtifactCheckStatus("stale"), designAPICheck(raw, "h2", []string{"home"}).Status)
+}
+
 // M29 Q1：没有 Chromium 时 design.check 回 unverified 并说明（不报错）；没有工作副本（别的线程、没 open 过）回 no_design。
 func TestDesignCheckUnavailable(t *testing.T) {
 	e := newDesignEnv(t)
