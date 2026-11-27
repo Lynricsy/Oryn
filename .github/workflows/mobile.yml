@@ -608,8 +608,9 @@ jobs:
   # IOS_MOBILE_PROVISION，以及 Notification Service Extension 的描述文件 IOS_NSE_MOBILE_PROVISION）只放在 environment mobile-release；
   # 上传用的 App Store Connect API 密钥与 desktop.yml 公证共用
   # 仓库级 APPLE_API_ISSUER / APPLE_API_KEY / APPLE_API_KEY_P8。Team ID 写在 tauri.conf.json 的 bundle.iOS.developmentTeam。
+  # 上传 TestFlight 不可撤回（草稿 Release 拦不住已上传的构建），所以等 ios-check（编译、产物与隐私清单断言、模拟器端到端）通过再签名上传。
   ios-release:
-    needs: prepare
+    needs: [prepare, ios-check]
     if: needs.prepare.outputs.is_release == 'true'
     environment: mobile-release
     # 与 ios-check 同一镜像：上传的 IPA 必须由 iOS 27 SDK 构建（ITMS-90725）
