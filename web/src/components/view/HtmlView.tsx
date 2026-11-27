@@ -261,16 +261,20 @@ export function HtmlView({
 		</h3>
 	) : null;
 
+	// 外壳与声明式视图一致（带边框与内边距的一块）；帧本身无边框、背景透明，内容像直接写在外壳里。
+	// 高度直接给帧：外层再套边框会从帧里扣掉 2px，内容溢出出现内部滚动条。
+	const shell =
+		"flex w-full min-w-0 flex-col gap-3 rounded-lg border border-border p-4";
 	if (!mount)
 		return (
 			<section
 				aria-label={spec.title ?? t("view.html.label")}
-				className="flex w-full min-w-0 flex-col gap-2"
+				className={shell}
 			>
 				{title}
 				<div
 					data-testid="html-view-skeleton"
-					className="flex animate-pulse items-center justify-center rounded-lg border border-border bg-inset text-faint text-xs"
+					className="flex animate-pulse items-center justify-center rounded-md bg-inset text-faint text-xs"
 					style={{ height }}
 				>
 					{t("view.html.loading")}
@@ -279,15 +283,12 @@ export function HtmlView({
 		);
 
 	return (
-		<section
-			aria-label={spec.title ?? t("view.html.label")}
-			className="flex w-full min-w-0 flex-col gap-2"
-		>
+		<section aria-label={spec.title ?? t("view.html.label")} className={shell}>
 			{title}
 			{phase === "error" ? (
 				<div
 					data-testid="html-view-error"
-					className="flex flex-col items-center justify-center gap-2 rounded-lg border border-border bg-inset p-4 text-center text-muted text-xs"
+					className="flex flex-col items-center justify-center gap-2 rounded-md bg-inset p-4 text-center text-muted text-xs"
 					style={{ minHeight: Math.min(height, 200) }}
 				>
 					<span>
@@ -299,7 +300,7 @@ export function HtmlView({
 				</div>
 			) : (
 				<div
-					className={`overflow-hidden rounded-lg border border-border ${phase === "ready" ? "" : "animate-pulse bg-inset"}`}
+					className={`overflow-hidden ${phase === "ready" ? "" : "animate-pulse rounded-md bg-inset"}`}
 					style={{ height }}
 				>
 					{src && (

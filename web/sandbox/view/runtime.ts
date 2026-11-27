@@ -155,12 +155,13 @@ export function install(win: Window, parent: Window, css: string): void {
 	Object.defineProperty(win, "oryn", { value: api, enumerable: true });
 
 	// ---- 高度 ----
+	// scrollHeight 取整时可能舍掉小数部分（差零点几像素也会出现内部滚动条），与布局框的实际高度取大再向上取整
 	const measure = () => {
 		const body = doc.body;
 		if (!body) return Math.ceil(root.scrollHeight);
 		const cs = getStyle(body);
 		return Math.ceil(
-			body.scrollHeight +
+			Math.max(body.scrollHeight, body.getBoundingClientRect().height) +
 				(Number.parseFloat(cs.marginTop) || 0) +
 				(Number.parseFloat(cs.marginBottom) || 0),
 		);
