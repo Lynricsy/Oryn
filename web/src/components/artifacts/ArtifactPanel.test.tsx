@@ -167,6 +167,8 @@ describe("ArtifactPanel", () => {
 		const frame = (await screen.findByTestId(
 			"artifact-frame",
 		)) as HTMLIFrameElement;
+		// 挂载 FrameLink 的被动 effect 冲刷完再派发 load
+		await act(async () => {});
 		const post = vi.fn();
 		vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(
 			post,

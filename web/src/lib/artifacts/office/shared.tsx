@@ -1,6 +1,12 @@
 // 四种 Office 视图共用的加载状态、占位与「渲染完成」标志。
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { MAX_PREVIEW_BYTES } from "./limits";
 import type { OfficeStrings } from "./types";
 
@@ -97,7 +103,8 @@ export function ReadyMark({
 }): ReactNode {
 	const ready = useRef(onReady);
 	ready.current = onReady;
-	useEffect(() => {
+	// 与「已渲染」文字同一次提交里回调（layout effect），观察者看到标志时 onReady 一定已经调过
+	useLayoutEffect(() => {
 		ready.current?.(pages);
 	}, [pages]);
 	return (

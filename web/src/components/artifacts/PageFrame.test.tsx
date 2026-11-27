@@ -67,6 +67,8 @@ async function mountFrame(onBlocked = vi.fn()) {
 	const frame = (await screen.findByTestId(
 		"artifact-frame",
 	)) as HTMLIFrameElement;
+	// findBy 在提交后就返回，挂载 FrameLink 的被动 effect 可能还没跑：先冲刷，再派发 load
+	await act(async () => {});
 	const win = frame.contentWindow;
 	if (!win) throw new Error("iframe 没有窗口");
 	const post = vi.fn();
@@ -200,6 +202,7 @@ describe("PageFrame", () => {
 		const frame = (await screen.findByTestId(
 			"artifact-frame",
 		)) as HTMLIFrameElement;
+		await act(async () => {});
 		const win = frame.contentWindow;
 		if (!win) throw new Error("iframe 没有窗口");
 		const post = vi.fn();
