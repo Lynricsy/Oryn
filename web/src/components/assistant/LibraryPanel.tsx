@@ -1,11 +1,12 @@
 /**
  * 全局助手文件库面板（M13 4.7，R24）：列出本对话的文件与库内共享的文件（可切到全部），每行显示名称、大小、
  * 来源（上传 / 助手保存 / orb）、可见范围标记、所属对话与来源线程、时间；可预览（复用 `FileViewer`，只读）、
- * 下载、切换共享 / 仅此对话、删除（确认后）。上传只走输入框的附件（R19），面板不另设上传。
+ * 下载、切换共享 / 仅此对话、删除（确认后）、Office 文件「转为 artifact」（归属本对话，完成后 toast 带「打开」）。
+ * 上传只走输入框的附件（R19），面板不另设上传。
  */
 import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { ApiError, rawFetch } from "../../api/client";
 import {
 	type AssistantFile,
@@ -14,6 +15,10 @@ import {
 	useDeleteAssistantFile,
 	useSetAssistantFileScope,
 } from "../../api/library-queries";
+import {
+	isLegacyOfficeName,
+	officeTypeOfName,
+} from "../../lib/artifacts/office/formats";
 import { confirmAction } from "../../lib/confirm";
 import {
 	type FileSource,
@@ -25,11 +30,14 @@ import { formatBytes, formatDateTime } from "../../lib/format";
 import { rasterMime } from "../../lib/image-src";
 import { parseTitleCard } from "../../lib/title";
 import { useIndex } from "../../state/stores";
+import { showToast } from "../../state/toasts";
 import { FileViewer } from "../files/FileViewer";
+import { useFileToArtifact } from "../files/to-artifact";
 import { Badge } from "../ui/data";
 import { FileTypeIcon } from "../ui/FileTypeIcon";
 import { ImageViewer, type LightboxImage } from "../ui/ImageViewer";
 import {
+	describeError,
 	EmptyState,
 	ErrorText,
 	IconButton,
@@ -155,6 +163,7 @@ function FileRow({
 	onOpenImage,
 	onToggleShared,
 	onDelete,
+	onToArtifact,
 }: {
 	file: AssistantFile;
 	threadId: string;
@@ -164,6 +173,7 @@ function FileRow({
 	onOpenImage?: () => void;
 	onToggleShared(): void;
 	onDelete(): void;
+	onToArtifact?(): void;
 }): ReactNode {
 	const { t } = useTranslation();
 	const shared = file.scope === "shared";
@@ -249,6 +259,14 @@ function FileRow({
 					label={t("library.download")}
 					onClick={() => download(file)}
 				/>
+				{onToArtifact && (
+					<IconButton
+						icon="fileText"
+						disabled={busy}
+						label={t("files.actions.toArtifact")}
+						onClick={onToArtifact}
+					/>
+				)}
 				<IconButton
 					icon="share"
 					active={shared}
@@ -271,9 +289,11 @@ function FileRow({
 function Preview({
 	file,
 	onBack,
+	onToArtifact,
 }: {
 	file: AssistantFile;
 	onBack(): void;
+	onToArtifact(): void;
 }): ReactNode {
 	const source = useMemo(() => libraryFileSource(file), [file]);
 	return (
@@ -284,6 +304,7 @@ function Preview({
 				readOnly
 				onBack={onBack}
 				onDownload={() => download(file)}
+				onToArtifact={onToArtifact}
 			/>
 		</div>
 	);
@@ -291,19 +312,53 @@ function Preview({
 
 export function LibraryPanel({ threadId }: { threadId: string }): ReactNode {
 	const { t } = useTranslation();
+	const navigate = useNavigate();
 	const [showAll, setShowAll] = useState(false);
 	const [previewing, setPreviewing] = useState<AssistantFile | null>(null);
 	const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+	const [converting, setConverting] = useState<string | null>(null);
 	const q = useAssistantFiles(showAll ? undefined : threadId);
 	const setScope = useSetAssistantFileScope();
 	const remove = useDeleteAssistantFile();
+	const fileToArtifact = useFileToArtifact();
 	const pendingId = setScope.isPending
 		? setScope.variables?.id
 		: remove.isPending
 			? remove.variables
-			: undefined;
+			: (converting ?? undefined);
+	const toArtifact = (f: AssistantFile) => {
+		setConverting(f.id);
+		fileToArtifact({
+			url: libraryFileSource(f).downloadUrl(f.name),
+			name: f.name,
+			size: f.size,
+			threadId,
+		})
+			.then(
+				(a) =>
+					showToast({
+						text: t("files.toArtifactDone", { title: a.title }),
+						action: {
+							label: t("artifacts.menu.open"),
+							run: () => navigate(`/artifacts/${a.id}`),
+						},
+					}),
+				(e: unknown) =>
+					showToast({
+						tone: "err",
+						text: t("files.toArtifactFailed", { reason: describeError(e, t) }),
+					}),
+			)
+			.finally(() => setConverting(null));
+	};
 	if (previewing)
-		return <Preview file={previewing} onBack={() => setPreviewing(null)} />;
+		return (
+			<Preview
+				file={previewing}
+				onBack={() => setPreviewing(null)}
+				onToArtifact={() => toArtifact(previewing)}
+			/>
+		);
 	const list = q.data ?? [];
 	const gallery: LightboxImage[] = [];
 	const galleryIndexById = new Map<string, number>();
@@ -377,6 +432,11 @@ export function LibraryPanel({ threadId }: { threadId: string }): ReactNode {
 								)
 									remove.mutate(f.id);
 							}}
+							onToArtifact={
+								officeTypeOfName(f.name) !== null || isLegacyOfficeName(f.name)
+									? () => toArtifact(f)
+									: undefined
+							}
 						/>
 					);
 				})}

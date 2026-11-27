@@ -1,7 +1,8 @@
 /**
  * artifact 的更多菜单（计划 M14 2.5、2.7、4.3、5.4、8.3）：卡片的「更多」按钮、卡片右键、查看器顶栏的「更多」共用同一份条目。
  * - 打开（卡片）、分享…（卡片；查看器顶栏有自己的「分享」按钮）、重新加载（仅查看器）、在浏览器中打开、导出…（页面与画布导出原始文件；
- *   文档的子菜单是 Word、Markdown；幻灯片的子菜单是 PowerPoint、PDF，渲染不可用时 PDF 置灰并给出原因）、下载 PNG（仅页面类型；
+ *   文档的子菜单是 Word、Markdown；幻灯片的子菜单是 PowerPoint、PDF；Office 类型是「下载原件」，Word 与 PowerPoint 另有 PDF，
+ *   Excel 的 PDF 需要 Office 引擎而置灰；渲染不可用时 PDF 置灰并给出原因）、上传新版本…（仅查看器里的 Office 类型）、下载 PNG（仅页面类型；
  *   渲染不可用时置灰并给出原因）、重命名…、版本历史、打开线程（有创建线程且当前不在它里面）、删除。
  * - 回收站里的条目只有恢复与永久删除…。
  * - 删除未发布的 artifact 不弹框：移到「最近删除」，toast 带「撤销」；已发布的先弹确认框（默认勾选「同时取消发布」）。
@@ -9,7 +10,7 @@
  */
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { type ReactNode, type RefObject, useState } from "react";
+import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import {
@@ -20,14 +21,16 @@ import {
 	fetchArtifactExport,
 	fetchArtifactPng,
 	openArtifactLink,
+	uploadArtifactVersion,
 	useArtifactCapabilities,
 	useDeleteArtifact,
 	useUndeleteArtifact,
 } from "../../api/artifact-queries";
-import { api, unwrap } from "../../api/client";
+import { ApiError, api, unwrap } from "../../api/client";
 import { dispositionName, downloadBlob } from "../../lib/artifacts/download";
 import { exportDocx } from "../../lib/artifacts/export-docx";
 import { exportPptx } from "../../lib/artifacts/export-pptx";
+import { isOfficeType, OFFICE_EXT } from "../../lib/artifacts/office/formats";
 import { sendGeneratedPrompt } from "../../state/actions";
 import { showToast } from "../../state/toasts";
 import { uiStore } from "../../state/ui";
@@ -88,8 +91,8 @@ export async function exportRaw(
 	}
 }
 
-/** 文档与幻灯片的导出格式：`md`、`pdf` 由服务端生成，`docx`、`pptx` 在浏览器里生成。 */
-export type TypedExportFormat = "docx" | "md" | "pptx" | "pdf";
+/** 文档、幻灯片与 Office 类型的导出格式：`md`、`pdf`、`original` 由服务端生成，`docx`、`pptx` 在浏览器里生成。 */
+export type TypedExportFormat = "docx" | "md" | "pptx" | "pdf" | "original";
 
 /** 读版本里的一个文件的字节。 */
 async function fetchArtifactFile(
@@ -105,11 +108,11 @@ async function fetchArtifactFile(
 }
 
 /**
- * 导出文档（Word、Markdown）或幻灯片（PowerPoint、PDF）：取卡片上的最新版本，入口与图片都从这个版本读。
+ * 导出文档（Word、Markdown）、幻灯片（PowerPoint、PDF）或 Office 文件（原件、PDF）：取卡片上的最新版本，入口与图片都从这个版本读。
  * 图片转不了时用占位代替，完成的 toast 里说明有几张。
  */
 export async function exportTyped(
-	a: Pick<Artifact, "id" | "title" | "version">,
+	a: Pick<Artifact, "id" | "title" | "version" | "type">,
 	format: TypedExportFormat,
 	t: TFunction,
 ): Promise<void> {
@@ -121,7 +124,7 @@ export async function exportTyped(
 	});
 	try {
 		let missing = 0;
-		if (format === "md" || format === "pdf") {
+		if (format === "md" || format === "pdf" || format === "original") {
 			const { blob, disposition } = await fetchArtifactExport(
 				a.id,
 				format,
@@ -129,7 +132,8 @@ export async function exportTyped(
 			);
 			downloadBlob(
 				blob,
-				dispositionName(disposition) ?? `${a.title}.${format}`,
+				dispositionName(disposition) ??
+					`${a.title}.${format === "original" && isOfficeType(a.type) ? OFFICE_EXT[a.type] : format}`,
 			);
 		} else {
 			const readFile = (path: string) =>
@@ -300,6 +304,34 @@ export function ArtifactMenu({
 	const [dialog, setDialog] = useState<
 		"rename" | "purge" | "share" | "delete" | "mockup" | null
 	>(null);
+	const uploadInput = useRef<HTMLInputElement>(null);
+
+	// 上传新版本：以卡片上的最新版本为 baseVersion，期间有了新版本时服务端回 409
+	const uploadVersion = async (file: File) => {
+		const id = `artifact-upload:${a.id}`;
+		showToast({
+			id,
+			busy: true,
+			text: t("artifacts.upload.running", { title: a.title }),
+		});
+		try {
+			await uploadArtifactVersion(a.id, a.version, file);
+			void qc.invalidateQueries({ queryKey: artifactQk.all });
+			showToast({ id, text: t("artifacts.upload.done", { title: a.title }) });
+		} catch (e) {
+			showToast({
+				id,
+				tone: "err",
+				text:
+					e instanceof ApiError && e.status === 409
+						? t("artifacts.upload.conflict")
+						: t("artifacts.upload.failed", {
+								title: a.title,
+								reason: describeError(e, t),
+							}),
+			});
+		}
+	};
 
 	const restore = async () => {
 		try {
@@ -347,6 +379,67 @@ export function ArtifactMenu({
 	const designCache = qc.getQueryData<ArtifactDesign>(artifactQk.design(a.id));
 	const showDesignDelivery =
 		a.kind === "canvas" && designCache?.design !== false;
+	const pdfItem: MenuItem = {
+		key: "pdf",
+		label: t("artifacts.export.pdf"),
+		disabled: !render,
+		...(!render
+			? { title: renderReason ?? t("artifacts.menu.pngUnavailable") }
+			: {}),
+		onSelect: () => void exportTyped(a, "pdf", t),
+	};
+	const originalItem: MenuItem = {
+		key: "original",
+		label: t("artifacts.export.original", {
+			ext: isOfficeType(a.type) ? OFFICE_EXT[a.type] : "",
+		}),
+		onSelect: () => void exportTyped(a, "original", t),
+	};
+	// 类型化 artifact 的导出子菜单
+	const typedExport = (): MenuItem[] => {
+		switch (a.type) {
+			case "document":
+				return [
+					{
+						key: "docx",
+						label: t("artifacts.export.docx"),
+						onSelect: () => void exportTyped(a, "docx", t),
+					},
+					{
+						key: "md",
+						label: t("artifacts.export.md"),
+						onSelect: () => void exportTyped(a, "md", t),
+					},
+				];
+			case "slides":
+				return [
+					{
+						key: "pptx",
+						label: t("artifacts.export.pptx"),
+						onSelect: () => void exportTyped(a, "pptx", t),
+					},
+					pdfItem,
+				];
+			case "docx":
+			case "docm":
+			case "pptx":
+			case "pptm":
+				return [originalItem, pdfItem];
+			case "xlsx":
+			case "xlsm":
+				// 表格的 PDF 需要 Office 引擎（M32）
+				return [
+					originalItem,
+					{
+						...pdfItem,
+						disabled: true,
+						title: t("artifacts.export.needsEngine"),
+					},
+				];
+			default:
+				return [originalItem];
+		}
+	};
 	const items: MenuItem[] =
 		place === "trash"
 			? [
@@ -468,40 +561,7 @@ export function ArtifactMenu({
 										icon: "export" as const,
 										label: t("artifacts.menu.export"),
 										attrs: { "data-menu": "export" } as const,
-										children:
-											a.type === "document"
-												? [
-														{
-															key: "docx",
-															label: t("artifacts.export.docx"),
-															onSelect: () => void exportTyped(a, "docx", t),
-														},
-														{
-															key: "md",
-															label: t("artifacts.export.md"),
-															onSelect: () => void exportTyped(a, "md", t),
-														},
-													]
-												: [
-														{
-															key: "pptx",
-															label: t("artifacts.export.pptx"),
-															onSelect: () => void exportTyped(a, "pptx", t),
-														},
-														{
-															key: "pdf",
-															label: t("artifacts.export.pdf"),
-															disabled: !render,
-															...(!render
-																? {
-																		title:
-																			renderReason ??
-																			t("artifacts.menu.pngUnavailable"),
-																	}
-																: {}),
-															onSelect: () => void exportTyped(a, "pdf", t),
-														},
-													],
+										children: typedExport(),
 									},
 								]),
 					...(a.kind === "web"
@@ -518,6 +578,17 @@ export function ArtifactMenu({
 											}
 										: {}),
 									onSelect: () => void downloadPng(a, t),
+								},
+							]
+						: []),
+					...(place === "viewer" && isOfficeType(a.type) && !a.deletedAt
+						? [
+								{
+									key: "upload",
+									icon: "upload" as const,
+									label: t("artifacts.menu.upload"),
+									attrs: { "data-menu": "upload" } as const,
+									onSelect: () => uploadInput.current?.click(),
 								},
 							]
 						: []),
@@ -577,6 +648,20 @@ export function ArtifactMenu({
 					/>
 				)}
 			/>
+			{place === "viewer" && isOfficeType(a.type) && !a.deletedAt && (
+				<input
+					ref={uploadInput}
+					type="file"
+					accept={`.${OFFICE_EXT[a.type]}`}
+					hidden
+					data-testid="artifact-upload-input"
+					onChange={(e) => {
+						const file = e.currentTarget.files?.[0];
+						e.currentTarget.value = "";
+						if (file) void uploadVersion(file);
+					}}
+				/>
+			)}
 			{dialog === "rename" && (
 				<RenameDialog artifact={a} onClose={() => setDialog(null)} />
 			)}

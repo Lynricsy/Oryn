@@ -1,7 +1,8 @@
 /**
  * 线程右侧面板的 Files 标签：根切换器 `Workspace | Home | 项目 Agent 配置 | Agent 配置`（线程属于项目时才有项目配置）。
  * orb 已删除（`orbId` 为空）时只剩两份 Agent 配置并提示；任一份 Agent 配置保存成功后提示「对新 orb 与下次唤醒生效」。
- * orb 里的文件可「发布为公开链接」（复制成附件后发布，见 `usePublishOrbFile`）。
+ * orb 里的文件可「发布为公开链接」（复制成附件后发布，见 `usePublishOrbFile`）；Office 文件可「转为 artifact」（归属本线程与项目，
+ * 完成后「打开」在右面板的 Artifacts 标签里打开）。
  * orb 已停机（`stopped`）时改用只读的停机预览（不唤醒 orb），顶部提示并给出「唤醒以编辑」；
  * orb 离开停机状态后自动换回在线来源。停机预览不可用（provider 不支持 / 不在线）时就地提示。
  */
@@ -21,8 +22,13 @@ import { uiStore, useUi } from "../../state/ui";
 import { BoxStartLink } from "../boxes/BoxStartLink";
 import { Icon } from "../ui/icons";
 import { Button, ErrorText, Spinner } from "../ui/primitives";
-import { FileBrowser, type FilePublisher } from "./FileBrowser";
+import {
+	type FileArtifactImporter,
+	FileBrowser,
+	type FilePublisher,
+} from "./FileBrowser";
 import { useWorkspaceActivity } from "./hooks";
+import { useFileToArtifact } from "./to-artifact";
 
 /** 「唤醒以编辑」：唤醒线程的 orb（与桌面面板、线程头部同一个 `wake`）。 */
 function WakeButton({ threadId }: { threadId: string }): ReactNode {
@@ -97,6 +103,22 @@ export default function FilesPanel({
 						(await publishFile.mutateAsync({ path, threadId })).url,
 				}
 			: undefined;
+	const fileToArtifact = useFileToArtifact();
+	const orbSource = orbId ? sources[0] : undefined;
+	const artifactImporter: FileArtifactImporter | undefined = orbSource
+		? {
+				sourceId: orbSource.id,
+				run: (path, name, size) =>
+					fileToArtifact({
+						url: orbSource.downloadUrl(path),
+						name,
+						size,
+						threadId,
+						projectId,
+					}),
+				open: (a) => uiStore.getState().openArtifact(threadId, a.id),
+			}
+		: undefined;
 	const renderError = (error: unknown, retry: () => void): ReactNode => {
 		if (!(error instanceof ApiError)) return null;
 		if (error.code === "offline_unsupported")
@@ -162,6 +184,7 @@ export default function FilesPanel({
 					storageKey={`thread.${threadId}`}
 					refreshKey={refreshKey}
 					publisher={publisher}
+					artifactImporter={artifactImporter}
 					renderError={renderError}
 					openPath={openPath}
 					onOpened={(n) => uiStore.getState().clearFileSel(threadId, n)}

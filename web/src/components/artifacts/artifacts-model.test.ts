@@ -12,6 +12,8 @@ import {
 	groupArtifacts,
 	hasFilters,
 	importEntries,
+	isImportErrorCode,
+	KIND_TABS,
 	parseView,
 	recentAt,
 	sortArtifacts,
@@ -227,5 +229,35 @@ describe("importEntries", () => {
 		]);
 		expect(r.entries.map((e) => e.path)).toEqual(["index.html", "img/a.png"]);
 		expect(r.name).toBe("site");
+	});
+});
+
+describe("Office 导入", () => {
+	it("单个 Office 文件：字段名是文件名，回落标题去掉扩展名", () => {
+		for (const name of [
+			"季度报告.docx",
+			"季度报告.XLSM",
+			"季度报告.pdf",
+			"季度报告.ppt",
+		])
+			expect(importEntries([new File(["x"], name)]).name).toBe("季度报告");
+		expect(importEntries([new File(["x"], "a.txt")]).name).toBe("a.txt");
+	});
+
+	it("Office 的两个错误码按导入错误显示", () => {
+		expect(isImportErrorCode("unsupported_format")).toBe(true);
+		expect(isImportErrorCode("bad_office")).toBe(true);
+		expect(isImportErrorCode("locked")).toBe(false);
+	});
+
+	it("类型标签的顺序：表格排在幻灯片之后", () => {
+		expect(KIND_TABS).toEqual([
+			"all",
+			"document",
+			"slides",
+			"sheet",
+			"web",
+			"canvas",
+		]);
 	});
 });

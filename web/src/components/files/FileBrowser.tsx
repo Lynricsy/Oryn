@@ -6,6 +6,7 @@
  * 来源不可写（`caps.write` 为 false，如停机 orb 的只读预览）时隐藏一切变更入口，文件以只读方式打开。
  * 目录请求按「来源 + 根」的代次与每个目录的请求序号校验，过期的结果（旧 orb、同目录更早的请求）一律丢弃。
  * 未保存的草稿在 `drafts` store 里，不随查看器卸载丢失；树上以圆点标出。
+ * 给了 `artifactImporter` 时，该来源的 Office 文件可「转为 artifact」（树的菜单与查看器顶栏），完成后弹出带「打开」的提示。
  */
 import {
 	Fragment,
@@ -18,6 +19,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { Artifact } from "../../api/artifact-queries";
 import { copyToClipboard } from "../../lib/clipboard";
 import {
 	baseName,
@@ -29,6 +31,7 @@ import {
 	parentPath,
 } from "../../lib/file-source";
 import { revealSelectedTab } from "../../lib/tab-strip";
+import { showToast } from "../../state/toasts";
 import { Icon } from "../ui/icons";
 import { ManualCopy } from "../ui/ManualCopy";
 import {
@@ -110,11 +113,19 @@ export interface FilePublisher {
 	run(path: string): Promise<string>;
 }
 
+/** 「转为 artifact」：只对 `sourceId` 这个来源的 Office 文件开放；`run` 导入并回新 artifact，`open` 打开它。 */
+export interface FileArtifactImporter {
+	sourceId: string;
+	run(path: string, name: string, size: number): Promise<Artifact>;
+	open(a: Artifact): void;
+}
+
 export function FileBrowser({
 	sources,
 	storageKey,
 	refreshKey = 0,
 	publisher,
+	artifactImporter,
 	renderError,
 	openPath,
 	onOpened,
@@ -124,6 +135,7 @@ export function FileBrowser({
 	/** 变化时刷新已展开的目录 */
 	refreshKey?: number;
 	publisher?: FilePublisher;
+	artifactImporter?: FileArtifactImporter;
 	/** 来源取根失败时的自定义提示（如停机预览不可用时附带唤醒按钮）；返回 null 则用缺省的错误文案 */
 	renderError?(error: unknown, retry: () => void): ReactNode;
 	/** 外部请求打开的文件（绝对路径）；`n` 变化即重新处理一次 */
@@ -364,6 +376,22 @@ export function FileBrowser({
 		}
 	};
 
+	// 查看器里没有现成的条目时（只有路径）先 stat 取名字与大小
+	const toArtifact = (path: string, entry?: FileEntry) => {
+		if (!source || !artifactImporter) return;
+		void run(async () => {
+			const e = entry ?? (await source.stat(path));
+			const a = await artifactImporter.run(path, e.name, e.size);
+			showToast({
+				text: t("files.toArtifactDone", { title: a.title }),
+				action: {
+					label: t("artifacts.menu.open"),
+					run: () => artifactImporter.open(a),
+				},
+			});
+		});
+	};
+
 	const onAction = (action: FileAction, entry: FileEntry | null) => {
 		if (!source || rootPath === undefined) return;
 		const dir = entry
@@ -397,6 +425,9 @@ export function FileBrowser({
 					const url = await publisher.run(entry.path);
 					setPublished({ url, copied: await copyToClipboard(url) });
 				});
+				return;
+			case "toArtifact":
+				if (entry) toArtifact(entry.path, entry);
 				return;
 			case "upload":
 				uploadDir.current = dir;
@@ -560,7 +591,11 @@ export function FileBrowser({
 				expanded={expanded}
 				selectedPath={selected}
 				dirtyPaths={draftPaths}
-				caps={{ ...source.caps, publish: publisher?.sourceId === source.id }}
+				caps={{
+					...source.caps,
+					publish: publisher?.sourceId === source.id,
+					toArtifact: artifactImporter?.sourceId === source.id,
+				}}
 				onToggle={(e) => {
 					const open = !expanded[e.path];
 					setExpanded((x) => ({ ...x, [e.path]: open }));
@@ -592,6 +627,11 @@ export function FileBrowser({
 				path={selected}
 				onBack={split ? undefined : () => select(null)}
 				onDownload={download}
+				onToArtifact={
+					artifactImporter?.sourceId === source.id
+						? (p) => toArtifact(p)
+						: undefined
+				}
 				readOnly={!source.caps.write}
 				onSaved={() => void loadDir(parentPath(selected) || (rootPath ?? ""))}
 			/>

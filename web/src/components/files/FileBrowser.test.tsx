@@ -7,6 +7,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Artifact } from "../../api/artifact-queries";
 import { ApiError } from "../../api/client";
 import i18n from "../../i18n";
 import { closeContextMenu } from "../../lib/context-menu/store";
@@ -16,6 +17,7 @@ import {
 	type FileSource,
 	parentPath,
 } from "../../lib/file-source";
+import { dismissToast, toastsStore } from "../../state/toasts";
 import { ContextMenuHost } from "../ui/ContextMenu";
 import { draftStore } from "./drafts";
 import { FileBrowser } from "./FileBrowser";
@@ -743,5 +745,74 @@ describe("FileBrowser 只读来源（停机 orb 的预览）", () => {
 		expect(await screen.findByText("a.txt")).toBeInTheDocument();
 		expect(calls).toBe(3);
 		expect(screen.queryByText(t("files.offline.indexing"))).toBeNull();
+	});
+});
+
+describe("FileBrowser 转为 artifact", () => {
+	beforeEach(() => {
+		localStorage.clear();
+		draftStore.setState({ drafts: {} });
+		mem = memorySource();
+		mem.files.set("/r/a.txt", { text: "alpha", v: 1 });
+		mem.files.set("/r/report.xlsx", { text: "PK", v: 1 });
+	});
+	afterEach(() => {
+		for (const x of toastsStore.getState().toasts) dismissToast(x.id);
+	});
+
+	it("只对 Office 文件给出；完成后弹出带「打开」的提示", async () => {
+		const artifact = { id: "art_X", title: "report" } as Artifact;
+		const run = vi.fn(async () => artifact);
+		const open = vi.fn();
+		render(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="to-artifact"
+				artifactImporter={{ sourceId: "mem", run, open }}
+			/>,
+		);
+		const plain = await openMenu("a.txt");
+		expect(
+			within(plain).queryByRole("menuitem", {
+				name: t("files.actions.toArtifact"),
+			}),
+		).toBeNull();
+		act(() => closeContextMenu());
+		const menu = await openMenu("report.xlsx");
+		fireEvent.click(
+			within(menu).getByRole("menuitem", {
+				name: t("files.actions.toArtifact"),
+			}),
+		);
+		await waitFor(() =>
+			expect(run).toHaveBeenCalledWith("/r/report.xlsx", "report.xlsx", 2),
+		);
+		await waitFor(() =>
+			expect(toastsStore.getState().toasts.at(-1)?.text).toBe(
+				t("files.toArtifactDone", { title: "report" }),
+			),
+		);
+		act(() => toastsStore.getState().toasts.at(-1)?.action?.run());
+		expect(open).toHaveBeenCalledWith(artifact);
+	});
+
+	it("其它来源的文件没有这个动作", async () => {
+		render(
+			<FileBrowser
+				sources={[mem.src]}
+				storageKey="to-artifact-other"
+				artifactImporter={{
+					sourceId: "orb:other",
+					run: vi.fn(),
+					open: vi.fn(),
+				}}
+			/>,
+		);
+		const menu = await openMenu("report.xlsx");
+		expect(
+			within(menu).queryByRole("menuitem", {
+				name: t("files.actions.toArtifact"),
+			}),
+		).toBeNull();
 	});
 });

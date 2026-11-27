@@ -14,6 +14,10 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	isLegacyOfficeName,
+	officeTypeOfName,
+} from "../../lib/artifacts/office/formats";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { openContextMenu } from "../../lib/context-menu/store";
 import type { MenuGroup } from "../../lib/context-menu/types";
@@ -36,7 +40,8 @@ export type FileAction =
 	| "delete"
 	| "download"
 	| "copyPath"
-	| "publish";
+	| "publish"
+	| "toArtifact";
 
 export interface TreeCaps {
 	/** 可写；为 false 时只剩下载、复制路径与发布，也不接受拖放上传 */
@@ -47,6 +52,8 @@ export interface TreeCaps {
 	download: boolean;
 	/** 文件可发布为公开链接（仅 orb 来源） */
 	publish?: boolean;
+	/** Office 文件可「转为 artifact」（仅提供了导入实现的来源） */
+	toArtifact?: boolean;
 }
 
 /** 某个目标（`entry` 为空 = 当前根）可用的操作。 */
@@ -65,6 +72,12 @@ export function actionsFor(
 		if (caps.write && caps.rename) out.push("rename");
 		if (!dir && caps.download) out.push("download");
 		if (!dir && caps.publish) out.push("publish");
+		if (
+			!dir &&
+			caps.toArtifact &&
+			(officeTypeOfName(entry.name) !== null || isLegacyOfficeName(entry.name))
+		)
+			out.push("toArtifact");
 		out.push("copyPath");
 		if (caps.write) out.push("delete");
 	}
@@ -80,6 +93,7 @@ const ACTION_ICON: Record<FileAction, IconName> = {
 	download: "download",
 	copyPath: "copy",
 	publish: "globe",
+	toArtifact: "fileText",
 };
 
 /** 目录列表上限（与 orbd 一致）；恰好达到时提示可能被截断。 */

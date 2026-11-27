@@ -3926,7 +3926,8 @@
 			"web": "页面",
 			"canvas": "画布",
 			"document": "文档",
-			"slides": "幻灯片"
+			"slides": "幻灯片",
+			"sheet": "表格"
 		},
 		"viewer": {
 			"toolbar": "Artifact 工具条",
@@ -4052,7 +4053,8 @@
 				"document": "做一份文档 artifact：",
 				"slides": "做一份幻灯片 artifact：",
 				"web": "做一个网页 artifact：",
-				"canvas": "做一个多页的画布 artifact："
+				"canvas": "做一个多页的画布 artifact：",
+				"sheet": "做一份表格 artifact："
 			},
 			"noMatch": "没有匹配的 Artifact",
 			"clearFilters": "清除筛选",
@@ -4073,6 +4075,7 @@
 			"rename": "重命名…",
 			"history": "版本历史",
 			"thread": "打开线程",
+			"upload": "上传新版本",
 			"delete": "删除",
 			"restore": "恢复",
 			"purge": "永久删除…"
@@ -4099,7 +4102,7 @@
 		},
 		"import": {
 			"button": "导入",
-			"file": "HTML 文件",
+			"file": "HTML 或 Office 文件",
 			"folder": "带 index.html 的文件夹",
 			"title": "导入 artifact",
 			"summary": "“{{name}}”，共 {{n}} 个文件",
@@ -4108,12 +4111,14 @@
 			"failed": "没能导入：{{reason}}",
 			"done": "已导入“{{title}}”",
 			"errors": {
-				"too_large": "文件太大：单个文件不能超过 20 MiB，全部文件合计不能超过 64 MiB。",
+				"too_large": "文件太大：单个文件不能超过 20 MiB（Office 文件不能超过 256 MiB），全部文件合计不能超过 64 MiB。",
 				"too_many": "文件太多：一个 artifact 最多 256 个文件。",
 				"no_index": "文件夹里没有 index.html 或 canvas.json，不知道从哪一页打开。",
 				"bad_canvas": "canvas.json 的格式不对，或者它引用的画框文件不在文件夹里。",
 				"bad_name": "有的文件名不能用（含有 \\ : * ? \" < > | 等字符、以点或空格结尾，或有只差大小写的同名文件）。",
-				"not_utf8": "有的 HTML 文件不是 UTF-8 编码。另存为 UTF-8 后再导入。"
+				"not_utf8": "有的 HTML 文件不是 UTF-8 编码。另存为 UTF-8 后再导入。",
+				"unsupported_format": "这是旧版或 OpenDocument 格式（.doc、.xls、.ppt、.odt、.ods、.odp）。把文件交给 Agent 转成 docx、xlsx 或 pptx，或部署 Office 引擎后再导入。",
+				"bad_office": "不是可用的 Office 文件，或内容与扩展名不符。"
 			}
 		},
 		"export": {
@@ -4132,7 +4137,15 @@
 			"deploy": "部署到 box",
 			"deployPrompt": "请按 oryn-design 技能第 7 节，将设计画布“{{title}}”（{{id}}）部署到 box：先执行 `oryn design eject {{id}} --to {{dir}}` 导出独立工程并初始化提交，再使用 `oryn boxes deploy` 完成部署，完成后把访问地址发给我。",
 			"deploySent": "已通知作者线程将“{{title}}”部署到 box",
-			"deployFailed": "无法发起部署“{{title}}”：{{reason}}"
+			"deployFailed": "无法发起部署“{{title}}”：{{reason}}",
+			"original": "下载原件（.{{ext}}）",
+			"needsEngine": "需要 Office 引擎"
+		},
+		"upload": {
+			"running": "正在上传“{{title}}”的新版本…",
+			"done": "已上传“{{title}}”的新版本",
+			"conflict": "已有更新的版本，刷新后重试",
+			"failed": "无法上传“{{title}}”的新版本：{{reason}}"
 		},
 		"mockup": {
 			"title": "导出样机",
@@ -4611,6 +4624,10 @@
 		"emptyDir": "空目录",
 		"listTruncated": "目录超过 {{n}} 项，仅显示前 {{n}} 项。",
 		"unsaved": "有未保存的改动",
+		"toArtifactDone": "已转为 artifact“{{title}}”",
+		"toArtifactFailed": "无法转为 artifact：{{reason}}",
+		"toArtifactTooLarge": "文件超过 {{max}}，不能转为 artifact。",
+		"toArtifactUnavailable": "这个文件不能下载，无法转为 artifact。",
 		"actions": {
 			"newFile": "新建文件",
 			"newFolder": "新建文件夹",
@@ -4619,6 +4636,7 @@
 			"delete": "删除",
 			"download": "下载",
 			"copyPath": "复制路径",
+			"toArtifact": "转为 artifact",
 			"refresh": "刷新",
 			"more": "{{name}} 的操作"
 		},

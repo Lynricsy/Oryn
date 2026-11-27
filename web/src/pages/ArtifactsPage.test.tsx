@@ -279,10 +279,15 @@ describe("ArtifactsPage", () => {
 			expect(b.tabIndex).toBe(-1);
 	});
 
-	it("空态：四个磁贴，点击把一行提示交给首屏输入框", async () => {
+	it("空态：每种类型一个磁贴，点击把一行提示交给首屏输入框", async () => {
 		live = [];
 		mount("/artifacts");
 		await screen.findByTestId("artifacts-empty");
+		expect(
+			screen
+				.getAllByRole("button")
+				.flatMap((b) => (b.dataset.seed ? [b.dataset.seed] : [])),
+		).toEqual(["document", "slides", "sheet", "web", "canvas"]);
 		fireEvent.click(
 			screen
 				.getAllByRole("button")
@@ -353,6 +358,10 @@ describe("ArtifactsPage", () => {
 			fireEvent.click(screen.getByTestId("artifacts-import-file"));
 			expect(pick).toHaveBeenCalledTimes(1);
 			expect(pick.mock.contexts[0]).toBe(screen.getByTestId("import-file"));
+			expect(screen.getByTestId("import-file")).toHaveAttribute(
+				"accept",
+				".html,.htm,.docx,.docm,.xlsx,.xlsm,.pptx,.pptm,.pdf,.doc,.xls,.ppt,.odt,.ods,.odp",
+			);
 			// 选了导入就收起菜单
 			expect(screen.queryByTestId("artifacts-import-file")).toBeNull();
 		} finally {

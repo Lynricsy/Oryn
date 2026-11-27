@@ -420,7 +420,8 @@ export function usePatchArtifactDesign() {
 
 /**
  * 导入：每个文件以相对路径为字段名放进 `FormData`。`name` 是上传时的文件名或文件夹名（页面没有 `<title>` 时作标题）。
- * 错误码（`too_large`、`too_many`、`no_index`、`bad_canvas`、`bad_name`、`not_utf8`）在抛出的 `ApiError.code` 上。
+ * `threadId` 是从文件面板「转为 artifact」时归属的线程。错误码（`too_large`、`too_many`、`no_index`、`bad_canvas`、
+ * `bad_name`、`not_utf8`、`unsupported_format`、`bad_office`）在抛出的 `ApiError.code` 上。
  */
 export function useImportArtifact() {
 	const qc = useQueryClient();
@@ -429,16 +430,19 @@ export function useImportArtifact() {
 			files,
 			name,
 			projectId,
+			threadId,
 		}: {
 			files: FormData;
 			name?: string;
 			projectId?: string;
+			threadId?: string;
 		}) =>
 			unwrap(
 				api.POST("/api/v1/artifacts/import", {
 					params: {
 						query: {
 							...(projectId ? { projectId } : {}),
+							...(threadId ? { threadId } : {}),
 							...(name ? { name } : {}),
 						},
 					},
@@ -449,6 +453,26 @@ export function useImportArtifact() {
 			),
 		onSuccess: () => invalidateArtifacts(qc),
 	});
+}
+
+/**
+ * 给 Office artifact 上传新版本（请求体是整个文件，作者是用户）。`baseVersion` 之后有了新版本时抛 409 的 `ApiError`，
+ * 其余错误（`bad_office`、`too_large`、`locked`）同样在 `ApiError.code` 上。调用方负责让 artifact 查询失效。
+ */
+export function uploadArtifactVersion(
+	id: string,
+	baseVersion: number,
+	file: Blob,
+): Promise<Artifact> {
+	return unwrap(
+		api.POST("/api/v1/artifacts/{id}/upload", {
+			params: { path: { id }, query: { baseVersion } },
+			headers: { "Content-Type": "application/octet-stream" },
+			// Blob 原样发出
+			body: file as unknown as string,
+			bodySerializer: (b) => b as unknown as Blob,
+		}),
+	);
 }
 
 /** 申请一个查看帧（`version` 缺省 = 跟随最新版本）。 */

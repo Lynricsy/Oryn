@@ -3,11 +3,11 @@
  * 大标题，下面一行左侧类型标签、右侧图标按钮（搜索 / 筛选 / 显示 / 导入），再下面是大卡片网格（2:1 预览区里露出上半截的
  * 页面缩略图）。筛选全部进 URL 查询串（`artifacts-model.ts` 的 `parseView` / `viewSearch`），刷新后视图不变。
  * - 工具条：类型标签、筛选（项目多选含「无项目」、来源多选）、显示（三种排序、两种布局）、标题搜索（点放大镜或 `Mod+F`
- *   展开并聚焦，有搜索词时保持展开；`Esc` 在有筛选时清除）、导入（HTML 文件 / 带 index.html 的文件夹）。`compact`
+ *   展开并聚焦，有搜索词时保持展开；`Esc` 在有筛选时清除）、导入（HTML 或 Office 文件 / 带 index.html 的文件夹）。`compact`
  *   断点下（9.2）类型标签独占一行，筛选、显示与导入收进一个「筛选与显示」菜单，搜索框常驻；网格 2 列（360 一档 1 列）。
  * - 卡片网格是一个 Tab 停靠点：方向键按阅读顺序移动，`Home` / `End` 跳首尾；右键或 `Shift+F10` 打开卡片菜单；
  *   从查看器返回时恢复滚动位置并聚焦刚才那张。
- * - 空态：没有任何 artifact 时四个「让 Agent 做一份」磁贴（把一行提示交给首屏输入框）；筛不出结果时「清除筛选」。
+ * - 空态：没有任何 artifact 时每种类型一个「让 Agent 做一份」磁贴（把一行提示交给首屏输入框）；筛不出结果时「清除筛选」。
  * - 最近删除：卡片显示「剩 N 天」与恢复；`Esc` 返回总览。
  */
 import {
@@ -644,7 +644,7 @@ function OverviewScreen(): ReactNode {
 				<EmptyState icon="shapes" title={t("artifacts.page.empty")}>
 					{t("artifacts.page.emptyHint")}
 				</EmptyState>
-				<ul className="grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
+				<ul className="grid w-full max-w-3xl grid-cols-2 gap-3 sm:grid-cols-5">
 					{ARTIFACT_KINDS.map((k) => (
 						<li key={k}>
 							<button
@@ -897,7 +897,7 @@ function OverviewScreen(): ReactNode {
 						<input
 							ref={fileRef}
 							type="file"
-							accept=".html,.htm"
+							accept=".html,.htm,.docx,.docm,.xlsx,.xlsm,.pptx,.pptm,.pdf,.doc,.xls,.ppt,.odt,.ods,.odp"
 							hidden
 							data-testid="import-file"
 							onChange={(e) => {

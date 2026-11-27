@@ -221,8 +221,8 @@ export function DeleteDialog({
 }
 
 /**
- * 导入：选好文件（单个 HTML 或一个文件夹）之后选导入到哪个项目或「无项目」。每个文件以「去掉顶层文件夹名的相对路径」
- * 为字段名放进 `FormData`；失败时按错误码给出对应文案，对话框留着可以换个项目或取消。
+ * 导入：选好文件（单个 HTML 或 Office 文件，或一个文件夹）之后选导入到哪个项目或「无项目」。每个文件以「去掉顶层文件夹名的相对路径」
+ * 为字段名放进 `FormData`；失败时按错误码给出对应文案（`bad_office` 直接显示服务端说明的具体问题），对话框留着可以换个项目或取消。
  */
 export function ImportDialog({
 	files,
@@ -258,7 +258,9 @@ export function ImportDialog({
 	const err = run.error;
 	const reason =
 		err instanceof ApiError && isImportErrorCode(err.code)
-			? t(`artifacts.import.errors.${err.code}`)
+			? err.code === "bad_office" && err.message !== err.code
+				? err.message
+				: t(`artifacts.import.errors.${err.code}`)
 			: err
 				? describeError(err, t)
 				: null;

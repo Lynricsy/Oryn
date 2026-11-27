@@ -166,6 +166,7 @@ import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { Stack } from "@phosphor-icons/react/dist/csr/Stack";
 import { Stop } from "@phosphor-icons/react/dist/csr/Stop";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
+import { Table } from "@phosphor-icons/react/dist/csr/Table";
 import { Tag } from "@phosphor-icons/react/dist/csr/Tag";
 import { Target } from "@phosphor-icons/react/dist/csr/Target";
 import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
@@ -358,8 +359,9 @@ const ICONS = {
 	handPalm: HandPalm,
 	/** Artifacts（M14）：功能总图标与画布 */
 	shapes: Shapes,
-	/** artifact 类型：幻灯片 / 页面（文档用 `fileText`） */
+	/** artifact 类型：幻灯片 / 表格 / 页面（文档用 `fileText`） */
 	presentation: Presentation,
+	table: Table,
 	browsers: Browsers,
 	/** artifact 版本历史 */
 	history: ClockCounterClockwise,

@@ -2,7 +2,7 @@
  * artifact 卡片（计划 M14 2.4、4.2、8.3）：两种形态都是单个可聚焦的按钮。
  * - `tile`：上半部 2:1 的预览区——`bg-inset` 底上一张 16:10 的「纸」，下沿被裁掉；纸上是缩略图（`<img loading="lazy">`，
  *   服务端每个版本渲染一张），加载失败（还没有、渲染不可用）时纸上只有居中的类型图标。悬停时纸轻轻上浮。
- *   下面是标题与「类型 · v版本 · 相对时间」（`meta` 可换掉这一行）。
+ *   下面是标题与「类型 · v版本 · 相对时间」（`meta` 可换掉这一行）；Office 类型在类型文案旁带上徽标（Word、Excel…）。
  * - `row`：一行：类型图标、标题、`v版本`（转录里的工具卡片）。
  * 发布状态徽标：访问码 `key`、公开 `globe`（私有不显示），tile 在预览区左上角，row 在标题之后；说明并入按钮的无障碍名。
  * 在场（6.7）：这个 artifact 正被观看（右面板或整页开着它）时才有在场信息——在场头像（tile 在预览区右上角，row 在版本号之前），
@@ -15,7 +15,7 @@ import {
 	type Artifact,
 	artifactThumbnailUrl,
 } from "../../api/artifact-queries";
-import { kindIcon, kindLabelKey } from "../../lib/artifacts/kinds";
+import { kindIcon, kindLabelKey, typeBadge } from "../../lib/artifacts/kinds";
 import { formatRelative } from "../../lib/format";
 import { Icon } from "../ui/icons";
 import { isWorking, PresenceStack } from "./PresenceFaces";
@@ -26,7 +26,7 @@ export type ArtifactCardData = Pick<
 	Artifact,
 	"id" | "title" | "kind" | "version"
 > &
-	Partial<Pick<Artifact, "updatedAt" | "published">>;
+	Partial<Pick<Artifact, "updatedAt" | "published" | "type">>;
 
 /** 发布状态徽标的图标与说明键（私有不显示）。 */
 const PUBLISHED_BADGE = {
@@ -112,7 +112,10 @@ export function ArtifactCard({
 	onFocus?(): void;
 }): ReactNode {
 	const { t } = useTranslation();
-	const kind = t(kindLabelKey(artifact.kind));
+	const badge = typeBadge(artifact.type);
+	const kind = badge
+		? `${t(kindLabelKey(artifact.kind))} · ${badge}`
+		: t(kindLabelKey(artifact.kind));
 	const access = artifact.published?.access;
 	const shared = access === "code" || access === "public" ? access : null;
 	const open = t("artifacts.card.open", { title: artifact.title });

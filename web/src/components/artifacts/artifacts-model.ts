@@ -11,6 +11,7 @@ export const KIND_TABS: readonly KindTab[] = [
 	"all",
 	"document",
 	"slides",
+	"sheet",
 	"web",
 	"canvas",
 ];
@@ -249,8 +250,8 @@ export interface ImportEntry {
 }
 
 /**
- * 选中的文件 → 导入条目。单个 HTML 文件用它的文件名；文件夹（`webkitRelativePath` 形如 `site/a/b.html`）
- * 去掉顶层文件夹名。`name` 是给服务端的回落标题：HTML 文件名去掉扩展名，或顶层文件夹名。
+ * 选中的文件 → 导入条目。单个文件（HTML 或 Office 文件）用它的文件名；文件夹（`webkitRelativePath` 形如 `site/a/b.html`）
+ * 去掉顶层文件夹名。`name` 是给服务端的回落标题：单个文件的文件名去掉 HTML 或 Office 扩展名，或顶层文件夹名。
  */
 export function importEntries(files: readonly File[]): {
 	entries: ImportEntry[];
@@ -267,7 +268,14 @@ export function importEntries(files: readonly File[]): {
 		} else entries.push({ path: file.name, file });
 	}
 	const first = files[0];
-	const name = folder || (first ? first.name.replace(/\.html?$/i, "") : "");
+	const name =
+		folder ||
+		(first
+			? first.name.replace(
+					/\.(html?|docx|docm|xlsx|xlsm|pptx|pptm|pdf|doc|xls|ppt|odt|ods|odp)$/i,
+					"",
+				)
+			: "");
 	return { entries, name };
 }
 
@@ -279,6 +287,8 @@ export const IMPORT_ERROR_CODES = [
 	"bad_canvas",
 	"bad_name",
 	"not_utf8",
+	"unsupported_format",
+	"bad_office",
 ] as const;
 export type ImportErrorCode = (typeof IMPORT_ERROR_CODES)[number];
 

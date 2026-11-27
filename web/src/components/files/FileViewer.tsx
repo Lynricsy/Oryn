@@ -9,6 +9,7 @@
  * 不可信内容的边界：HTML 类内容只进惰性 iframe（不执行脚本、不发请求，见 InertFrame）；图片只经 `<img>`；
  * 表格、压缩包目录等一律作为文本交给 React 转义。
  * 保存带 `etag`；412 `modified` → 对话框「覆盖 / 重新加载」。只读（`readOnly`，如停机 orb 的预览）时不可编辑、保存或丢弃草稿。
+ * 给了 `onToArtifact` 且是 Office 文件（含旧版与 OpenDocument）时，下载按钮旁有「转为 artifact」。
  * 读取遇到唤醒超时或停机预览的索引构建中时按 `withWakeRetry` 等待重试。
  * 草稿存在 `drafts` store（按来源 + 路径），换文件、关面板、换线程回来后仍在；
  * 保存期间继续编辑时，保存完成只把基线前移，不覆盖较新的草稿。
@@ -25,6 +26,10 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
+import {
+	isLegacyOfficeName,
+	officeTypeOfName,
+} from "../../lib/artifacts/office/formats";
 import { useContextTarget } from "../../lib/context-menu/registry";
 import { anchorOf } from "../../lib/context-menu/selection";
 import {
@@ -176,6 +181,7 @@ export function FileViewer({
 	onSaved,
 	onBack,
 	onDownload,
+	onToArtifact,
 	readOnly = false,
 	relativeTo,
 	fitContent = false,
@@ -186,6 +192,8 @@ export function FileViewer({
 	/** 窄布局下返回列表 */
 	onBack?(): void;
 	onDownload?(path: string): void;
+	/** 「转为 artifact」（一次性快照）；只对 Office 文件显示 */
+	onToArtifact?(path: string): void;
 	/** 只预览不编辑（来源不支持写入，如助手文件库、停机的 orb） */
 	readOnly?: boolean;
 	/** Markdown 预览里相对链接与图片的解析（仓库文件页：相对文件所在目录） */
@@ -483,6 +491,17 @@ export function FileViewer({
 						{t("common.save")}
 					</Button>
 				)}
+				{entry &&
+					onToArtifact &&
+					(officeTypeOfName(namePart) !== null ||
+						isLegacyOfficeName(namePart)) && (
+						<IconButton
+							icon="fileText"
+							label={t("files.actions.toArtifact")}
+							data-testid="file-to-artifact"
+							onClick={() => onToArtifact(path)}
+						/>
+					)}
 				{entry && onDownload && source.caps.download && (
 					<IconButton
 						icon="download"

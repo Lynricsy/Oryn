@@ -205,4 +205,17 @@ describe("actionsFor 发布", () => {
 		expect(actionsFor(dir, ro)).toEqual(["copyPath"]);
 		expect(actionsFor(null, ro)).toEqual([]);
 	});
+
+	it("开了 toArtifact 的来源只对 Office 文件（含旧版格式）提供「转为 artifact」", () => {
+		const office = (name: string) =>
+			({ name, path: `/home/user/${name}`, type: "file" }) as FileEntry;
+		const on = { ...caps, toArtifact: true };
+		expect(actionsFor(office("r.xlsx"), caps)).not.toContain("toArtifact");
+		for (const name of ["r.docx", "r.PPTX", "r.pdf", "r.doc", "r.odp"])
+			expect(actionsFor(office(name), on)).toContain("toArtifact");
+		expect(actionsFor(file, on)).not.toContain("toArtifact");
+		expect(
+			actionsFor({ ...dir, name: "d.docx" } as FileEntry, on),
+		).not.toContain("toArtifact");
+	});
 });

@@ -1,6 +1,7 @@
 /**
  * mock 后端的 Artifacts（M14）：`/api/v1/artifacts*` 与 `/api/v1/artifact-frames/*`，响应形状与 orynd
- * （`internal/api/artifacts.go`）一致。夹具是四种类型各一个（单文件），外加一个在「最近删除」里的页面。
+ * （`internal/api/artifacts.go`）一致。夹具是四种类型各一个（单文件）、Word / Excel / PowerPoint / PDF 各一个（内容是占位字节，
+ * 帧里显示「Office 预览（mock）」），外加一个在「最近删除」里的页面。导入接受单个 Office 文件（存成该类型的入口文件）。
  * - 帧（`POST …/frames`）回 `<origin>/__mock_af/<令牌>/`，安装时拦截 iframe `src` 的 `resolveFrameUrl` 每次导航都把它换成
  *   当时内容的 `blob:`：页面 HTML 里用 `<script type="module" src="<origin>/sandbox/runtime/main.ts">` 引入运行时（vite 开发
  *   服务器直接提供），随后调用 `__orynStart(<配置>)`。跟随最新的帧在新版本到来、重设 `src` 时显示新版本，与 orynd 一致。
@@ -23,6 +24,13 @@ import {
 	stringifyCanvasDoc,
 } from "../lib/artifacts/canvas-doc";
 import { cleanStyle, sourceTextAt } from "../lib/artifacts/editable";
+import {
+	isLegacyOfficeName,
+	isOfficeType,
+	MAX_OFFICE_FILE_BYTES,
+	type OfficeType,
+	officeTypeOfName,
+} from "../lib/artifacts/office/formats";
 import { coerceParamValue, parseParamsDecl } from "../lib/artifacts/params";
 import { MockArtifactActivity } from "./artifact-activity";
 import { MockArtifactPublish } from "./artifact-publish";
@@ -38,6 +46,7 @@ import type { MockSocket } from "./server";
 
 type Artifact = Schemas["Artifact"];
 type ArtifactKind = Schemas["ArtifactKind"];
+type ArtifactType = Schemas["ArtifactType"];
 type ArtifactCapability = Schemas["ArtifactCapability"];
 
 /** 用户画布操作静默多久后落成版本（同 `artifacts.CanvasQuiet`）。 */
@@ -56,6 +65,17 @@ const DAY = 86_400_000;
 const MAX_FILE_BYTES = 20 << 20;
 const MAX_VERSION_FILES = 256;
 const MAX_TITLE_RUNES = 120;
+
+/** Office 类型的入口文件与分类（同 `types_office.go`）。 */
+const OFFICE_SPEC: Record<OfficeType, { entry: string; kind: ArtifactKind }> = {
+	docx: { entry: "document.docx", kind: "document" },
+	docm: { entry: "document.docm", kind: "document" },
+	xlsx: { entry: "workbook.xlsx", kind: "sheet" },
+	xlsm: { entry: "workbook.xlsm", kind: "sheet" },
+	pptx: { entry: "presentation.pptx", kind: "slides" },
+	pptm: { entry: "presentation.pptm", kind: "slides" },
+	pdf: { entry: "document.pdf", kind: "document" },
+};
 
 const MIME_BY_EXT: Record<string, string> = {
 	html: "text/html; charset=utf-8",
@@ -218,6 +238,8 @@ interface Stored {
 interface Seed {
 	id: string;
 	kind: ArtifactKind;
+	/** 缺省：document / slides 取 kind，其余为 plain。 */
+	type?: ArtifactType;
 	title: string;
 	threadId?: string;
 	projectId?: string;
@@ -442,6 +464,38 @@ const SEEDS: Seed[] = [
 		versions: [{ text: "# 记\n", at: NOW - 9 * DAY }],
 	},
 	{
+		id: "art_01JDNAOFFICE0000000000000A",
+		kind: "document",
+		type: "docx",
+		title: "季度报告 Q3",
+		path: "document.docx",
+		versions: [{ text: "PK mock docx", at: NOW - 2 * DAY }],
+	},
+	{
+		id: "art_01JDNAOFFICE0000000000000B",
+		kind: "sheet",
+		type: "xlsx",
+		title: "销售明细",
+		path: "workbook.xlsx",
+		versions: [{ text: "PK mock xlsx", at: NOW - 2 * DAY - 10 * MIN }],
+	},
+	{
+		id: "art_01JDNAOFFICE0000000000000C",
+		kind: "slides",
+		type: "pptx",
+		title: "产品路线图",
+		path: "presentation.pptx",
+		versions: [{ text: "PK mock pptx", at: NOW - 2 * DAY - 20 * MIN }],
+	},
+	{
+		id: "art_01JDNAOFFICE0000000000000D",
+		kind: "document",
+		type: "pdf",
+		title: "合同扫描件",
+		path: "document.pdf",
+		versions: [{ text: "%PDF-1.7 mock", at: NOW - 2 * DAY - 30 * MIN }],
+	},
+	{
 		id: ARTIFACT_IDS.trashed,
 		kind: "web",
 		title: "旧版落地页",
@@ -581,15 +635,16 @@ export class MockArtifacts {
 			};
 		});
 		const head = versions[versions.length - 1];
+		const type =
+			s.type ??
+			(s.kind === "document" || s.kind === "slides" ? s.kind : undefined);
 		return {
 			meta: {
 				id: s.id,
 				...(s.projectId ? { projectId: s.projectId } : {}),
 				...(s.threadId ? { threadId: s.threadId } : {}),
 				origin: s.threadId ? "agent" : "import",
-				...(s.kind === "document" || s.kind === "slides"
-					? { type: s.kind }
-					: {}),
+				...(type !== undefined ? { type } : {}),
 				kind: s.kind,
 				title: s.title,
 				version: versions.length,
@@ -1235,7 +1290,9 @@ export class MockArtifacts {
 		const html =
 			a.meta.kind === "web"
 				? text
-				: `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(a.meta.title)}</title><style>body{font:13px/1.6 ui-monospace,monospace;margin:0;padding:24px;white-space:pre-wrap;color:#18181b;background:#fafafa}@media (prefers-color-scheme: dark){body{color:#fafafa;background:#0f0f11}}</style></head><body>${escapeHtml(text)}</body></html>`;
+				: isOfficeType(a.meta.type)
+					? `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(a.meta.title)}</title><style>body{font:14px/1.6 system-ui,sans-serif;margin:0;height:100vh;display:grid;place-items:center;color:#71717a;background:#fafafa}@media (prefers-color-scheme: dark){body{color:#a1a1aa;background:#0f0f11}}</style></head><body>Office 预览（mock）：${escapeHtml(path)}</body></html>`
+					: `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(a.meta.title)}</title><style>body{font:13px/1.6 ui-monospace,monospace;margin:0;padding:24px;white-space:pre-wrap;color:#18181b;background:#fafafa}@media (prefers-color-scheme: dark){body{color:#fafafa;background:#0f0f11}}</style></head><body>${escapeHtml(text)}</body></html>`;
 		if (topLevel) return html;
 		const mark = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
 		// 只有页面类型标源码（旧版本的帧不带运行时，标了也无妨）
@@ -1370,8 +1427,15 @@ export class MockArtifacts {
 			if (pathProblem(path))
 				return error(400, "bad_name", `文件名 ${path} 不合法`);
 			const data = new Uint8Array(await value.arrayBuffer());
-			if (data.byteLength > MAX_FILE_BYTES)
-				return error(413, "too_large", `${path} 超过 20 MiB`);
+			const max = officeTypeOfName(path)
+				? MAX_OFFICE_FILE_BYTES
+				: MAX_FILE_BYTES;
+			if (data.byteLength > max)
+				return error(
+					413,
+					"too_large",
+					`${path} 超过 ${max === MAX_FILE_BYTES ? "20" : "256"} MiB`,
+				);
 			if (/\.html?$/i.test(path)) {
 				try {
 					new TextDecoder("utf-8", { fatal: true }).decode(data);
@@ -1384,38 +1448,69 @@ export class MockArtifacts {
 			if (files.size > MAX_VERSION_FILES)
 				return error(413, "too_many", `文件超过 ${MAX_VERSION_FILES} 个`);
 		}
-		if (total > 64 << 20) return error(413, "too_large", "总大小超过 64 MiB");
+		// 只上传了一个 Office 文件时存成该类型的入口文件；旧版与 OpenDocument 格式拒收（同 import.go）
+		const [lone] = files.keys();
+		const loneFile = lone ? files.get(lone) : undefined;
+		const single = files.size === 1 && lone && loneFile && !lone.includes("/");
+		const officeType = single ? officeTypeOfName(lone) : null;
+		if (single && isLegacyOfficeName(lone)) {
+			const ext = lone.slice(lone.lastIndexOf(".") + 1).toLowerCase();
+			const target =
+				ext === "doc" || ext === "odt"
+					? "docx"
+					: ext === "xls" || ext === "ods"
+						? "xlsx"
+						: "pptx";
+			return error(
+				400,
+				"unsupported_format",
+				`${lone} 是旧版或 OpenDocument 格式。把文件交给 Agent 转成 ${target}，或部署 Office 引擎后再导入。`,
+			);
+		}
+		if (officeType === null && total > 64 << 20)
+			return error(413, "too_large", "总大小超过 64 MiB");
 		const lower = new Map([...files.keys()].map((k) => [k.toLowerCase(), k]));
 		if (lower.size !== files.size)
 			return error(400, "bad_name", "有只差大小写的文件名");
-		// 只上传了一个 HTML 文件时它就是页面本身：存成 index.html（同 import.go）
-		const [lone] = files.keys();
-		const loneFile = lone ? files.get(lone) : undefined;
-		if (files.size === 1 && lone && loneFile && /^[^/]+\.html?$/i.test(lone)) {
+		if (officeType && lone && loneFile) {
+			files.delete(lone);
+			files.set(OFFICE_SPEC[officeType].entry, loneFile);
+		} else if (single && /^[^/]+\.html?$/i.test(lone)) {
+			// 只上传了一个 HTML 文件时它就是页面本身：存成 index.html（同 import.go）
 			files.delete(lone);
 			files.set("index.html", loneFile);
 		}
 		const index = files.get("index.html");
-		const kind: ArtifactKind = index
-			? "web"
-			: files.has("canvas.json")
-				? "canvas"
-				: "web";
-		if (!index && !files.has("canvas.json"))
+		const kind: ArtifactKind = officeType
+			? OFFICE_SPEC[officeType].kind
+			: index
+				? "web"
+				: files.has("canvas.json")
+					? "canvas"
+					: "web";
+		if (!officeType && !index && !files.has("canvas.json"))
 			return error(400, "no_index", "缺少 index.html 或 canvas.json");
 		const titleTag = index
 			? /<title[^>]*>([^<]*)<\/title>/i
 					.exec(new TextDecoder().decode(index.data))?.[1]
 					?.trim()
 			: undefined;
-		const title = titleTag || url.searchParams.get("name")?.trim() || "未命名";
+		const title =
+			(officeType && lone
+				? lone.slice(0, lone.lastIndexOf(".")).trim()
+				: titleTag) ||
+			url.searchParams.get("name")?.trim() ||
+			"未命名";
 		const projectId = url.searchParams.get("projectId") ?? undefined;
+		const threadId = url.searchParams.get("threadId") ?? undefined;
 		const now = Date.now();
 		const id = `art_01JDNAIMPORT${String(++this.seq).padStart(14, "0")}`;
 		const meta: Artifact = {
 			id,
 			...(projectId ? { projectId } : {}),
+			...(threadId ? { threadId } : {}),
 			origin: "import",
+			...(officeType ? { type: officeType } : {}),
 			kind,
 			title: [...title].slice(0, MAX_TITLE_RUNES).join(""),
 			version: 1,

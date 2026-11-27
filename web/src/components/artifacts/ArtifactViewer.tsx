@@ -40,7 +40,7 @@ import {
 	useUndeleteArtifact,
 } from "../../api/artifact-queries";
 import { ApiError } from "../../api/client";
-import { kindIcon } from "../../lib/artifacts/kinds";
+import { kindIcon, typeBadge } from "../../lib/artifacts/kinds";
 import type { ArtifactSelectionRef } from "../../lib/artifacts/prompt";
 import { typedAnchorKind, typedEntry } from "../../lib/artifacts/typed-anchor";
 import { formatRelative } from "../../lib/format";
@@ -648,6 +648,14 @@ export function ArtifactViewer({
 						<span data-testid="artifact-title" className="truncate">
 							{title}
 						</span>
+						{artifact && typeBadge(artifact.type) && (
+							<span
+								data-testid="artifact-type-badge"
+								className="shrink-0 rounded border border-border px-1 font-normal text-2xs text-muted leading-4"
+							>
+								{typeBadge(artifact.type)}
+							</span>
+						)}
 					</h1>
 				)}
 				{artifact && (

@@ -3926,7 +3926,8 @@
 			"web": "Page",
 			"canvas": "Canvas",
 			"document": "Document",
-			"slides": "Slides"
+			"slides": "Slides",
+			"sheet": "Spreadsheet"
 		},
 		"viewer": {
 			"toolbar": "Artifact toolbar",
@@ -4052,7 +4053,8 @@
 				"document": "Make a document artifact: ",
 				"slides": "Make a slides artifact: ",
 				"web": "Make a web page artifact: ",
-				"canvas": "Make a multi-page canvas artifact: "
+				"canvas": "Make a multi-page canvas artifact: ",
+				"sheet": "Make a spreadsheet artifact: "
 			},
 			"noMatch": "No matching artifacts",
 			"clearFilters": "Clear filters",
@@ -4073,6 +4075,7 @@
 			"rename": "Rename…",
 			"history": "Version history",
 			"thread": "Open thread",
+			"upload": "Upload new version",
 			"delete": "Delete",
 			"restore": "Restore",
 			"purge": "Delete permanently…"
@@ -4099,7 +4102,7 @@
 		},
 		"import": {
 			"button": "Import",
-			"file": "HTML file",
+			"file": "HTML or Office file",
 			"folder": "Folder with index.html",
 			"title": "Import artifact",
 			"summary": "“{{name}}”, {{n}} files",
@@ -4108,12 +4111,14 @@
 			"failed": "Couldn't import: {{reason}}",
 			"done": "Imported “{{title}}”",
 			"errors": {
-				"too_large": "Too large: each file must be under 20 MiB, and all files together under 64 MiB.",
+				"too_large": "Too large: each file must be under 20 MiB (Office files under 256 MiB), and all files together under 64 MiB.",
 				"too_many": "Too many files: an artifact can have at most 256 files.",
 				"no_index": "The folder has no index.html or canvas.json, so there's no page to open first.",
 				"bad_canvas": "canvas.json isn't valid, or a frame file it points to isn't in the folder.",
 				"bad_name": "Some file names can't be used (they contain \\ : * ? \" < > |, end with a dot or space, or differ from another only by case).",
-				"not_utf8": "Some HTML files aren't UTF-8. Save them as UTF-8 and import again."
+				"not_utf8": "Some HTML files aren't UTF-8. Save them as UTF-8 and import again.",
+				"unsupported_format": "This is a legacy or OpenDocument format (.doc, .xls, .ppt, .odt, .ods, .odp). Ask the agent to convert it to docx, xlsx or pptx, or set up an Office engine, then import again.",
+				"bad_office": "This isn't a usable Office file, or its contents don't match the extension."
 			}
 		},
 		"export": {
@@ -4132,7 +4137,15 @@
 			"deploy": "Deploy to box",
 			"deployPrompt": "Follow section 7 of the oryn-design skill to deploy the design canvas “{{title}}” ({{id}}) to a box: run `oryn design eject {{id}} --to {{dir}}` to export and commit the standalone project, then deploy it with `oryn boxes deploy` and share the app URL.",
 			"deploySent": "Asked the authoring thread to deploy “{{title}}” to a box",
-			"deployFailed": "Couldn't start deploying “{{title}}”: {{reason}}"
+			"deployFailed": "Couldn't start deploying “{{title}}”: {{reason}}",
+			"original": "Download original (.{{ext}})",
+			"needsEngine": "Requires an Office engine"
+		},
+		"upload": {
+			"running": "Uploading a new version of “{{title}}”…",
+			"done": "Uploaded a new version of “{{title}}”",
+			"conflict": "There's a newer version already. Refresh and try again.",
+			"failed": "Couldn't upload a new version of “{{title}}”: {{reason}}"
 		},
 		"mockup": {
 			"title": "Export mockup",
@@ -4611,6 +4624,10 @@
 		"emptyDir": "Empty folder",
 		"listTruncated": "This folder has more than {{n}} entries; showing the first {{n}}.",
 		"unsaved": "Unsaved changes",
+		"toArtifactDone": "Converted to artifact “{{title}}”",
+		"toArtifactFailed": "Couldn't convert to an artifact: {{reason}}",
+		"toArtifactTooLarge": "The file is over {{max}} and can't be converted to an artifact.",
+		"toArtifactUnavailable": "This file can't be downloaded, so it can't be converted to an artifact.",
 		"actions": {
 			"newFile": "New file",
 			"newFolder": "New folder",
@@ -4619,6 +4636,7 @@
 			"delete": "Delete",
 			"download": "Download",
 			"copyPath": "Copy path",
+			"toArtifact": "Convert to artifact",
 			"refresh": "Refresh",
 			"more": "Actions for {{name}}"
 		},

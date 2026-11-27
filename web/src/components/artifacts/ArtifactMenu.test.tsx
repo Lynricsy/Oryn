@@ -1,6 +1,7 @@
 /**
  * ArtifactMenu：导出原始文件（单文件 `format=html`、多文件 `format=zip`）、文档与幻灯片的导出子菜单、下载 PNG 与 PDF
- * 在渲染不可用时置灰并给出原因、删除后 toast 带撤销、回收站里只有恢复与永久删除。
+ * 在渲染不可用时置灰并给出原因、删除后 toast 带撤销、回收站里只有恢复与永久删除；Office 类型的导出子菜单（原件、PDF、
+ * Excel 的 PDF 需要引擎）与查看器里的「上传新版本」（409 时提示刷新重试）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -86,7 +87,7 @@ beforeEach(() => {
 				const format = url.searchParams.get("format") ?? "";
 				return new Response(format === "zip" ? "PK" : "<h1>hi</h1>", {
 					headers: {
-						"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`本周习惯打卡.${format}`)}`,
+						"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`本周习惯打卡.${format === "original" ? "docx" : format}`)}`,
 					},
 				});
 			}
@@ -105,6 +106,11 @@ beforeEach(() => {
 					renderReason: "找不到 Chromium",
 					sample: false,
 				});
+			if (url.pathname === `/api/v1/artifacts/${ID}/upload`)
+				return Response.json(
+					{ code: "conflict", message: "有更新的版本" },
+					{ status: 409 },
+				);
 			if (url.pathname === `/api/v1/artifacts/${ID}/restore`)
 				return Response.json(ARTIFACT);
 			return new Response(null, { status: 204 });
@@ -270,5 +276,79 @@ describe("ArtifactMenu", () => {
 				count: 2,
 			}),
 		]);
+	});
+
+	it("Word：导出子菜单是原件与 PDF，原件由服务端按卡片上的版本给出", async () => {
+		mount("card", { type: "docx", kind: "document" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		expect(
+			screen.queryByRole("menuitem", { name: i18n.t("artifacts.menu.upload") }),
+		).toBeNull();
+		fireEvent.click(item(i18n.t("artifacts.menu.export")));
+		const original = i18n.t("artifacts.export.original", { ext: "docx" });
+		expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual([
+			original,
+			i18n.t("artifacts.export.pdf"),
+		]);
+		await waitFor(() =>
+			expect(item(i18n.t("artifacts.export.pdf"))).toHaveAttribute(
+				"title",
+				"找不到 Chromium",
+			),
+		);
+		fireEvent.click(item(original));
+		await waitFor(() => expect(downloads).toEqual(["本周习惯打卡.docx"]));
+		const req = requests.find((r) => r.url.pathname.endsWith("/export"));
+		expect(req?.url.searchParams.get("format")).toBe("original");
+		expect(req?.url.searchParams.get("version")).toBe("2");
+	});
+
+	it("Excel：PDF 需要 Office 引擎而置灰", () => {
+		mount("card", { type: "xlsx", kind: "sheet" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		fireEvent.click(item(i18n.t("artifacts.menu.export")));
+		const pdf = item(i18n.t("artifacts.export.pdf"));
+		expect(pdf).toBeDisabled();
+		expect(pdf).toHaveAttribute(
+			"title",
+			i18n.t("artifacts.export.needsEngine"),
+		);
+	});
+
+	it("PDF：导出子菜单只有原件", () => {
+		mount("card", { type: "pdf", kind: "document" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		fireEvent.click(item(i18n.t("artifacts.menu.export")));
+		expect(screen.getAllByRole("menuitem").map((b) => b.textContent)).toEqual([
+			i18n.t("artifacts.export.original", { ext: "pdf" }),
+		]);
+	});
+
+	it("查看器里的 Office 类型可以上传新版本：以卡片上的版本为 baseVersion，409 时提示刷新重试", async () => {
+		mount("viewer", { type: "pptx", kind: "slides" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		fireEvent.click(item(i18n.t("artifacts.menu.upload")));
+		const input = screen.getByTestId("artifact-upload-input");
+		expect(input).toHaveAttribute("accept", ".pptx");
+		fireEvent.change(input, {
+			target: { files: [new File(["PK"], "新版.pptx")] },
+		});
+		await waitFor(() =>
+			expect(toastsStore.getState().toasts.map((t) => t.text)).toEqual([
+				i18n.t("artifacts.upload.conflict"),
+			]),
+		);
+		const req = requests.find((r) => r.url.pathname.endsWith("/upload"));
+		expect(req?.method).toBe("POST");
+		expect(req?.url.searchParams.get("baseVersion")).toBe("2");
+	});
+
+	it("非 Office 类型没有「上传新版本」", () => {
+		mount("viewer", { type: "document", kind: "document" });
+		fireEvent.click(screen.getByTestId("artifact-menu"));
+		expect(
+			screen.queryByRole("menuitem", { name: i18n.t("artifacts.menu.upload") }),
+		).toBeNull();
+		expect(screen.queryByTestId("artifact-upload-input")).toBeNull();
 	});
 });
