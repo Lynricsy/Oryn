@@ -10,6 +10,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/schema"
 )
 
 // M26 步骤 1.2：agent.start 的应答报回在跑的监督器实际使用的变体。幂等返回（已有活动监督器）时是已有的那个，
@@ -213,4 +214,43 @@ func TestAgentStartLanguageEnv(t *testing.T) {
 	}, filepath.Join(crt.home, ".oryn", "threads", thread1))
 	require.NoError(t, err)
 	assert.Equal(t, "en", env["ORYN_LANGUAGE"])
+}
+
+// M33：viewTools 为真时 ORYN_VIEW_TOOLS 指向 orbd 写出的 view-tools.json（内容即 schema.ViewTools）；
+// 为假或省略时没有这个变量，p.Env 里伪造的一律清掉。
+func TestAgentStartViewToolsEnv(t *testing.T) {
+	cp := newFakeCP(t)
+	rt := startRuntime(t, cp, nil)
+	cp.waitNotif(t, 0, "hello", nil)
+
+	want := filepath.Join(rt.home, ".oryn", "core", "view-tools.json")
+	assert.Equal(t, string(schema.ViewTools), readFile(t, want))
+
+	dump := filepath.Join(rt.home, "dump")
+	on, off := true, false
+	cases := []struct {
+		thread string
+		view   *bool
+	}{
+		{thread1, &on},
+		{"T-01932f6e-8d1a-7c3b-9f2e-0123456789d1", &off},
+		{"T-01932f6e-8d1a-7c3b-9f2e-0123456789d2", nil},
+	}
+	for _, c := range cases {
+		var res apigen.LinkCtlAgentStartResult
+		require.NoError(t, cp.call(t, "agent.start", apigen.LinkCtlAgentStartParams{
+			ThreadID:   c.thread,
+			SessionDir: "~/.oryn/threads/" + c.thread,
+			Env:        map[string]string{"FAKEOMP_DUMP_DIR": dump, "ORYN_VIEW_TOOLS": "/tmp/forged.json"},
+			InitFrames: []apigen.OmpFrame{{"type": "open_session", "sessionDir": "~/.oryn/threads/" + c.thread}},
+			ViewTools:  c.view,
+		}, &res))
+		cp.waitNotif(t, 0, "agent.status", statusIs(c.thread, "ready"))
+		rec := setupDump(t, dump, c.thread)
+		if c.view != nil && *c.view {
+			assert.Equal(t, want, rec.Env["ORYN_VIEW_TOOLS"])
+		} else {
+			assert.NotContains(t, rec.Env, "ORYN_VIEW_TOOLS", "viewTools=%v", c.view)
+		}
+	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
+	"github.com/Lynricsy/Oryn/schema"
 )
 
 const testRunnerToken = "ort_test"
@@ -137,12 +138,14 @@ func TestRunnerStartupTouchesNothingOrbSpecific(t *testing.T) {
 		_, err := os.Lstat(p)
 		assert.ErrorIs(t, err, os.ErrNotExist, "%s must not be created on a runner", p)
 	}
-	for _, p := range []string{orbsock.RunnerPath(f.home), runnerExtensionPath(f.home), runnerLibrarySkillPath(f.home)} {
+	for _, p := range []string{orbsock.RunnerPath(f.home), runnerExtensionPath(f.home), runnerLibrarySkillPath(f.home), runnerViewToolsPath(f.home)} {
 		require.Eventually(t, func() bool { _, err := os.Lstat(p); return err == nil }, 5*time.Second, 10*time.Millisecond, "%s exists on a runner", p)
 	}
 	assert.Equal(t, filepath.Join(f.home, ".oryn", "omp", "agent", "skills", "oryn-library", "SKILL.md"), runnerLibrarySkillPath(f.home))
 	assert.Equal(t, string(runnerLibrarySkill), readFile(t, runnerLibrarySkillPath(f.home)))
 	assert.Contains(t, string(runnerLibrarySkill), "oryn_library_put")
+	assert.Equal(t, filepath.Join(f.home, ".oryn", "orbd", "view-tools.json"), runnerViewToolsPath(f.home))
+	assert.Equal(t, string(schema.ViewTools), readFile(t, runnerViewToolsPath(f.home)))
 	fi, err := os.Lstat(orbsock.RunnerPath(f.home))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())

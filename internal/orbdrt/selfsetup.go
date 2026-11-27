@@ -13,6 +13,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
+	"github.com/Lynricsy/Oryn/schema"
 )
 
 // M2.5：setup 运行结果上报、本地控制口（`oryn orb setup …`）与 setup 现状文件。
@@ -270,6 +271,19 @@ func runnerExtensionPath(home string) string {
 	return filepath.Join(home, ".oryn", "orbd", "extensions", "oryn-orb.ts")
 }
 
+// viewToolsPath 是视图工具契约 view-tools.json（M33，schema.ViewTools 原样）的位置，生成式 UI 开启时经 ORYN_VIEW_TOOLS
+// 交给扩展：orb 写在 Core 的扩展目录旁，runner 写在 orbd 自己的扩展目录旁。
+func (r *Runtime) viewToolsPath() string {
+	if r.runner != nil {
+		return runnerViewToolsPath(r.home)
+	}
+	return filepath.Join(r.home, ".oryn", "core", "view-tools.json")
+}
+
+func runnerViewToolsPath(home string) string {
+	return filepath.Join(home, ".oryn", "orbd", "view-tools.json")
+}
+
 // runnerLibrarySkillPath 是 runner 写出 oryn-library 技能的位置（M21）：runner 的 agent 目录 ~/.oryn/omp/agent 之下。
 // 每次启动覆盖；不进 omp-home 清单，下发配置的清理不会删它。
 func runnerLibrarySkillPath(home string) string {
@@ -327,7 +341,7 @@ func (r *Runtime) writeAgentAssets() error {
 	files := map[string][]byte{
 		r.extensionPath(): orbExtension, r.skillPath(): setupSkill, r.librarySkillPath(): librarySkill, r.boxesSkillPath(): boxesSkill,
 		filepath.Join(r.designSkillDir(), "SKILL.md"): designSkill, filepath.Join(r.designSkillDir(), "NOTICE.md"): designNotice,
-		r.computerOverlayPath(): []byte(computerOverlay),
+		r.computerOverlayPath(): []byte(computerOverlay), r.viewToolsPath(): schema.ViewTools,
 	}
 	maps.Copy(files, officeSkillFiles(r.officeSkillDir(), officeSkill))
 	if d := r.desk; d != nil {

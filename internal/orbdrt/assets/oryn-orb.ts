@@ -7,6 +7,8 @@
 // Runner（ORYN_RUNNER=1）上 orbd 把同一文件写到 ~/.oryn/orbd/extensions/，此时只注册 artifact 工具、设计发牌与便签工具和
 // check_artifact（M29，没有工作副本）、文件库工具 oryn_library_put（M21）与 Runner 的指引（模型与 SSH 主机由 Oryn 下发）；
 // orb 专有的 setup、服务、Portal、Docker、桌面、GitHub、设计工作副本与 ssh_exec_many 都不注册。
+// 生成式 UI 开启时（ORYN_VIEW_TOOLS 指向 orbd 写出的视图契约文件，M33）orb 与 Runner 都注册 render_ui / render_html，
+// 只给主 agent（子 agent 里从激活集去掉）并追加视图指引。
 // orb 与 Runner 都注册一个 bash 的 tool_result 钩子：用 omp 原生 ShellVisualization 把执行轨迹渲染成 details.orynPseudo，
 // 供 Web 的 bash 卡片显示 Pseudo 视图。
 import type {
@@ -14,6 +16,7 @@ import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	ExtensionAPI,
+	ExtensionContext,
 	ToolDefinition,
 } from "@oh-my-pi/pi-coding-agent";
 import { createHash } from "node:crypto";
@@ -2161,6 +2164,204 @@ function statusLines(): string[] {
 	return [...(github ? [github] : []), ...(setup ? [setup] : []), ...serviceLines()];
 }
 
+// ---- 视图（M33）----
+// orbd 把 schema/view-tools.json 原样写到 ~/.oryn/core/view-tools.json（Runner：~/.oryn/orbd/view-tools.json），生成式 UI
+// 开启时以 ORYN_VIEW_TOOLS 传入其绝对路径。工具描述、参数 schema 与系统提示词指引都只以该文件为准（契约 C6）；
+// 参数由 Core 在 execute 之前按 schema 校验并修复，这里不再校验。
+
+function isViewTool(name: string): boolean {
+	return name === "render_ui" || name === "render_html";
+}
+
+/** await 的等待时限（D13）：到时调用照常返回，视图仍可操作，之后的作答作为消息到达。 */
+const VIEW_AWAIT_MS = 600_000;
+/** 阻塞作答请求的 placeholder 前缀：Web 据此把这条 input 请求交给转录里的视图，而不是输入坞（C5）。 */
+const VIEW_AWAIT_MARK = "oryn-view:";
+// 工具结果文本（C3，给模型读，原样英文）。
+const VIEW_RENDERED = "Rendered.";
+const VIEW_RENDERED_INPUT = "Rendered. The user's input will arrive as their next message; end this turn now.";
+const VIEW_ANSWERED = "The user answered in the view:\n";
+const VIEW_TIMEOUT =
+	"No response within 10 minutes. The view stays usable: a later answer arrives as a user message. Continue without it or end the turn.";
+const VIEW_DISMISSED = "The user chose to reply in text instead; their message follows.";
+const VIEW_ABORTED = "Aborted.";
+const VIEW_MAIN_ONLY = "Views are only available to the main agent. Present the result in text instead.";
+
+interface ViewToolSpec {
+	name: string;
+	label: string;
+	description: string;
+	parameters: Record<string, unknown>;
+}
+
+/** 读 ORYN_VIEW_TOOLS 指向的契约文件；没设、读不到或格式不对时返回 undefined（不注册、不追加指引）。 */
+function loadViewTools(): { guide: string; tools: ViewToolSpec[] } | undefined {
+	const path = process.env.ORYN_VIEW_TOOLS;
+	if (!path) {
+		return undefined;
+	}
+	let raw: unknown;
+	try {
+		raw = JSON.parse(readFileSync(path, "utf8"));
+	} catch {
+		return undefined;
+	}
+	if (!isObject(raw) || typeof raw.guide !== "string" || !Array.isArray(raw.tools)) {
+		return undefined;
+	}
+	const tools = raw.tools.filter(
+		(t): t is ViewToolSpec =>
+			isObject(t) &&
+			typeof t.name === "string" &&
+			isViewTool(t.name) &&
+			typeof t.label === "string" &&
+			typeof t.description === "string" &&
+			isObject(t.parameters),
+	);
+	return tools.length > 0 ? { guide: raw.guide, tools } : undefined;
+}
+
+/** render_ui 的块里是否有交互块（form / actions），递归进 card / columns / tabs。 */
+function hasViewInput(blocks: unknown): boolean {
+	if (!Array.isArray(blocks)) {
+		return false;
+	}
+	return blocks.some((b) => {
+		if (!isObject(b)) {
+			return false;
+		}
+		switch (b.type) {
+			case "form":
+			case "actions":
+				return true;
+			case "card":
+				return hasViewInput(b.blocks);
+			case "columns":
+				return Array.isArray(b.columns) && b.columns.some((c) => isObject(c) && hasViewInput(c.blocks));
+			case "tabs":
+				return Array.isArray(b.tabs) && b.tabs.some((t) => isObject(t) && hasViewInput(t.blocks));
+			default:
+				return false;
+		}
+	});
+}
+
+/**
+ * details.view.spec（C3）：Web 回放以它为准，因为转录里的 toolCall.arguments 是模型的原始输出，而这里拿到的是 Core 修复后的参数。
+ * render_ui 是收到的参数去掉 await；render_html 只存 { libs, height }（html 不重复存，libs 兼容单个字符串）。
+ */
+function viewSpec(name: string, params: Record<string, unknown>): Record<string, unknown> {
+	if (name === "render_html") {
+		const libs =
+			typeof params.libs === "string"
+				? [params.libs]
+				: Array.isArray(params.libs)
+					? params.libs.filter((l) => typeof l === "string")
+					: [];
+		return typeof params.height === "number" ? { libs, height: params.height } : { libs };
+	}
+	const { await: _await, ...spec } = params;
+	return spec;
+}
+
+function viewResult(text: string, view: Record<string, unknown>, isError?: boolean): AgentToolResult {
+	return { content: [{ type: "text", text }], details: { view }, ...(isError ? { isError: true } : {}) };
+}
+
+/** 阻塞应答的 value（C4）：Web 发 {v:1, answer, text}；不是这种 JSON 时（旧客户端、IM 渠道手打的回答）整段当作 text。 */
+function readViewAnswer(value: string): { text: string; answer?: Record<string, unknown> } {
+	try {
+		const v: unknown = JSON.parse(value);
+		if (isObject(v) && v.v === 1 && typeof v.text === "string" && isObject(v.answer)) {
+			return { text: v.text, answer: v.answer };
+		}
+	} catch {
+		// 不是 JSON：整段当作 text
+	}
+	return { text: value };
+}
+
+/** 阻塞请求的标题：收件箱与推送正文取它。 */
+function viewAwaitTitle(params: Record<string, unknown>): string {
+	const title = typeof params.title === "string" ? params.title.replace(/\s+/g, " ").trim() : "";
+	if (title) {
+		return title;
+	}
+	return process.env.ORYN_LANGUAGE === "en" ? "A view is waiting for your input" : "有一个视图等你操作";
+}
+
+// 注册 render_ui / render_html，返回取视图指引的函数（before_agent_start 调用：主 agent 且 render_ui 已激活时给出指引）；
+// 没注册时为 undefined。须在 registerRoleTools 之后调用：session_start 的处理器按注册顺序依次执行，角色白名单先定激活集，
+// 这里再从子 agent 的激活集里去掉两个工具。Core 把扩展重新绑定到每个子会话（task、eval 的 agent()、/tan 克隆），
+// 用 ctx.agent.kind 区分（/tan 克隆是深度 0 的子 agent，不能看 depth）；execute 开头再判一次，不依赖处理器顺序。
+function registerViews(pi: ExtensionAPI): ((ctx: ExtensionContext) => string | undefined) | undefined {
+	const file = loadViewTools();
+	if (!file) {
+		return undefined;
+	}
+	for (const tool of file.tools) {
+		pi.registerTool({
+			name: tool.name,
+			label: tool.label,
+			description: tool.description,
+			// Core 接受纯 JSON Schema 对象作参数（与 Zod 并存，见 ai 包的 toolWireSchema）
+			parameters: tool.parameters as unknown as ToolDefinition["parameters"],
+			loadMode: "essential",
+			approval: "read",
+			async execute(toolCallId, rawParams, signal, _onUpdate, ctx) {
+				if (ctx.agent.kind !== "main") {
+					return { ...textResult(VIEW_MAIN_ONLY), isError: true };
+				}
+				const params: Record<string, unknown> = isObject(rawParams) ? rawParams : {};
+				const spec = viewSpec(tool.name, params);
+				const html = tool.name === "render_html";
+				// render_ui 没有交互块时忽略 await
+				const input = html || hasViewInput(params.blocks);
+				if (!input || params.await !== true) {
+					return viewResult(input && !html ? VIEW_RENDERED_INPUT : VIEW_RENDERED, { outcome: "rendered", spec });
+				}
+				// 超时、取消、abort 都 resolve 为 undefined；靠 onTimeout 与 signal 区分
+				let timedOut = false;
+				const value = await ctx.ui.input(viewAwaitTitle(params), VIEW_AWAIT_MARK + toolCallId, {
+					signal,
+					timeout: VIEW_AWAIT_MS,
+					onTimeout: () => {
+						timedOut = true;
+					},
+				});
+				if (value !== undefined) {
+					const { text, answer } = readViewAnswer(value);
+					const view: Record<string, unknown> = { outcome: "answered", spec };
+					if (answer) {
+						view.answer = answer;
+					}
+					return viewResult(VIEW_ANSWERED + text, view);
+				}
+				if (timedOut) {
+					return viewResult(VIEW_TIMEOUT, { outcome: "timeout", spec });
+				}
+				if (signal?.aborted) {
+					return viewResult(VIEW_ABORTED, { outcome: "aborted", spec }, true);
+				}
+				// 主人改为直接打字：Web 发消息前先把挂起的视图请求应答为 cancelled
+				return viewResult(VIEW_DISMISSED, { outcome: "dismissed", spec });
+			},
+		});
+	}
+	const hideInSubagents = async (_event: unknown, ctx: ExtensionContext) => {
+		if (ctx.agent.kind === "main") {
+			return;
+		}
+		const active = pi.getActiveTools();
+		if (active.some(isViewTool)) {
+			await pi.setActiveTools(active.filter((name) => !isViewTool(name)));
+		}
+	};
+	pi.on("session_start", hideInSubagents);
+	pi.on("session_switch", hideInSubagents);
+	return (ctx) => (ctx.agent.kind === "main" && pi.getActiveTools().includes("render_ui") ? file.guide : undefined);
+}
+
 // 按工作线程角色白名单限制激活的工具（ORYN_ROLE_TOOLS 为 JSON 字符串数组；未设置时不限制，空数组 [] 禁用全部工具）。
 // 通过扩展 API 对 pi.getAllTools() 取交集，避免白名单含当前会话未启用的可选工具（如 ast_grep / find）时启动失败。
 function registerRoleTools(pi: ExtensionAPI) {
@@ -2196,12 +2397,14 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 	registerRoleTools(pi);
 	registerShellPseudo(pi);
 	const artifacts = registerArtifacts(pi);
+	// 视图（M33）：orb 与 Runner 都注册，须在 registerRoleTools 之后
+	const viewGuide = registerViews(pi);
 	if (process.env.ORYN_RUNNER === "1") {
 		// Runner（用户自己的机器，M14 步骤 1.7 / M21）：artifact、设计发牌与便签（M29）与文件库工具、Runner 指引；没有 orb 环境、
 		// Docker 与桌面段落，也没有设计工作副本。
 		registerRunnerLibrary(pi);
 		registerRunnerDesign(pi);
-		pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
+		pi.on("before_agent_start", async (event: BeforeAgentStartEvent, ctx): Promise<BeforeAgentStartEventResult> => {
 			const guide = [RUNNER_GUIDE];
 			if (artifacts) {
 				guide.push(ARTIFACT_GUIDE);
@@ -2211,6 +2414,10 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 			}
 			if (browserRelayOnline()) {
 				guide.push(BROWSER_RELAY_GUIDE);
+			}
+			const views = viewGuide?.(ctx);
+			if (views) {
+				guide.push(views);
 			}
 			return { systemPrompt: [...event.systemPrompt, guide.join("\n")] };
 		});
@@ -2224,7 +2431,7 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 		registerDesktopAsk(pi);
 		registerDesktopRecord(pi);
 	}
-	pi.on("before_agent_start", async (event: BeforeAgentStartEvent): Promise<BeforeAgentStartEventResult> => {
+	pi.on("before_agent_start", async (event: BeforeAgentStartEvent, ctx): Promise<BeforeAgentStartEventResult> => {
 		const docker = process.env.ORYN_NESTED_DOCKER === "1" ? DOCKER_GUIDE : NO_DOCKER_GUIDE;
 		const guide = desktopEnabled() ? [GUIDE, docker, DESKTOP_GUIDE] : [GUIDE, docker];
 		if (artifacts) {
@@ -2241,6 +2448,10 @@ export default function orynOrbExtension(pi: ExtensionAPI) {
 			if (st?.available) {
 				guide.push(SANDBOX_GUIDE(st.backends.join("、")));
 			}
+		}
+		const views = viewGuide?.(ctx);
+		if (views) {
+			guide.push(views);
 		}
 		const designNow = designLines ? await designLines() : [];
 		return { systemPrompt: [...event.systemPrompt, [...guide, ...statusLines(), ...designNow].join("\n")] };

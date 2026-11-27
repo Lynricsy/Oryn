@@ -40,6 +40,9 @@ const (
 	envRoleTools = "ORYN_ROLE_TOOLS"
 	// envLanguage 是全局语言设置（控制面在 agent.start 下发，约束 omp 标题生成与工具调用 intent 的语言）。
 	envLanguage = "ORYN_LANGUAGE"
+	// envViewTools 是视图工具契约文件（view-tools.json）的绝对路径（M33）：控制面在 agent.start 下发 viewTools 为真时设置，
+	// oryn-orb.ts 读到它才注册 render_ui / render_html；协调宿主不设。
+	envViewTools = "ORYN_VIEW_TOOLS"
 	// initIDPrefix 标记 orbd 自己发出的初始化命令；其应答不转发给控制面。
 	initIDPrefix = "orbd-"
 )
@@ -721,6 +724,10 @@ func (r *Runtime) agentStart(p apigen.LinkCtlAgentStartParams) (apigen.LinkCtlAg
 		delete(env, envLanguage)
 		if p.Language != nil && *p.Language != "" {
 			env[envLanguage] = string(*p.Language)
+		}
+		delete(env, envViewTools)
+		if p.ViewTools != nil && *p.ViewTools {
+			env[envViewTools] = r.viewToolsPath()
 		}
 		if p.AppendSystemPrompt != nil && *p.AppendSystemPrompt != "" {
 			promptFile := filepath.Join(dir, "role-prompt.md")

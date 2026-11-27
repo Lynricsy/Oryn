@@ -25,6 +25,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/link"
 	"github.com/Lynricsy/Oryn/internal/orbsock"
+	"github.com/Lynricsy/Oryn/schema"
 )
 
 // 计划中固定的默认值。
@@ -463,14 +464,15 @@ func New(cfg Config) (_ *Runtime, err error) {
 	if err := resetDir(filepath.Join(home, ".oryn", "tmp")); err != nil {
 		return nil, fmt.Errorf("orbdrt: %w", err)
 	}
-	// runner 只写 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库 / 设计发牌与便签工具与 Runner 的指引）到 orbd
-	// 自己的目录，以及 runner 版的 oryn-library、oryn-design、oryn-office 技能到自己的 agent 目录（M21、M29、M31；oryn-setup
-	// 只用于 orb 的 setup，不写）。
+	// runner 只写 orbd 自带的扩展（ORYN_RUNNER=1 时只注册 artifact / 文件库 / 设计发牌与便签工具、视图工具与 Runner 的指引）与
+	// 视图工具契约 view-tools.json 到 orbd 自己的目录，以及 runner 版的 oryn-library、oryn-design、oryn-office 技能到自己的
+	// agent 目录（M21、M29、M31、M33；oryn-setup 只用于 orb 的 setup，不写）。
 	if rs != nil {
 		design := runnerDesignSkillDir(home)
 		files := map[string][]byte{
 			runnerExtensionPath(home): orbExtension, runnerLibrarySkillPath(home): runnerLibrarySkill,
 			filepath.Join(design, "SKILL.md"): runnerDesignSkill, filepath.Join(design, "NOTICE.md"): designNotice,
+			runnerViewToolsPath(home): schema.ViewTools,
 		}
 		maps.Copy(files, officeSkillFiles(runnerOfficeSkillDir(home), runnerOfficeSkill))
 		for path, data := range files {
