@@ -8,7 +8,8 @@
 //              回传三件矩形与侧栏宽
 //   h-native   无障碍树：三件矩形里都是原生按钮，网页三件已退出无障碍树（aria-hidden）；记下原生侧栏钮在关闭位的矩形
 //   h-menu     点原生标题胶囊：原生面板展开（出现「改名」行），脚本确认 header.event（menu = title）
-//   h-sub      点「Orb」行：面板原地换成子页（「返回, Orb」行），不产生 select
+//   h-sub      点「Orb」行：面板原地换成子页（「返回, Orb」行），不产生 select；面板贴合内容高度
+//              （返回行紧贴胶囊下方：面板间距 6 + 内边距 6，不被撑高的面板居中到下面去）
 //   h-back     点返回行：回到主页
 //   h-dialog   点「改名」：脚本确认 header.event（select / title / rename）；网页打开改名对话框（无障碍树里有输入框），
 //              遮挡探测让原生页头让位（header.show alpha 0，原生按钮消失）
@@ -73,6 +74,11 @@ final class HeaderE2ETests: E2ECase {
       let sub = try self.native(app, self.back, prefix: true)
       let main = try self.native(app, self.rename)
       return sub != nil && main == nil
+    }
+    // 面板出现的缩放动画结束后，返回行顶边距胶囊底边应为 12pt（留 8pt 容差）
+    try until("子页的返回行没有紧贴胶囊下方（面板被撑高、内容居中）") {
+      guard let sub = try self.native(app, self.back, prefix: true) else { return false }
+      return abs(sub.frame.minY - title.maxY - 12) <= 8
     }
     _ = try checkpoint("h-sub")
 

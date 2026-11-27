@@ -345,6 +345,28 @@ struct CapWidth: Layout {
   }
 }
 
+/// 只封顶不撑开的高度：向子视图提议 min(提议, max)，自身取子视图的实际尺寸（菜单面板贴合内容高度）。
+@available(iOS 26.0, *)
+struct CapHeight: Layout {
+  let max: CGFloat
+
+  private func capped(_ proposal: ProposedViewSize, width: CGFloat?) -> ProposedViewSize {
+    ProposedViewSize(width: width, height: proposal.height.map { Swift.min($0, max) } ?? max)
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let child = subviews.first else { return .zero }
+    return child.sizeThatFits(capped(proposal, width: proposal.width))
+  }
+
+  func placeSubviews(
+    in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+  ) {
+    // 摆放时沿用测量时的高度提议，ViewThatFits 才会选回同一个分支
+    subviews.first?.place(at: bounds.origin, proposal: capped(proposal, width: bounds.width))
+  }
+}
+
 /// 一段「图形 + 文字」：图形与文字间距 4；字形徽标比其它图形大 2pt（网页的项目徽标 13 / Space 图标 11）。
 @available(iOS 26.0, *)
 struct SegView: View {

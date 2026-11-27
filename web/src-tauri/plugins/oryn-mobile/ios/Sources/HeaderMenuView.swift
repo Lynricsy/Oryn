@@ -14,12 +14,14 @@ struct MenuPanel: View {
   let maxHeight: CGFloat
 
   var body: some View {
-    // 内容放得下就不滚动；放不下才套 ScrollView
-    ViewThatFits(in: .vertical) {
-      content
-      ScrollView { content }.scrollBounceBehavior(.basedOnSize)
+    // 内容放得下就不滚动、面板贴合内容高度；放不下才套 ScrollView，面板停在上限。
+    // 不能用 .frame(maxHeight:)：父级提议整屏高度时它会撑到上限，内容被居中、上下留大片空白。
+    CapHeight(max: maxHeight) {
+      ViewThatFits(in: .vertical) {
+        content
+        ScrollView { content }.scrollBounceBehavior(.basedOnSize)
+      }
     }
-    .frame(maxHeight: maxHeight)
     .glassEffect(
       .regular.tint(Color(uiColor: .systemBackground).opacity(spec.tune.tint)),
       in: RoundedRectangle(cornerRadius: wide ? 22 : 18, style: .continuous)
