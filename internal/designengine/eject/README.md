@@ -5,6 +5,7 @@
 - `#/<id>` 打开某一帧，`#/` 打开起始帧，`#/_frames` 列出全部帧；
 - 帧间跳转仍写 `import { Link } from "oryn:design"`，`vite.config.ts` 把它指到 `oryn-design.tsx`（改成 hash 跳转）；
 - `src/frames/_layout.tsx`（如有）包住每一帧；`src/theme.css` 是设计 token（`@theme {…}`），由 `styles.css` 引入。
+- `src/themes/<名>.css`（如有）是方案主题（`:root[data-oryn-theme="<名>"] {…}`），由 `styles.css` 在 `theme.css` 之后引入；切到某帧时按 `oryn-frames.json` 里该帧的 `theme` 设置 `<html data-oryn-theme>`。
 
 ## 运行
 
@@ -29,4 +30,5 @@ oryn boxes deploy --on <box> --name <app>
 
 - 不带画布的元素定位标记（`data-oryn-loc`）、页面运行时与设计检查探针；
 - `oryn-frames.json` 记录导出时的帧顺序、名字与起始帧，之后新增的帧排在后面，名字取帧文件里 `export const frame` 的 `name`。
+- 方案组里落选方案的帧与只被它们用到的主题不导出，`src/variants.json` 只保留选中的方案；想交付落选方案，先在画布上改选它。
 <!-- oryn:conflicts -->

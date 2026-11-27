@@ -22,10 +22,12 @@ type EjectFile struct {
 	Data []byte
 }
 
-// ProjectFrame 是导出工程里的一帧：ID 是 src/frames/<ID>.tsx 的文件名，Name 是画布上画框的名字。
+// ProjectFrame 是导出工程里的一帧：ID 是 src/frames/<ID>.tsx 的文件名，Name 是画布上画框的名字，
+// Theme 是帧所属方案的主题名（src/themes/<Theme>.css；不属于带主题的方案时为空）。
 type ProjectFrame struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Theme string `json:"theme,omitempty"`
 }
 
 // Project 是生成导出工程外壳所需的信息。
@@ -37,6 +39,8 @@ type Project struct {
 	Frames []ProjectFrame
 	// Theme 报告版本里有没有 src/theme.css。
 	Theme bool
+	// Themes 是打包进工程的方案主题名（src/themes/<名>.css，按文件名字节序），styles.css 在 theme.css 之后逐个引入。
+	Themes []string
 	// Conflicts 是设计级依赖覆盖引擎依赖的各项（见 ProjectConflicts），列进 README。
 	Conflicts []Conflict
 }
@@ -52,8 +56,8 @@ const (
 const FramesFile = "oryn-frames.json"
 
 // ProjectFiles 返回导出工程的外壳文件（按路径字节序）：eject/ 下的模板（README 填上标题与依赖冲突，styles.css 在有
-// src/theme.css 时引入它）与 oryn-frames.json。不含 package.json / package-lock.json（见 ProjectManifest、ProjectLock）
-// 与版本里的 src/**。
+// src/theme.css 时引入它，再逐个引入 Themes 里的方案主题）与 oryn-frames.json。不含 package.json / package-lock.json
+// （见 ProjectManifest、ProjectLock）与版本里的 src/**。
 func ProjectFiles(p Project) []EjectFile {
 	var out []EjectFile
 	_ = fs.WalkDir(ejectFS, "eject", func(name string, d fs.DirEntry, err error) error {
@@ -69,11 +73,14 @@ func ProjectFiles(p Project) []EjectFile {
 		case "README.md":
 			data = readme(data, p)
 		case "styles.css":
-			theme := ""
+			var theme strings.Builder
 			if p.Theme {
-				theme = "@import \"./src/theme.css\";\n"
+				theme.WriteString("@import \"./src/theme.css\";\n")
 			}
-			data = bytes.Replace(data, []byte(stylesTheme), []byte(theme), 1)
+			for _, name := range p.Themes {
+				fmt.Fprintf(&theme, "@import \"./src/themes/%s.css\";\n", name)
+			}
+			data = bytes.Replace(data, []byte(stylesTheme), []byte(theme.String()), 1)
 		}
 		out = append(out, EjectFile{Path: rel, Data: data})
 		return nil

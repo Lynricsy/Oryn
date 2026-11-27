@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -1299,6 +1300,91 @@ export default function Home() { return <main>Hello Box</main>; }`)
 		})
 	}
 	e.exportOverride.Store(nil)
+}
+
+// M34 S8：用户选定方案后 design.eject 出的工程只含保留下来的帧——落选帧的 src/frames/<id>.tsx 与只被落选方案用到的
+// 主题不导出，src/variants.json 只剩选中方案，oryn-frames.json 的帧带 theme，styles.css 只引入打包进来的主题。
+// 设了 ORYN_TEST_EJECT_BUILD=1（需要 npm 与 registry）时再在 eject 目录 npm ci && npm run build，产物里没有落选帧。
+func TestDesignEjectVariants(t *testing.T) {
+	e := newDesignEnv(t)
+	opened := e.open(orbsock.DesignOpenParams{ThreadID: testThread, Title: "方案"})
+	id := opened.ID
+	frame := func(text string) string {
+		return "export default function F() {\n\treturn <main className=\"min-h-screen bg-accent p-8\">" + text + "</main>;\n}\n"
+	}
+	writeSrc(t, opened.Dir, "src/theme.css", "@theme {\n  --color-accent: #0f766e;\n}\n")
+	writeSrc(t, opened.Dir, "src/themes/calm.css", ":root[data-oryn-theme=\"calm\"] {\n  --color-accent: #0369a1;\n}\n")
+	writeSrc(t, opened.Dir, "src/themes/warm.css", ":root[data-oryn-theme=\"warm\"] {\n  --color-accent: #c2410c;\n}\n")
+	writeSrc(t, opened.Dir, "src/frames/about.tsx", frame("关于"))
+	writeSrc(t, opened.Dir, "src/frames/home-a.tsx", frame("LOSER-HOME-A"))
+	writeSrc(t, opened.Dir, "src/frames/home-b.tsx", frame("WINNER-HOME-B"))
+	writeSrc(t, opened.Dir, "src/variants.json", `{"groups":[{"id":"home","name":"首页","variants":[`+
+		`{"id":"a","name":"冷静","theme":"calm","frames":["home-a"]},{"id":"b","name":"暖调","theme":"warm","frames":["home-b"]}]}]}`)
+	_, err := e.seal("turn-variants")
+	require.NoError(t, err)
+
+	// 用户在画布上选定 b：落成一个用户版本
+	ctx := context.Background()
+	_, err = e.s.ApplyCanvas(ctx, id, json.RawMessage(`[{"op":"set","id":"home","key":"picked","value":"b"}]`), "tab-1", 1)
+	require.NoError(t, err)
+	e.s.FlushCanvases()
+	st, err := e.s.CanvasState(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, st.Doc.Archived(), 1, "home-a 的画框落选")
+
+	outDir := filepath.Join(t.TempDir(), "ejected")
+	var res orbsock.DesignEjectResult
+	require.NoError(t, e.call(orbsock.MethodDesignEject, orbsock.DesignEjectParams{ThreadID: testThread, ID: id, To: outDir}, &res))
+	assert.Equal(t, st.Version, res.Version)
+	for _, rel := range []string{"src/frames/about.tsx", "src/frames/home-b.tsx", "src/themes/warm.css", "src/variants.json"} {
+		assert.FileExists(t, filepath.Join(outDir, filepath.FromSlash(rel)), rel)
+	}
+	for _, rel := range []string{"src/frames/home-a.tsx", "src/themes/calm.css"} {
+		assert.NoFileExists(t, filepath.Join(outDir, filepath.FromSlash(rel)), rel)
+	}
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join(outDir, filepath.FromSlash(rel)))
+		require.NoError(t, err)
+		return string(b)
+	}
+	variants := read("src/variants.json")
+	assert.Contains(t, variants, `"home-b"`)
+	assert.NotContains(t, variants, `"home-a"`)
+	assert.NotContains(t, variants, `"calm"`)
+	var meta struct {
+		Frames []designengine.ProjectFrame `json:"frames"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(read(designengine.FramesFile)), &meta))
+	themes := map[string]string{}
+	for _, f := range meta.Frames {
+		themes[f.ID] = f.Theme
+	}
+	assert.Equal(t, map[string]string{"about": "", "home-b": "warm"}, themes, "oryn-frames.json 不列落选帧 home-a")
+	styles := read("styles.css")
+	assert.Contains(t, styles, "@import \"./src/theme.css\";\n@import \"./src/themes/warm.css\";\n")
+	assert.NotContains(t, styles, "calm")
+
+	if os.Getenv("ORYN_TEST_EJECT_BUILD") != "1" {
+		t.Log("set ORYN_TEST_EJECT_BUILD=1 to npm ci && npm run build the ejected project")
+		return
+	}
+	cmd := exec.Command("sh", "-c", "npm ci --no-audit --no-fund && npm run build")
+	cmd.Dir = outDir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	var bundle strings.Builder
+	require.NoError(t, filepath.WalkDir(filepath.Join(outDir, "dist"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		bundle.Write(b)
+		return err
+	}))
+	assert.Contains(t, bundle.String(), "WINNER-HOME-B")
+	assert.NotContains(t, bundle.String(), "LOSER-HOME-A", "构建产物里不该有落选帧")
+	assert.Contains(t, bundle.String(), "#c2410c", "保留方案的主题进了样式")
+	assert.NotContains(t, bundle.String(), "#0369a1", "落选方案的主题不进样式")
 }
 
 // M29 D3：runner.sock 不提供 design.eject。

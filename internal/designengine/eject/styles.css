@@ -1,4 +1,5 @@
-/* 导出工程的样式入口，与画布引擎一致：Tailwind 只扫 src/，设计 token 在 src/theme.css（只写 @theme {…}）。 */
+/* 导出工程的样式入口，与画布引擎一致：Tailwind 只扫 src/，设计 token 在 src/theme.css（只写 @theme {…}），
+ * 方案主题在 src/themes/<名>.css（:root[data-oryn-theme="<名>"] {…}），在 theme.css 之后引入。 */
 @import "tailwindcss" source(none);
 /* oryn:theme */
 @source "./src";

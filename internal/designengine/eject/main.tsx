@@ -3,6 +3,7 @@
 //   #/ 或空     显示起始帧（oryn-frames.json 的 start，缺省为第一帧）
 //   #/_frames   帧列表
 // 帧的顺序与名字取自 oryn-frames.json（导出时按画布写入）；之后新加的帧文件排在后面，名字取 export const frame.name。
+// 帧属于带主题的方案时（oryn-frames.json 的 theme），切到它时设 <html data-oryn-theme="<主题>">，否则去掉这个属性。
 // 帧间跳转用 import { Link } from "oryn:design"（vite.config.ts 把它指向 ./oryn-design.tsx）。
 
 import "./styles.css";
@@ -11,10 +12,11 @@ import {
 	type ReactNode,
 	StrictMode,
 	useEffect,
+	useLayoutEffect,
 	useSyncExternalStore,
 } from "react";
 import { createRoot } from "react-dom/client";
-import meta from "./oryn-frames.json";
+import rawMeta from "./oryn-frames.json";
 
 type FrameModule = {
 	default?: ComponentType;
@@ -23,7 +25,18 @@ type FrameModule = {
 type LayoutModule = {
 	default?: ComponentType<{ frame: string; children?: ReactNode }>;
 };
-type FrameInfo = { id: string; name: string; Component?: ComponentType };
+type FrameInfo = {
+	id: string;
+	name: string;
+	theme?: string;
+	Component?: ComponentType;
+};
+
+const meta = rawMeta as {
+	title: string;
+	start: string;
+	frames: { id: string; name: string; theme?: string }[];
+};
 
 const modules = import.meta.glob<FrameModule>("./src/frames/*.tsx", {
 	eager: true,
@@ -40,7 +53,7 @@ function collectFrames(): FrameInfo[] {
 		const id = file.slice("./src/frames/".length, -".tsx".length);
 		if (!id.startsWith("_")) byId.set(id, mod);
 	}
-	const named = new Map(meta.frames.map((f) => [f.id, f.name]));
+	const named = new Map(meta.frames.map((f) => [f.id, f]));
 	const order = [
 		...meta.frames.map((f) => f.id).filter((id) => byId.has(id)),
 		...[...byId.keys()].filter((id) => !named.has(id)).sort(),
@@ -48,9 +61,11 @@ function collectFrames(): FrameInfo[] {
 	return order.map((id) => {
 		const mod = byId.get(id);
 		const own = mod?.frame?.name;
+		const info = named.get(id);
 		return {
 			id,
-			name: named.get(id) ?? (typeof own === "string" && own ? own : id),
+			name: info?.name ?? (typeof own === "string" && own ? own : id),
+			theme: info?.theme || undefined,
 			Component: mod?.default,
 		};
 	});
@@ -102,6 +117,13 @@ function App() {
 	const route = useSyncExternalStore(subscribe, currentRoute);
 	const id = route === "" ? startId : route;
 	const frame = frames.find((f) => f.id === id);
+
+	// 主题在绘制之前切换，避免新帧先按上一帧的主题闪一下
+	const theme = route === "_frames" ? undefined : frame?.theme;
+	useLayoutEffect(() => {
+		if (theme) document.documentElement.dataset.orynTheme = theme;
+		else delete document.documentElement.dataset.orynTheme;
+	}, [theme]);
 
 	useEffect(() => {
 		document.title = frame ? `${frame.name} · ${meta.title}` : meta.title;

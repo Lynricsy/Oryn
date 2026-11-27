@@ -191,11 +191,27 @@ func TestProjectFiles(t *testing.T) {
 		t.Errorf("box.yaml = %+v", cfg)
 	}
 
+	// 方案主题：在 theme.css 之后按给定顺序引入；帧的 theme 写进 oryn-frames.json，空的不写
+	themed := ProjectFiles(Project{Theme: true, Themes: []string{"bold", "warm"},
+		Frames: []ProjectFrame{{ID: "home-b", Name: "首页", Theme: "warm"}, {ID: "login", Name: "登录"}}})
+	for _, f := range themed {
+		switch f.Path {
+		case "styles.css":
+			if !strings.Contains(string(f.Data), "@import \"./src/theme.css\";\n@import \"./src/themes/bold.css\";\n@import \"./src/themes/warm.css\";\n@source") {
+				t.Errorf("styles.css:\n%s", f.Data)
+			}
+		case FramesFile:
+			if !strings.Contains(string(f.Data), `"theme": "warm"`) || strings.Count(string(f.Data), `"theme"`) != 1 {
+				t.Errorf("oryn-frames.json:\n%s", f.Data)
+			}
+		}
+	}
+
 	plain := ProjectFiles(Project{})
 	for _, f := range plain {
 		switch f.Path {
 		case "styles.css":
-			if strings.Contains(string(f.Data), "@import \"./src/theme.css\"") || strings.Contains(string(f.Data), "oryn:theme") {
+			if strings.Contains(string(f.Data), "@import \"./src/theme") || strings.Contains(string(f.Data), "oryn:theme") {
 				t.Error("没有 theme.css 时不应引入")
 			}
 		case "README.md":

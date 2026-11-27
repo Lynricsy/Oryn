@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -266,6 +267,40 @@ func TestExportMockupFramesAndFormats(t *testing.T) {
 	// mobile(390+24=414, 844+60=904) + 96 -> 510 x 1000
 	assert.Equal(t, 510, j3.Width)
 	assert.Equal(t, 1000, j3.Height)
+}
+
+// 方案组里的落选画框不进样机（M34 C6）：缺省时排除，显式点名时回 invalid。
+func TestExportMockupArchived(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	doc := strings.Replace(mockupDesignCanvasJSON, `"notes": []`, `"notes": [],
+	"groups": [{"id": "g", "canvas": "c1", "name": "首页方案", "variants": [
+		{"id": "a", "name": "桌面", "note": "", "theme": "", "pages": ["home"]},
+		{"id": "b", "name": "移动", "note": "", "theme": "", "pages": ["mobile"]}
+	], "picked": "b", "pickedBy": null}]`, 1)
+	doc = strings.Replace(doc, `"format": 2`, `"format": 3`, 1)
+	a, err := e.s.Create(ctx, CreateParams{Title: "方案", Files: []FileChange{
+		put("canvas.json", doc),
+		put("dist/home.html", "<p>Home</p>"), put("dist/mobile.html", "<p>Mobile</p>"), put("dist/pad.html", "<p>Pad</p>"),
+	}})
+	require.NoError(t, err)
+	r := &mockupFakeRenderer{}
+	withRenderer(e, r)
+
+	_, err = e.s.Export(ctx, a.ID, 0, ExportMockupPNG)
+	require.NoError(t, err)
+	require.Len(t, r.jobs, 1)
+	q, err := url.ParseQuery(r.jobs[0].Query)
+	require.NoError(t, err)
+	assert.Equal(t, "mobile,pad", q.Get("frames"), "缺省不含落选画框 home")
+
+	o := DefaultMockupOptions()
+	o.Frames = []string{"mobile", "home"}
+	_, err = e.s.ExportWithOptions(ctx, a.ID, 0, ExportMockupPNG, &o)
+	require.Equal(t, CodeInvalid, code(err))
+	oe, _ := AsOpError(err)
+	assert.Contains(t, oe.Message, "首页 是方案组『首页方案』的落选方案，先改选它再导出")
+	assert.Len(t, r.jobs, 1, "拒绝时不渲染")
 }
 
 func TestExportMockupLongModeAndClamp(t *testing.T) {

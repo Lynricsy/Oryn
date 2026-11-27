@@ -238,6 +238,7 @@ func (s *Service) ExportWithOptions(ctx context.Context, id string, version int,
 // （index.html、main.tsx、vite.config.ts、server.mjs、.oryn/box.yaml、README.md 等）、合并后的 package.json
 // 与严格对应的 package-lock.json（box 构建用 npm ci）。锁的来源依次是：版本里封存时生成的 dist/_project/package-lock.json
 // （根依赖须与当前 src/package.json 合并的结果一致）；没有额外设计依赖时由引擎锁现场改写；都不行回 invalid，不降级成 npm install。
+// 方案组里的落选帧、只被落选方案用到的主题不打包，src/variants.json 去掉落选方案（见 deliveryScope，M34 C6）。
 func (s *Service) exportProject(ctx context.Context, a Artifact, v Version, files []File, base string) (Export, error) {
 	if a.Kind != KindCanvas {
 		return Export{}, opErr(CodeInvalid, "artifact %s 不是设计画布，不能导出为工程。", a.ID)
@@ -280,26 +281,46 @@ func (s *Service) exportProject(ctx context.Context, a Artifact, v Version, file
 		}
 	}
 
-	// 帧按画布上的顺序，名字取画框名；起始帧取 design.start 指向的画框
+	var variants []byte
+	if has(design.VariantsFile) {
+		if variants, _, err = s.ReadFile(ctx, a.ID, v.Version, design.VariantsFile); err != nil {
+			return Export{}, err
+		}
+	}
+	scope, err := deliveryScope(doc, variants)
+	if err != nil {
+		return Export{}, opErr(CodeInvalid, "版本 %d 的 %s 不合法（%s），请让 agent 修好后重新封存。", v.Version, design.VariantsFile, err)
+	}
+
+	// 帧按画布上的顺序，名字取画框名；起始帧取 design.start 指向的画框；落选帧不进工程（M34 C6）
 	p := designengine.Project{Title: a.Title, Theme: has("src/theme.css"), Conflicts: conflicts}
 	for _, pg := range doc.Pages {
-		id := strings.TrimSuffix(strings.TrimPrefix(pg.Source, "src/frames/"), ".tsx")
-		if pg.Source == "" || slices.ContainsFunc(p.Frames, func(f designengine.ProjectFrame) bool { return f.ID == id }) {
+		id := frameID(pg.Source)
+		if pg.Source == "" || scope.drop[pg.Source] || slices.ContainsFunc(p.Frames, func(f designengine.ProjectFrame) bool { return f.ID == id }) {
 			continue
 		}
-		p.Frames = append(p.Frames, designengine.ProjectFrame{ID: id, Name: pg.Name})
+		p.Frames = append(p.Frames, designengine.ProjectFrame{ID: id, Name: pg.Name, Theme: scope.theme[id]})
 		if doc.Design.Start != nil && *doc.Design.Start == pg.ID {
 			p.Start = id
 		}
 	}
 	var src []File // 版本里的 src/**（封存不同步 node_modules，这里再防一道）
 	for _, f := range files {
-		if strings.HasPrefix(f.Path, "src/") && !strings.Contains(f.Path, "/node_modules/") {
-			src = append(src, f)
+		if !strings.HasPrefix(f.Path, "src/") || strings.Contains(f.Path, "/node_modules/") || scope.drop[f.Path] {
+			continue
+		}
+		src = append(src, f)
+		if name, ok := strings.CutPrefix(f.Path, "src/themes/"); ok && strings.HasSuffix(name, ".css") &&
+			canvas.GroupIDPattern.MatchString(strings.TrimSuffix(name, ".css")) {
+			p.Themes = append(p.Themes, strings.TrimSuffix(name, ".css"))
 		}
 	}
+	slices.Sort(p.Themes)
 	shell := designengine.ProjectFiles(p)
 	shell = append(shell, designengine.EjectFile{Path: "package.json", Data: manifest}, designengine.EjectFile{Path: "package-lock.json", Data: lock})
+	if scope.variants != nil {
+		shell = append(shell, designengine.EjectFile{Path: design.VariantsFile, Data: scope.variants})
+	}
 	name := fmt.Sprintf("%s-v%d-project.zip", base, v.Version)
 	return Export{Name: name, ContentType: "application/zip", write: func(w io.Writer) error {
 		zw := zip.NewWriter(w)
@@ -319,6 +340,122 @@ func (s *Service) exportProject(ctx context.Context, a Artifact, v Version, file
 		}
 		return zw.Close()
 	}}, nil
+}
+
+// projectScope 是导出工程的交付范围（M34 C6）：drop 是不打包的版本文件（落选帧的 src/frames/<id>.tsx、只被落选方案
+// 引用的 src/themes/<名>.css、被改写的 src/variants.json），theme 是保留下来的帧的方案主题（帧 id → 主题名），
+// variants 是去掉落选方案后的 src/variants.json（nil = 没有清单或不用改写）。
+type projectScope struct {
+	drop     map[string]bool
+	theme    map[string]string
+	variants []byte
+}
+
+// frameID 返回画框 source（src/frames/<id>.tsx）对应的帧 id。
+func frameID(source string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(source, "src/frames/"), ".tsx")
+}
+
+// deliveryScope 由 canvas.json 的方案组算出导出工程的交付范围：落选画框（Doc.Archived）经 source 得到落选帧；
+// 主题只在落选方案里用到时不打包，被保留的方案用到或没有方案用到的照常打包。raw 是版本里 src/variants.json 的原文
+// （空 = 没有清单）：已选定的组只留选中方案，未选定的组原样保留。
+func deliveryScope(doc canvas.Doc, raw []byte) (projectScope, error) {
+	sc := projectScope{drop: map[string]bool{}, theme: map[string]string{}}
+	archived := doc.Archived()
+	live := map[string]bool{} // 还有未落选画框在用的 source
+	for _, pg := range doc.Pages {
+		if pg.Source != "" && !archived[pg.ID] {
+			live[pg.Source] = true
+		}
+	}
+	source := make(map[string]string, len(doc.Pages))
+	for _, pg := range doc.Pages {
+		source[pg.ID] = pg.Source
+		if pg.Source != "" && archived[pg.ID] && !live[pg.Source] {
+			sc.drop[pg.Source] = true
+		}
+	}
+	picked := map[string]string{}
+	lostTheme, keptTheme := map[string]bool{}, map[string]bool{}
+	for _, g := range doc.Groups {
+		if g.Picked != nil {
+			picked[g.ID] = *g.Picked
+		}
+		for _, v := range g.Variants {
+			if v.Theme == "" {
+				continue
+			}
+			if g.Picked != nil && *g.Picked != v.ID {
+				lostTheme[v.Theme] = true
+				continue
+			}
+			keptTheme[v.Theme] = true
+			for _, id := range v.Pages {
+				if src := source[id]; src != "" {
+					sc.theme[frameID(src)] = v.Theme
+				}
+			}
+		}
+	}
+	for t := range lostTheme {
+		if !keptTheme[t] {
+			sc.drop["src/themes/"+t+".css"] = true
+		}
+	}
+	if len(raw) == 0 || len(picked) == 0 {
+		return sc, nil
+	}
+
+	// 方案逐条保留原文，只按 id 去掉落选的
+	var file struct {
+		Groups []struct {
+			ID       string            `json:"id"`
+			Name     string            `json:"name"`
+			Variants []json.RawMessage `json:"variants"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return projectScope{}, err
+	}
+	changed := false
+	for i, g := range file.Groups {
+		want, ok := picked[g.ID]
+		if !ok {
+			continue
+		}
+		var kept []json.RawMessage
+		for _, rv := range g.Variants {
+			var v struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(rv, &v); err != nil {
+				return projectScope{}, err
+			}
+			if v.ID == want {
+				kept = append(kept, rv)
+			}
+		}
+		if len(kept) == 0 {
+			return projectScope{}, fmt.Errorf("方案组「%s」里没有画布上选中的方案「%s」", g.ID, want)
+		}
+		if len(kept) != len(g.Variants) {
+			file.Groups[i].Variants = kept
+			changed = true
+		}
+	}
+	if !changed {
+		return sc, nil
+	}
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(file); err != nil {
+		return projectScope{}, err
+	}
+	sc.drop[design.VariantsFile] = true
+	sc.variants = out.Bytes()
+	return sc, nil
 }
 
 // slidesPDF 用控制面渲染器把幻灯片某个版本的查看器打印视图（`?view=print`，每张一页，`@page` 等于幻灯片尺寸）
@@ -469,12 +606,15 @@ func mockupShellChrome(device string, shell bool) (w, h int) {
 }
 
 // selectMockupPages 按请求的帧 id 列表筛选画框（去重、保持请求顺序；空则取全部画框）。
+// 方案组里落选的画框一律不交付（M34 C6）：缺省时排除，显式点名时回 invalid。
 func selectMockupPages(doc canvas.Doc, ids []string) ([]canvas.Page, error) {
-	if len(doc.Pages) == 0 {
-		return nil, opErr(CodeInvalid, "画布没有画框，不能导出样机。")
-	}
+	archived := doc.Archived()
 	if len(ids) == 0 {
-		return slices.Clone(doc.Pages), nil
+		out := slices.DeleteFunc(slices.Clone(doc.Pages), func(p canvas.Page) bool { return archived[p.ID] })
+		if len(out) == 0 {
+			return nil, opErr(CodeInvalid, "画布没有画框，不能导出样机。")
+		}
+		return out, nil
 	}
 	byID := make(map[string]canvas.Page, len(doc.Pages))
 	for _, p := range doc.Pages {
@@ -490,6 +630,9 @@ func selectMockupPages(doc canvas.Doc, ids []string) ([]canvas.Page, error) {
 		if !ok {
 			return nil, opErr(CodeInvalid, "画布里没有 id 为 %q 的画框。", id)
 		}
+		if archived[id] {
+			return nil, opErr(CodeInvalid, "%s 是方案组『%s』的落选方案，先改选它再导出。", p.Name, archivedGroupName(doc, id))
+		}
 		if _, dup := seen[id]; dup {
 			continue
 		}
@@ -497,6 +640,18 @@ func selectMockupPages(doc canvas.Doc, ids []string) ([]canvas.Page, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// archivedGroupName 返回落选画框 page 所在方案组的名字。
+func archivedGroupName(doc canvas.Doc, page string) string {
+	for _, g := range doc.Groups {
+		for _, v := range g.Variants {
+			if slices.Contains(v.Pages, page) {
+				return g.Name
+			}
+		}
+	}
+	return ""
 }
 
 // mockupCanvasSize 计算样机画布的视口宽高（CSS px），不超过 render 的 8000 上限。

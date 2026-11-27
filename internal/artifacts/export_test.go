@@ -398,3 +398,155 @@ func TestExportProject(t *testing.T) {
 	_, err = e.s.Export(ctx, doc.ID, 0, ExportProject)
 	assert.Equal(t, CodeInvalid, code(err), "文档")
 }
+
+// variantsCanvas 是带方案组的设计画布：home 组选定了 b（a、c 落选），hero 组未选定。
+const variantsCanvas = `{"format":3,"design":{"engine":1,"start":"pa"},"canvases":[{"id":"c1","name":"流程"},{"id":"alternates","name":"备选方案"}],"pages":[` +
+	`{"id":"p1","canvas":"c1","name":"登录页","file":"dist/login.html","source":"src/frames/login.tsx","x":0,"y":0,"width":1280,"height":800},` +
+	`{"id":"pa","canvas":"alternates","name":"首页 A","file":"dist/home-a.html","source":"src/frames/home-a.tsx","x":0,"y":0,"width":1280,"height":800},` +
+	`{"id":"pb","canvas":"c1","name":"首页 B","file":"dist/home-b.html","source":"src/frames/home-b.tsx","x":0,"y":900,"width":1280,"height":800},` +
+	`{"id":"pc","canvas":"alternates","name":"首页 C","file":"dist/home-c.html","source":"src/frames/home-c.tsx","x":1400,"y":0,"width":1280,"height":800},` +
+	`{"id":"px","canvas":"c1","name":"主视觉 X","file":"dist/hero-x.html","source":"src/frames/hero-x.tsx","x":0,"y":1800,"width":1280,"height":800},` +
+	`{"id":"py","canvas":"c1","name":"主视觉 Y","file":"dist/hero-y.html","source":"src/frames/hero-y.tsx","x":1400,"y":1800,"width":1280,"height":800}],` +
+	`"groups":[` +
+	`{"id":"home","canvas":"c1","name":"首页首屏","variants":[` +
+	`{"id":"a","name":"冷静","note":"","theme":"calm","pages":["pa"]},` +
+	`{"id":"b","name":"暖调","note":"杂志感","theme":"warm","pages":["pb"]},` +
+	`{"id":"c","name":"大胆","note":"","theme":"bold","pages":["pc"]}],"picked":"b","pickedBy":null},` +
+	`{"id":"hero","canvas":"c1","name":"主视觉","variants":[` +
+	`{"id":"x","name":"X","note":"","theme":"bold","pages":["px"]},` +
+	`{"id":"y","name":"Y","note":"","theme":"","pages":["py"]}],"picked":null,"pickedBy":null}]}`
+
+const variantsManifest = `{"groups": [
+  {"id": "home", "name": "首页首屏", "variants": [
+    {"id": "a", "name": "冷静", "theme": "calm", "frames": ["home-a"]},
+    {"id": "b", "name": "暖调", "note": "杂志感", "theme": "warm", "frames": ["home-b"]},
+    {"id": "c", "name": "大胆", "theme": "bold", "frames": ["home-c"]}
+  ]},
+  {"id": "hero", "name": "主视觉", "variants": [
+    {"id": "x", "name": "X", "theme": "bold", "frames": ["hero-x"]},
+    {"id": "y", "name": "Y", "frames": ["hero-y"]}
+  ]}
+]}
+`
+
+func variantFrame(name string) string {
+	return "export default function F() {\n\treturn <main className=\"min-h-screen bg-brand p-8\">" + name + "</main>;\n}\n"
+}
+
+func variantTheme(name, color string) string {
+	return ":root[data-oryn-theme=\"" + name + "\"] {\n\t--color-brand: " + color + ";\n}\n"
+}
+
+// project 的交付范围（M34 C6）：落选帧与只被落选方案用到的主题不打包，src/variants.json 只留选中方案，
+// oryn-frames.json 的帧带 theme，styles.css 在 theme.css 之后引入打包进来的主题。
+func TestExportProjectVariants(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	extra := map[string]string{
+		EntryCanvas:              variantsCanvas,
+		"src/variants.json":      variantsManifest,
+		"src/themes/calm.css":    variantTheme("calm", "#0369a1"),
+		"src/themes/warm.css":    variantTheme("warm", "#c2410c"),
+		"src/themes/bold.css":    variantTheme("bold", "#7c3aed"),
+		"src/themes/spare.css":   variantTheme("spare", "#111827"),
+		"src/frames/home-a.tsx":  variantFrame("首页 A"),
+		"src/frames/home-b.tsx":  variantFrame("首页 B"),
+		"src/frames/home-c.tsx":  variantFrame("首页 C"),
+		"src/frames/hero-x.tsx":  variantFrame("主视觉 X"),
+		"src/frames/hero-y.tsx":  variantFrame("主视觉 Y"),
+		"src/frames/signup.tsx":  projectFrames["src/frames/signup.tsx"],
+		"src/frames/_layout.tsx": projectFrames["src/frames/_layout.tsx"],
+	}
+	for _, f := range []string{"home-a", "home-b", "home-c", "hero-x", "hero-y"} {
+		extra["dist/"+f+".html"] = "<p>" + f + "</p>"
+	}
+	a := mkDesignCanvas(t, e, "方案", extra)
+	x, err := e.s.Export(ctx, a.ID, 0, ExportProject)
+	require.NoError(t, err)
+	b := exportBytes(t, x)
+	dumpProject(t, x, b)
+	got := unzip(t, b)
+
+	var srcFiles []string
+	for p := range got {
+		if strings.HasPrefix(p, "src/") {
+			srcFiles = append(srcFiles, p)
+		}
+	}
+	slices.Sort(srcFiles)
+	assert.Equal(t, []string{
+		"src/DESIGN.md", "src/frames/_layout.tsx", "src/frames/hero-x.tsx", "src/frames/hero-y.tsx", "src/frames/home-b.tsx",
+		"src/frames/login.tsx", "src/frames/signup.tsx", "src/theme.css",
+		"src/themes/bold.css", "src/themes/spare.css", "src/themes/warm.css", "src/variants.json",
+	}, srcFiles, "落选帧 home-a、home-c 与只被落选方案用到的 calm 不打包；bold 还被未选定组用、spare 没人用，照常打包")
+	assert.Equal(t, extra["src/themes/warm.css"], got["src/themes/warm.css"])
+
+	// variants.json：home 只剩选中的 b（原样保留 note、theme），hero 未选定原样保留
+	var vf struct {
+		Groups []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Variants []struct {
+				ID     string   `json:"id"`
+				Name   string   `json:"name"`
+				Note   string   `json:"note"`
+				Theme  string   `json:"theme"`
+				Frames []string `json:"frames"`
+			} `json:"variants"`
+		} `json:"groups"`
+	}
+	dec := json.NewDecoder(strings.NewReader(got["src/variants.json"]))
+	dec.DisallowUnknownFields()
+	require.NoError(t, dec.Decode(&vf), got["src/variants.json"])
+	require.Len(t, vf.Groups, 2)
+	assert.Equal(t, "home", vf.Groups[0].ID)
+	assert.Equal(t, "首页首屏", vf.Groups[0].Name)
+	require.Len(t, vf.Groups[0].Variants, 1)
+	assert.Equal(t, "b", vf.Groups[0].Variants[0].ID)
+	assert.Equal(t, "杂志感", vf.Groups[0].Variants[0].Note)
+	assert.Equal(t, "warm", vf.Groups[0].Variants[0].Theme)
+	assert.Equal(t, []string{"home-b"}, vf.Groups[0].Variants[0].Frames)
+	assert.Equal(t, "hero", vf.Groups[1].ID)
+	require.Len(t, vf.Groups[1].Variants, 2)
+	assert.Equal(t, []string{"hero-x"}, vf.Groups[1].Variants[0].Frames)
+	assert.Equal(t, []string{"hero-y"}, vf.Groups[1].Variants[1].Frames)
+	for _, f := range []string{"home-a", "home-c", "calm"} {
+		assert.NotContains(t, got["src/variants.json"], `"`+f+`"`)
+	}
+
+	// oryn-frames.json：按画布顺序、去掉落选帧，带主题；起始帧指向落选画框时退回第一帧
+	var meta struct {
+		Title, Start string
+		Frames       []designengine.ProjectFrame
+	}
+	require.NoError(t, json.Unmarshal([]byte(got["oryn-frames.json"]), &meta))
+	assert.Empty(t, meta.Start, "design.start 指向落选画框 pa")
+	assert.Equal(t, []designengine.ProjectFrame{
+		{ID: "login", Name: "登录页"},
+		{ID: "home-b", Name: "首页 B", Theme: "warm"},
+		{ID: "hero-x", Name: "主视觉 X", Theme: "bold"},
+		{ID: "hero-y", Name: "主视觉 Y"},
+	}, meta.Frames)
+	assert.NotContains(t, got["oryn-frames.json"], `"theme": ""`, "没有主题的帧不写 theme")
+
+	assert.Contains(t, got["styles.css"], "@import \"./src/theme.css\";\n"+
+		"@import \"./src/themes/bold.css\";\n@import \"./src/themes/spare.css\";\n@import \"./src/themes/warm.css\";\n")
+	assert.NotContains(t, got["styles.css"], "calm")
+	assert.Contains(t, got["main.tsx"], "dataset.orynTheme")
+
+	// 没有选定的组：一切照常，variants.json 原样打包
+	unpicked := maps.Clone(extra)
+	unpicked[EntryCanvas] = strings.Replace(variantsCanvas, `"picked":"b"`, `"picked":null`, 1)
+	plain := mkDesignCanvas(t, e, "未选定", unpicked)
+	x, err = e.s.Export(ctx, plain.ID, 0, ExportProject)
+	require.NoError(t, err)
+	got = unzip(t, exportBytes(t, x))
+	assert.Equal(t, variantsManifest, got["src/variants.json"])
+	for _, p := range []string{"src/frames/home-a.tsx", "src/frames/home-c.tsx", "src/themes/calm.css"} {
+		assert.Contains(t, got, p)
+	}
+	require.NoError(t, json.Unmarshal([]byte(got["oryn-frames.json"]), &meta))
+	assert.Equal(t, "home-a", meta.Start)
+	assert.Len(t, meta.Frames, 6)
+	assert.Equal(t, designengine.ProjectFrame{ID: "home-a", Name: "首页 A", Theme: "calm"}, meta.Frames[1])
+}
