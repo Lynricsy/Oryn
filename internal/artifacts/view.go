@@ -215,11 +215,18 @@ func leadingTags(src []byte) (afterHTML, afterHead int) {
 	}
 }
 
-// OpenViewFrame 申请一个视图帧；load 在每次取帧根时调用。public 的帧计入匿名配额。origin 是申请请求的 Origin 头，
-// 成为帧的 frame-ancestors；缺省或不合法时用 public_url 的源。
-func (h *Host) OpenViewFrame(load func(context.Context) (ViewDoc, error), origin string, public bool) (token, url string) {
-	token = h.add(&frame{view: load, public: public, ancestors: ancestorOrigin(origin, h.base.Origin)})
-	return token, h.frameURL(token)
+// ErrFramesFull：帧表已满且全是主人的帧，公开分享页（匿名访客）的申请被拒。
+var ErrFramesFull = errors.New("artifacts: frame table full")
+
+// OpenViewFrame 申请一个视图帧；load 在每次取帧根时调用。public 的帧计入匿名配额，帧表满且没有公开帧可淘汰时
+// 返回 ErrFramesFull（主人的申请总能成功）。origin 是申请请求的 Origin 头，成为帧的 frame-ancestors；缺省或不合法时
+// 用 public_url 的源。
+func (h *Host) OpenViewFrame(load func(context.Context) (ViewDoc, error), origin string, public bool) (token, url string, err error) {
+	token, ok := h.add(&frame{view: load, public: public, ancestors: ancestorOrigin(origin, h.base.Origin)})
+	if !ok {
+		return "", "", ErrFramesFull
+	}
+	return token, h.frameURL(token), nil
 }
 
 // serveView 提供视图帧：只有帧根的 GET / HEAD，其余一律 404。

@@ -6374,7 +6374,8 @@ export interface paths {
         /**
          * 为公开分享里的一次 render_html 调用申请视图帧（M33，匿名）
          * @description 内容一律从服务端条目取（访客不提交 HTML）：只在分享范围内、用清洗后的公开条目查找，且只服务范围内已有成功结果的调用。
-         *     帧绑定这个分享，撤销后帧即 404。slug 不存在、已撤销或找不到调用一律 404 `not_found`。
+         *     帧绑定这个分享，撤销后帧即 404。slug 不存在、已撤销或找不到调用一律 404 `not_found`。帧表已被主人的帧占满（256 个）时
+         *     503 `unavailable`（匿名访客不淘汰主人的帧）。
          */
         post: operations["openPublicShareViewFrame"];
         delete?: never;

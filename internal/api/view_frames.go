@@ -69,7 +69,11 @@ func (s *Server) OpenViewFrame(w http.ResponseWriter, r *http.Request, id apigen
 			writeViewFrameErr(w, err)
 			return
 		}
-		token, url := host.OpenViewFrame(load(seq), r.Header.Get("Origin"), false)
+		token, url, err := host.OpenViewFrame(load(seq), r.Header.Get("Origin"), false)
+		if err != nil {
+			writeViewFrameErr(w, err)
+			return
+		}
 		WriteJSON(w, http.StatusCreated, apigen.ViewFrame{Token: token, URL: url})
 		return
 	}
@@ -136,14 +140,22 @@ func (s *Server) OpenPublicShareViewFrame(w http.ResponseWriter, r *http.Request
 		writeViewFrameErr(w, err)
 		return
 	}
-	token, url := host.OpenViewFrame(load, r.Header.Get("Origin"), true)
+	token, url, err := host.OpenViewFrame(load, r.Header.Get("Origin"), true)
+	if err != nil {
+		writeViewFrameErr(w, err)
+		return
+	}
 	WriteJSON(w, http.StatusCreated, apigen.ViewFrame{Token: token, URL: url})
 }
 
-// writeViewFrameErr：线程不存在、调用不在了一律 404，其余 500。
+// writeViewFrameErr：线程不存在、调用不在了一律 404；帧表被主人的帧占满（公开申请）503，其余 500。
 func writeViewFrameErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, artifacts.ErrViewNotFound) {
 		WriteError(w, http.StatusNotFound, "not_found", "view not found")
+		return
+	}
+	if errors.Is(err, artifacts.ErrFramesFull) {
+		WriteError(w, http.StatusServiceUnavailable, "unavailable", "too many open frames, try again later")
 		return
 	}
 	slog.Error("api: 申请视图帧失败", "err", err)

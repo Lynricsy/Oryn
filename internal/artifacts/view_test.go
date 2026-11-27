@@ -89,7 +89,8 @@ func TestHostViewFrame(t *testing.T) {
 		}
 		return ViewDoc{HTML: "<p>hi</p>"}, nil
 	}
-	token, url := h.OpenViewFrame(load, "https://app.example.com", false)
+	token, url, err := h.OpenViewFrame(load, "https://app.example.com", false)
+	require.NoError(t, err)
 	assert.Equal(t, "http://a-"+token+".localhost:7600/", url)
 	host := "a-" + token + ".localhost:7600"
 
@@ -118,7 +119,8 @@ func TestHostViewFrame(t *testing.T) {
 	gone = true
 	assert.Equal(t, http.StatusNotFound, doRaw(mw, hostReq{host: host, path: "/"}).Code, "调用不在了")
 
-	failing, _ := h.OpenViewFrame(func(context.Context) (ViewDoc, error) { return ViewDoc{}, errors.New("db down") }, "", false)
+	failing, _, err := h.OpenViewFrame(func(context.Context) (ViewDoc, error) { return ViewDoc{}, errors.New("db down") }, "", false)
+	require.NoError(t, err)
 	rec = doRaw(mw, hostReq{host: "a-" + failing + ".localhost:7600", path: "/"})
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.True(t, strings.HasSuffix(rec.Header().Get("Content-Security-Policy"), "frame-ancestors http://localhost:7600"),
@@ -134,16 +136,21 @@ func TestPublicViewFrameQuota(t *testing.T) {
 	e := newEnv(t)
 	h := newHost(t, e, "localhost", noAsset)
 	load := func(context.Context) (ViewDoc, error) { return ViewDoc{HTML: "x"}, nil }
+	open := func(public bool) (string, error) {
+		e.clk.add(time.Millisecond)
+		tok, _, err := h.OpenViewFrame(load, "", public)
+		return tok, err
+	}
 	var owner []string
 	for range 10 {
-		e.clk.add(time.Millisecond)
-		tok, _ := h.OpenViewFrame(load, "", false)
+		tok, err := open(false)
+		require.NoError(t, err)
 		owner = append(owner, tok)
 	}
 	var public []string
 	for range maxPublicFrames + 6 {
-		e.clk.add(time.Millisecond)
-		tok, _ := h.OpenViewFrame(load, "", true)
+		tok, err := open(true)
+		require.NoError(t, err)
 		public = append(public, tok)
 	}
 	assert.Len(t, h.frames, 10+maxPublicFrames)
@@ -156,10 +163,49 @@ func TestPublicViewFrameQuota(t *testing.T) {
 		assert.Equal(t, i >= 6, ok, "只淘汰最旧的公开帧（第 %d 个）", i)
 	}
 
-	// 主人的帧照旧受总上限约束，满了时淘汰最久未用的（含公开帧）
+	// 总表满时主人的申请先淘汰公开帧：把公开帧刷新得比主人的旧帧更新，全局 LRU 会淘汰主人的帧，这里不能
+	e.clk.add(time.Millisecond)
+	for _, tok := range public[6:] {
+		h.use(tok)
+	}
+	for range maxFrames - len(h.frames) {
+		_, err := open(false)
+		require.NoError(t, err)
+	}
+	require.Len(t, h.frames, maxFrames)
+	_, err := open(false)
+	require.NoError(t, err)
+	assert.Len(t, h.frames, maxFrames)
+	for _, tok := range owner {
+		_, ok := h.use(tok)
+		assert.True(t, ok, "总表满时先淘汰公开帧")
+	}
+}
+
+// 256 个主人帧占满总表时：公开申请被拒且不淘汰主人的帧；公开申请永远不让总表超过上限。
+func TestPublicViewFrameRejectedWhenOwnerFull(t *testing.T) {
+	e := newEnv(t)
+	h := newHost(t, e, "localhost", noAsset)
+	load := func(context.Context) (ViewDoc, error) { return ViewDoc{HTML: "x"}, nil }
+	var owner []string
 	for range maxFrames {
 		e.clk.add(time.Millisecond)
-		h.OpenViewFrame(load, "", false)
+		tok, _, err := h.OpenViewFrame(load, "", false)
+		require.NoError(t, err)
+		owner = append(owner, tok)
 	}
+	e.clk.add(time.Millisecond)
+	_, _, err := h.OpenViewFrame(load, "", true)
+	require.ErrorIs(t, err, ErrFramesFull)
+	assert.Len(t, h.frames, maxFrames)
+	for _, tok := range owner {
+		_, ok := h.use(tok)
+		assert.True(t, ok, "公开申请不淘汰主人的帧")
+	}
+
+	// 主人关掉一个帧后，公开申请可以用这个空位
+	h.CloseFrame(owner[0])
+	_, _, err = h.OpenViewFrame(load, "", true)
+	require.NoError(t, err)
 	assert.Len(t, h.frames, maxFrames)
 }

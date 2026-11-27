@@ -110,7 +110,8 @@ func (h *Host) OpenFrame(ctx context.Context, id string, version int, origin, lo
 	if err := h.checkOpen(ctx, id, version); err != nil {
 		return "", "", err
 	}
-	token = h.add(&frame{
+	// 主人的帧总能登记（总表满时淘汰别的帧），ok 恒为真
+	token, _ = h.add(&frame{
 		artifactID: id, version: version, runtime: version == 0,
 		ancestors: ancestorOrigin(origin, h.base.Origin), locale: cleanLocale(locale),
 	})
@@ -122,7 +123,7 @@ func (h *Host) OpenLink(ctx context.Context, id string, version int, locale stri
 	if err := h.checkOpen(ctx, id, version); err != nil {
 		return "", err
 	}
-	token := h.add(&frame{artifactID: id, version: version, topLevel: true, ancestors: "'none'", locale: cleanLocale(locale)})
+	token, _ := h.add(&frame{artifactID: id, version: version, topLevel: true, ancestors: "'none'", locale: cleanLocale(locale)})
 	return h.frameURL(token), nil
 }
 
@@ -143,12 +144,15 @@ func (h *Host) CloseFrame(token string) {
 	h.mu.Unlock()
 }
 
-// add 登记一个帧：先清掉过期的，满了再淘汰最久未用的。公开帧只在公开帧之间淘汰（上限 maxPublicFrames），
-// 匿名访客挤不掉主人的帧。
-func (h *Host) add(f *frame) string {
+func isPublicFrame(g *frame) bool { return g.public }
+func anyFrame(*frame) bool       { return true }
+
+// add 登记一个帧：先清掉过期的；公开帧另有上限 maxPublicFrames，超出时只淘汰最旧的公开帧。全部帧（含公开帧）
+// 共用总上限 maxFrames：总表满时优先淘汰最久未用的公开帧；没有公开帧可淘汰时，主人的申请淘汰最久未用的帧，
+// 公开申请被拒（ok 为假）——匿名访客挤不掉主人的帧。
+func (h *Host) add(f *frame) (token string, ok bool) {
 	now := h.now()
 	f.usedAt = now
-	token := newToken()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for t, g := range h.frames {
@@ -157,14 +161,21 @@ func (h *Host) add(f *frame) string {
 		}
 	}
 	if f.public {
-		for h.evictOldest(func(g *frame) bool { return g.public }, maxPublicFrames) {
-		}
-	} else {
-		for h.evictOldest(func(*frame) bool { return true }, maxFrames) {
+		for h.evictOldest(isPublicFrame, maxPublicFrames) {
 		}
 	}
+	for len(h.frames) >= maxFrames {
+		if h.evictOldest(isPublicFrame, 1) {
+			continue
+		}
+		if f.public {
+			return "", false
+		}
+		h.evictOldest(anyFrame, 1)
+	}
+	token = newToken()
 	h.frames[token] = f
-	return token
+	return token, true
 }
 
 // evictOldest 在满足 match 的帧已有 limit 个及以上时淘汰其中最久未用的一个，返回是否淘汰了。调用方持有 h.mu。
