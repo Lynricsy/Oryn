@@ -24,8 +24,15 @@ func (s *Server) GetGenerativeUISettings(w http.ResponseWriter, r *http.Request)
 // PutGenerativeUISettings 对应 `PUT settings/generative-ui`：整体替换；尚未初始化所有者 → 409。
 // 值变化时让全局助手的对话在静止后重启（工具表与系统提示词随之更新）；工作线程在下次 agent 启动时生效。
 func (s *Server) PutGenerativeUISettings(w http.ResponseWriter, r *http.Request) {
-	var req apigen.GenerativeUISettings
+	// enabled 必填：解到指针，缺省或 null 回 400，而不是静默当成关闭
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Enabled == nil {
+		writeErr(w, r, errInvalid("enabled 须为布尔值"))
 		return
 	}
 	prev, err := s.Store.Q.GetOwnerGenerativeUI(r.Context())
@@ -34,7 +41,7 @@ func (s *Server) PutGenerativeUISettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var v int64
-	if req.Enabled {
+	if *req.Enabled {
 		v = 1
 	}
 	n, err := s.Store.Q.SetOwnerGenerativeUI(r.Context(), v)
@@ -44,5 +51,5 @@ func (s *Server) PutGenerativeUISettings(w http.ResponseWriter, r *http.Request)
 	if prev != v && s.Coord != nil && s.Coord.Service != nil {
 		s.Coord.Service.OnGenerativeUIChanged(r.Context())
 	}
-	WriteJSON(w, http.StatusOK, req)
+	WriteJSON(w, http.StatusOK, apigen.GenerativeUISettings{Enabled: *req.Enabled})
 }

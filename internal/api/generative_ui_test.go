@@ -41,4 +41,15 @@ func TestGenerativeUISettingsAPI(t *testing.T) {
 			assert.JSONEq(t, `{"enabled":false}`, string(r.body))
 		}
 	}
+
+	// 缺 enabled、null 或非布尔：400 且不写库（开着的仍开着）
+	r = e.do("PUT", generativeUIPath, c, map[string]any{"enabled": true})
+	require.Equal(t, 200, r.status, string(r.body))
+	for _, bad := range []map[string]any{{}, {"enabled": nil}, {"enabled": "false"}} {
+		r = e.do("PUT", generativeUIPath, c, bad)
+		assert.Equal(t, 400, r.status, "%v: %s", bad, r.body)
+		assert.Equal(t, "invalid_request", r.code(t))
+	}
+	r = e.do("GET", generativeUIPath, c, nil)
+	assert.JSONEq(t, `{"enabled":true}`, string(r.body), "被拒的请求不写库")
 }
