@@ -252,3 +252,78 @@ func TestCommentValidation(t *testing.T) {
 	_, err = agentCall(t, e.s, threadCaller("thr_b"), OpReplyComment, `{"id":"`+a.ID+`","thread":"`+whole.ID+`","text":"x"}`)
 	assert.Equal(t, CodeNotFound, codeOf(err))
 }
+
+// 类型化 artifact 的锚点（M31 契约 C6）：页 + 归一化坐标、表格区域、Markdown 块序号；不能带 offset / tag / loc。
+func TestCommentTypedAnchors(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	mkThread(t, e.st, "thr_a", "")
+	mk := func(typ string, f FileChange) Artifact {
+		a, err := e.s.Create(ctx, CreateParams{Title: typ, Type: typ, ThreadID: "thr_a", Author: Author{ThreadID: "thr_a"}, Files: []FileChange{f}})
+		require.NoError(t, err)
+		return a
+	}
+	docx := mk(TypeDocx, putBytes(EntryDocx, docxBytes(t)))
+	xlsx := mk(TypeXlsx, putBytes(EntryXlsx, xlsxBytes(t)))
+	doc := mk(TypeDocument, put(EntryDocument, "# 标题\n\n第一段\n\n第二段\n"))
+	pg := &AnchorPage{Number: 1}
+
+	bad := []struct {
+		name string
+		id   string
+		an   Anchor
+	}{
+		{"docx 带 offset", docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: pg, Offset: new(3), Tag: new("p")}},
+		{"docx 带 loc", docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: pg, Loc: new("src/frames/a.tsx:1:1")}},
+		{"docx 路径不是入口", docx.ID, Anchor{Version: 1, Path: "index.html", Page: pg}},
+		{"docx 缺 page", docx.ID, Anchor{Version: 1, Path: EntryDocx}},
+		{"docx 只给 x", docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: pg, X: new(0.5)}},
+		{"docx 坐标越界", docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: pg, X: new(1.5), Y: new(0.5)}},
+		{"docx 带 range", docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: pg, Range: new("A1")}},
+		{"docx 版本不存在", docx.ID, Anchor{Version: 2, Path: EntryDocx, Page: pg}},
+		{"xlsx range 不合 pattern", xlsx.ID, Anchor{Version: 1, Path: EntryXlsx, Page: pg, Range: new("b2:c3")}},
+		{"xlsx range 行号为 0", xlsx.ID, Anchor{Version: 1, Path: EntryXlsx, Page: pg, Range: new("A0")}},
+		{"xlsx 带坐标", xlsx.ID, Anchor{Version: 1, Path: EntryXlsx, Page: pg, X: new(0.1), Y: new(0.1)}},
+		{"xlsx 缺 page", xlsx.ID, Anchor{Version: 1, Path: EntryXlsx, Range: new("B2")}},
+		{"document 带 page", doc.ID, Anchor{Version: 1, Path: EntryDocument, Page: pg}},
+		{"document 块序号为负", doc.ID, Anchor{Version: 1, Path: EntryDocument, Block: new(-1)}},
+	}
+	for _, b := range bad {
+		_, err := e.s.Comment(ctx, b.id, b.an, "x")
+		assert.Equal(t, CodeInvalid, codeOf(err), b.name)
+	}
+
+	pt, err := e.s.Comment(ctx, docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: pg, X: new(0.25), Y: new(0.5), Text: " 季度 报告 ", Missing: true}, "这里")
+	require.NoError(t, err)
+	assert.False(t, pt.Anchor.Missing)
+	assert.Equal(t, "季度 报告", pt.Anchor.Text)
+	require.NotNil(t, pt.Anchor.API().X)
+	assert.InDelta(t, 0.25, float64(*pt.Anchor.API().X), 1e-6)
+	_, err = e.s.Comment(ctx, docx.ID, Anchor{Version: 1, Path: EntryDocx, Page: &AnchorPage{Number: 2}}, "整页")
+	require.NoError(t, err)
+	_, err = e.s.Comment(ctx, xlsx.ID, Anchor{Version: 1, Path: EntryXlsx, Page: &AnchorPage{Number: 1, Name: "汇总"}, Range: new("B2:C3"), Text: "100"}, "核对")
+	require.NoError(t, err)
+	_, err = e.s.Comment(ctx, doc.ID, Anchor{Version: 1, Path: EntryDocument, Block: new(1), Text: "第一段"}, "改写")
+	require.NoError(t, err)
+
+	c := threadCaller("thr_a")
+	threads := commentsJSON(t, mustCall(t, e.s, c, OpReadComments, `{"id":"`+docx.ID+`"}`))["threads"].([]any)
+	require.Len(t, threads, 2)
+	t0 := threads[0].(map[string]any)
+	assert.Equal(t, EntryDocx, t0["path"])
+	assert.Equal(t, map[string]any{"number": float64(1), "name": ""}, t0["page"])
+	assert.Equal(t, map[string]any{"x": 0.25, "y": 0.5}, t0["point"])
+	assert.Equal(t, "季度 报告", t0["text"])
+	assert.Contains(t, t0, "element")
+	assert.Nil(t, t0["element"])
+	assert.NotContains(t, threads[1].(map[string]any), "point", "整页锚点没有 point")
+
+	t0 = commentsJSON(t, mustCall(t, e.s, c, OpReadComments, `{"id":"`+xlsx.ID+`"}`))["threads"].([]any)[0].(map[string]any)
+	assert.Equal(t, "B2:C3", t0["range"])
+	assert.Equal(t, map[string]any{"number": float64(1), "name": "汇总"}, t0["page"])
+	assert.NotContains(t, t0, "point")
+
+	t0 = commentsJSON(t, mustCall(t, e.s, c, OpReadComments, `{"id":"`+doc.ID+`"}`))["threads"].([]any)[0].(map[string]any)
+	assert.Equal(t, float64(1), t0["block"])
+	assert.Nil(t, t0["page"])
+}
