@@ -85,6 +85,12 @@
 
 服务端在 live 路径和 agent 路径应用之前都要跑一遍 `ExpandPicks`。客户端提交前也调用同一个函数，这样乐观状态与服务端的回显一致。重复展开要幂等：插入的搬移操作写的是目标值，提交方自己带的同值操作不会改变结果。
 
+**修订（S1 执行中，2026-11-27）**：C1 原文没写搬移画框用哪个操作，而现有规则又不允许 set 画框的 `canvas`。补充约定如下：
+- 画框的 `canvas` 改为可以 set（HTML 画框和设计画框都可以）。改的时候级联：其它画布页上吸附着它的形状，`from`/`to` 置 null（与 remove 的处理相同）。旧向量「set 不能改画框的 canvas」改成「set 画框 canvas 指向不存在的页被拒」。
+- `ExpandPicks` 产出的是 `set canvas`、`set x`、`set y` 三条操作。
+- 组 id 与画布页、画框、标注共用一个 id 命名空间（set 和 remove 只凭 id 寻址）。S4 封存时如果组 id 撞上已有 id，回 invalid。
+- group 的 set 沿用现有的 `{op:"set", id, key, value}` 形状，`key` 取 `name`、`variants`、`picked`、`pickedBy`。set `picked` 时，Apply 先把 `pickedBy` 置 null；随后由 S7 在服务端剔除提交方给的值，再盖章。
+
 ### C2 设计画布的工作副本契约
 
 `src/variants.json`（可选）：
