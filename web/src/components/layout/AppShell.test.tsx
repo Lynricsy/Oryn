@@ -87,6 +87,14 @@ beforeEach(() => {
 				return Response.json({ projects: [] });
 			if (url.pathname === "/api/v1/threads")
 				return Response.json({ threads: [] });
+			// AI 数据共享已同意：同意框不出现
+			if (url.pathname === "/api/v1/settings/ai-data-consent")
+				return Response.json({
+					recipients: [],
+					consentedAt: null,
+					consentedRecipientIds: [],
+					required: false,
+				});
 			return Response.json({});
 		}),
 	);

@@ -572,7 +572,8 @@ mod tests {
             .iter()
             .map(|p| p.as_str().unwrap())
             .collect();
-        // 移动连接页只多两项：扫码期间监听返回键以取消扫码（core:app 的监听注册 / 移除），不放开 core:app 的其它命令
+        // 移动连接页只多两类：扫码期间监听返回键以取消扫码（core:app 的监听注册 / 移除），不放开 core:app 的其它命令；
+        // 外链只有 host_open_external（协议白名单 + 限流），供连接页打开隐私政策
         const APP_LISTENER: [&str; 2] = [
             "core:app:allow-register-listener",
             "core:app:allow-remove-listener",
@@ -580,6 +581,7 @@ mod tests {
         for p in &perms {
             assert!(
                 *p == "allow-host-set-chrome"
+                    || *p == "allow-host-open-external"
                     || p.starts_with("barcode-scanner:")
                     || APP_LISTENER.contains(p),
                 "{p}"

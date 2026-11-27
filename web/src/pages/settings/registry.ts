@@ -34,6 +34,7 @@ export const SETTINGS_SECTIONS = [
 	"git",
 	"browser-profiles",
 	"sharing",
+	"privacy",
 	"about",
 ] as const;
 
@@ -68,6 +69,7 @@ const GROUP_OF: Record<SettingsSection, SettingsGroup> = {
 	git: "workspace",
 	"browser-profiles": "workspace",
 	sharing: "other",
+	privacy: "other",
 	about: "other",
 };
 
@@ -92,6 +94,7 @@ const ICON_OF: Record<SettingsSection, IconName> = {
 	git: "github",
 	"browser-profiles": "browser",
 	sharing: "share",
+	privacy: "shield",
 	about: "info",
 };
 

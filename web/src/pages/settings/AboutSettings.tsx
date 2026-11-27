@@ -8,6 +8,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useHealth, useMe } from "../../api/queries";
+import { PrivacyPolicyLink } from "../../components/consent/AiDataConsentGate";
 import { ErrorText } from "../../components/ui/primitives";
 import { Group, GroupList, GroupRow } from "../../components/ui/workbench";
 import { formatDateTime } from "../../lib/format";
@@ -109,6 +110,10 @@ export default function AboutSettings(): ReactNode {
 					<InfoRow
 						label={t("about.session")}
 						value={me.data ? t(`about.authKind.${me.data.auth.kind}`) : "—"}
+					/>
+					<InfoRow
+						label={t("privacy.policyTitle")}
+						value={<PrivacyPolicyLink />}
 					/>
 				</GroupList>
 			</Group>

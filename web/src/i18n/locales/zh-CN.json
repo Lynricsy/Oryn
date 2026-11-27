@@ -1481,6 +1481,7 @@
 		"git": "Git 与 GitHub",
 		"browser-profiles": "浏览器 Profile",
 		"sharing": "分享与 Artifacts",
+		"privacy": "隐私与数据",
 		"about": "关于",
 		"groups": {
 			"personal": "个人",
@@ -1509,6 +1510,7 @@
 			"git": "Git 身份 提交者 邮箱 GitHub OAuth 仓库 webhook",
 			"browser-profiles": "浏览器 Profile 登录态 browser",
 			"sharing": "公开 分享 链接 Artifacts 自动发布 授权 share publish",
+			"privacy": "隐私 数据 同意 第三方 AI 撤回 推送网关 隐私政策 privacy consent",
 			"about": "版本 协调宿主 关于 version"
 		},
 		"search": "搜索设置",
@@ -2917,6 +2919,46 @@
 			"codesHint": "请妥善保存这 {{n}} 个恢复码。每个只能用一次，关闭后不会再显示。",
 			"saved": "我已保存"
 		}
+	},
+	"aiConsent": {
+		"title": "AI 功能会把你的数据发给这些服务",
+		"intro": "为了生成回复、整理记忆和联网查资料，你的 Oryn 服务器会把下面列出的数据直接发给这些第三方服务。",
+		"terms": "数据从你的 Oryn 服务器直接发出，由这些服务按各自的条款与隐私政策处理；Oryn 的开发者收不到这些数据。",
+		"purpose": {
+			"chat": {
+				"title": "对话与 agent 任务",
+				"data": "发送你的消息与附件、agent 读取的文件和工具输出，用于生成回复、完成任务。"
+			},
+			"memory": {
+				"title": "记忆",
+				"data": "发送对话中的记忆文本，用于抽取、保存和检索记忆。"
+			},
+			"web": {
+				"title": "联网",
+				"data": "发送搜索词和要打开的网址，用于搜索和读取网页。"
+			}
+		},
+		"webRecipient": "公网网站（助手搜索和打开的网页）",
+		"policy": "隐私政策",
+		"agree": "同意并继续",
+		"decline": "不同意",
+		"declinedTitle": "不同意就无法使用 AI 功能",
+		"declinedBody": "Oryn 的对话、agent、记忆和联网都依赖这些服务。你可以更换服务器或退出登录；下次打开 Oryn 时会再次询问。",
+		"back": "返回"
+	},
+	"privacy": {
+		"aiTitle": "AI 数据共享",
+		"none": "当前配置不会把数据发给第三方 AI 服务。",
+		"consent": "同意记录",
+		"consentedAt": "{{when}} 同意",
+		"notConsented": "尚未同意",
+		"revoke": "撤回同意",
+		"revokeTitle": "撤回 AI 数据共享的同意？",
+		"revokeBody": "撤回后会立即再次询问；不同意就无法使用 AI 功能。",
+		"retry": "重试",
+		"pushTitle": "推送通知",
+		"pushBody": "手机 App 配对后会向 Oryn 推送网关（push.oryn.best）登记这台设备：网关只保存加密的设备推送令牌，只转发端到端加密的通知，看不到内容。可以在「设置 → 通知」里关闭推送。",
+		"policyTitle": "隐私政策"
 	},
 	"about": {
 		"server": "服务器",
@@ -5520,6 +5562,8 @@
 		"scanDenied": "没有相机权限，无法扫码。",
 		"scanFailed": "扫码失败，请重试或直接输入地址。",
 		"openSettings": "打开设置",
+		"pushNotice": "配对后，App 会向 Oryn 推送网关（push.oryn.best）登记这台设备以接收通知：网关只保存加密的设备令牌，只转发端到端加密的通知。可以在设置里关闭推送。",
+		"privacy": "隐私政策",
 		"mobileError": {
 			"keyring": {
 				"reason": "无法把令牌存进系统安全存储。",

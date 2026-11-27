@@ -35,6 +35,7 @@ import DesktopSettings from "./settings/DesktopSettings";
 import GitSettings from "./settings/GitSettings";
 import InputSettings from "./settings/InputSettings";
 import NotificationsSettings from "./settings/NotificationsSettings";
+import PrivacySettings from "./settings/PrivacySettings";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./settings/registry";
 import SecretsSettings from "./settings/SecretsSettings";
 import ServerSettings from "./settings/ServerSettings";
@@ -63,6 +64,7 @@ const VIEWS: Record<SettingsSection, () => ReactNode> = {
 	git: () => <GitSettings />,
 	"browser-profiles": () => <BrowserProfilesSettings />,
 	sharing: () => <SharingSettings />,
+	privacy: () => <PrivacySettings />,
 	about: () => <AboutSettings />,
 };
 

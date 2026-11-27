@@ -49,6 +49,7 @@ import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore, useConnection } from "../../state/stores";
 import { uiStore, useSidebarShown, useUi } from "../../state/ui";
 import { ConsentDialog } from "../artifacts/ConsentDialog";
+import { AiDataConsentGate } from "../consent/AiDataConsentGate";
 import { NotificationToasts } from "../notify/NotificationToasts";
 import { PaletteHost } from "../palette/PaletteHost";
 import { togglePalette } from "../palette/palette-state";
@@ -360,6 +361,7 @@ export function AppShell(): ReactNode {
 				<PaletteHost />
 				<ThreadRowDialogs />
 				<ConsentDialog />
+				<AiDataConsentGate />
 			</>
 		);
 
@@ -428,6 +430,7 @@ export function AppShell(): ReactNode {
 			<PaletteHost />
 			<ThreadRowDialogs />
 			<ConsentDialog />
+			<AiDataConsentGate />
 			{/* macOS 全屏：左上角自绘红绿灯，指针移上去才出现（不在全屏 / 不在桌面壳里时为空） */}
 			<FullscreenLights />
 		</div>

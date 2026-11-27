@@ -138,6 +138,7 @@ export function Spinner({ size = 14 }: { size?: number }) {
  * 版式：一整块纸面，标题、正文、按钮之间不画分隔线，只靠留白分层；四边 20px 内边距配 32px 圆角（正文里的卡片用
  * 12px 圆角，与外框同心）；标题 16px 半粗，关闭按钮是右上角的小圆钮。正文超高时只有正文滚动。
  * 渲染到 body 下；打开时把焦点移入对话框、Tab 在其中循环、背景 `inert`，关闭后焦点回到打开前的元素。
+ * 不给 `onClose` 即不可关闭（必须在正文或按钮里作出选择）：没有关闭钮，Esc 与点遮罩都不起作用。
  */
 export function Dialog({
 	open,
@@ -151,7 +152,7 @@ export function Dialog({
 	bodyTestId,
 }: {
 	open: boolean;
-	onClose: () => void;
+	onClose?: () => void;
 	title: ReactNode;
 	children: ReactNode;
 	footer?: ReactNode;
@@ -195,7 +196,7 @@ export function Dialog({
 		}
 		const onKey = (e: KeyboardEvent) => {
 			if (!isTopModal(host)) return;
-			if (e.key === "Escape") onCloseRef.current();
+			if (e.key === "Escape") onCloseRef.current?.();
 			else trapTab(e, panel);
 		};
 		window.addEventListener("keydown", onKey);
@@ -211,13 +212,20 @@ export function Dialog({
 			ref={hostRef}
 			className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
 		>
-			<button
-				type="button"
-				tabIndex={-1}
-				aria-label={t("common.close")}
-				className="absolute inset-0 bg-scrim backdrop-blur-[3px]"
-				onClick={onClose}
-			/>
+			{onClose ? (
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-label={t("common.close")}
+					className="absolute inset-0 bg-scrim backdrop-blur-[3px]"
+					onClick={onClose}
+				/>
+			) : (
+				<div
+					aria-hidden
+					className="absolute inset-0 bg-scrim backdrop-blur-[3px]"
+				/>
+			)}
 			<div
 				ref={panelRef}
 				role="dialog"
@@ -232,14 +240,16 @@ export function Dialog({
 					>
 						{title}
 					</h2>
-					<IconButton
-						icon="close"
-						size={14}
-						box="sm"
-						label={t("common.close")}
-						className="-mt-0.5 rounded-full! bg-inset"
-						onClick={onClose}
-					/>
+					{onClose && (
+						<IconButton
+							icon="close"
+							size={14}
+							box="sm"
+							label={t("common.close")}
+							className="-mt-0.5 rounded-full! bg-inset"
+							onClick={onClose}
+						/>
+					)}
 				</div>
 				<div
 					ref={bodyRef}

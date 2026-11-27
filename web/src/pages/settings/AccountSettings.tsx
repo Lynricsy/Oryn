@@ -10,18 +10,10 @@ import { api, unwrap } from "../../api/client";
 import { useAsync } from "../../components/settings/useAsync";
 import { Button, ErrorText } from "../../components/ui/primitives";
 import { Group, GroupList, GroupRow } from "../../components/ui/workbench";
-import { host } from "../../lib/host";
+import { changeServerFn } from "../../lib/change-server";
 import DevicesSettings from "./DevicesSettings";
 import { UserAvatarCard } from "./IdentitySettings";
 import PasskeySettings from "./PasskeySettings";
-
-/** 当前宿主的「更换服务器」：桌面壳与移动壳各自实现，纯浏览器没有。 */
-function changeServerFn(): (() => void) | null {
-	const { desktop, mobile } = host;
-	if (desktop) return () => desktop.changeServer();
-	if (mobile) return () => mobile.changeServer();
-	return null;
-}
 
 function ConnectionGroup() {
 	const { t } = useTranslation();

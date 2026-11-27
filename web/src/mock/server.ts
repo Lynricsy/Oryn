@@ -727,6 +727,20 @@ export class MockServer {
 	composerPrefs: Schemas["ComposerPrefs"] = { defaultTarget: "role" };
 	/** 全局语言设置（`owner.language`）。 */
 	languageSettings: Schemas["LanguageSettings"] = { language: "zh-CN" };
+	/** AI 数据共享同意（`owner.ai_consent_*`）：演示数据只有一个接收方，默认已同意。 */
+	aiConsent: Schemas["AiDataConsent"] = {
+		recipients: [
+			{
+				id: "model:anthropic",
+				name: "Anthropic",
+				host: "api.anthropic.com",
+				purposes: ["chat"],
+			},
+		],
+		consentedAt: Date.now(),
+		consentedRecipientIds: ["model:anthropic"],
+		required: false,
+	};
 	/** 生成式 UI 总开关（`owner.generative_ui`，M33）。 */
 	generativeUiSettings: Schemas["GenerativeUISettings"] = { enabled: true };
 	/** 控制面运维参数的覆盖：JSON 路径（分组.字段）→ 值与写入时间。 */
@@ -2057,6 +2071,21 @@ export class MockServer {
 				this.languageSettings = { language: b.language };
 			}
 			return json(this.languageSettings);
+		}
+		if (p === "settings/ai-data-consent") {
+			const c = this.aiConsent;
+			if (m === "PUT") {
+				const b = (await body()) as Schemas["AiDataConsentUpdate"];
+				c.consentedAt = Date.now();
+				c.consentedRecipientIds = [...new Set(b.recipientIds)].sort();
+			} else if (m === "DELETE") {
+				c.consentedAt = null;
+				c.consentedRecipientIds = [];
+			}
+			c.required = c.recipients.some(
+				(r) => !c.consentedRecipientIds.includes(r.id),
+			);
+			return json(c);
 		}
 		if (p === "settings/generative-ui") {
 			if (m === "PUT") {

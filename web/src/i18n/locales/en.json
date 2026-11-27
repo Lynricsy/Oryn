@@ -1481,6 +1481,7 @@
 		"git": "Git & GitHub",
 		"browser-profiles": "Browser profiles",
 		"sharing": "Sharing & Artifacts",
+		"privacy": "Privacy & data",
 		"about": "About",
 		"groups": {
 			"personal": "Personal",
@@ -1509,6 +1510,7 @@
 			"git": "git identity committer email github oauth repositories webhook",
 			"browser-profiles": "browser profiles logins 浏览器",
 			"sharing": "public share links artifacts auto publish consent 分享",
+			"privacy": "privacy data consent third party AI revoke push gateway policy 隐私",
 			"about": "version coordinator about 版本"
 		},
 		"search": "Search settings",
@@ -2917,6 +2919,46 @@
 			"codesHint": "Keep these {{n}} recovery codes somewhere safe. Each works once, and they won't be shown again after you close this.",
 			"saved": "I've saved them"
 		}
+	},
+	"aiConsent": {
+		"title": "AI features send your data to these services",
+		"intro": "To generate replies, build memory and look things up on the web, your Oryn server sends the data listed below directly to these third-party services.",
+		"terms": "The data goes from your Oryn server straight to these services and is handled under their own terms and privacy policies. Oryn's developer does not receive it.",
+		"purpose": {
+			"chat": {
+				"title": "Chats and agent tasks",
+				"data": "Your messages and attachments, plus files and tool output the agent reads — to generate replies and complete tasks."
+			},
+			"memory": {
+				"title": "Memory",
+				"data": "Memory text from your conversations — to extract, store and recall memories."
+			},
+			"web": {
+				"title": "Web access",
+				"data": "Search queries and the URLs to open — to search and read web pages."
+			}
+		},
+		"webRecipient": "Public websites (pages the assistant searches and opens)",
+		"policy": "Privacy policy",
+		"agree": "Agree and continue",
+		"decline": "Don't agree",
+		"declinedTitle": "AI features need your consent",
+		"declinedBody": "Chats, agents, memory and web access in Oryn all rely on these services. You can change servers or sign out; Oryn will ask again next time you open it.",
+		"back": "Back"
+	},
+	"privacy": {
+		"aiTitle": "AI data sharing",
+		"none": "With the current configuration no data is sent to third-party AI services.",
+		"consent": "Consent",
+		"consentedAt": "Agreed {{when}}",
+		"notConsented": "Not agreed",
+		"revoke": "Revoke consent",
+		"revokeTitle": "Revoke consent to AI data sharing?",
+		"revokeBody": "You'll be asked again right away; AI features can't be used without consent.",
+		"retry": "Retry",
+		"pushTitle": "Push notifications",
+		"pushBody": "After pairing, the mobile app registers this device with Oryn's push gateway (push.oryn.best). The gateway stores only an encrypted device push token and relays end-to-end encrypted notifications it cannot read. You can turn push off in Settings → Notifications.",
+		"policyTitle": "Privacy policy"
 	},
 	"about": {
 		"server": "Server",
@@ -5520,6 +5562,8 @@
 		"scanDenied": "Camera access is off, so the code can't be scanned.",
 		"scanFailed": "Scanning failed. Try again or type the address.",
 		"openSettings": "Open settings",
+		"pushNotice": "After pairing, the app registers this device with Oryn's push gateway (push.oryn.best) for notifications. The gateway stores only an encrypted device token and relays end-to-end encrypted notifications. You can turn push off in Settings.",
+		"privacy": "Privacy policy",
 		"mobileError": {
 			"keyring": {
 				"reason": "Couldn't save the token to the system's secure storage.",

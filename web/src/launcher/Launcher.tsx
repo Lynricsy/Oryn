@@ -34,6 +34,7 @@ import { holdSplash } from "../lib/boot-splash";
 import { applyDeviceGeometry } from "../lib/device-corners";
 import { watchChrome } from "../lib/host-chrome";
 import { scannedServer } from "../lib/pair-qr";
+import { privacyPolicyUrl } from "../lib/privacy";
 import {
 	canScan,
 	invoke,
@@ -112,6 +113,34 @@ function LauncherErrorText({
 					: t(`launcher.error.${key}.hint`)}
 			</p>
 		</div>
+	);
+}
+
+/**
+ * 连接前的隐私说明：移动端提示配对后会向 Oryn 推送网关登记这台设备；全平台给隐私政策链接。
+ * 本地连接页不经远程页面的外链脚本：链接交给壳在系统浏览器打开，壳不允许时退回新窗口（桌面壳的 on_new_window 接管）。
+ */
+function PrivacyNote({ mobile }: { mobile: boolean }) {
+	const { t, i18n } = useTranslation();
+	return (
+		<p className="mt-4 text-faint text-xs" data-testid="launcher-privacy">
+			{mobile && <>{t("launcher.pushNotice")} </>}
+			<a
+				href={privacyPolicyUrl(i18n.language)}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="text-accent underline-offset-2 hover:underline"
+				onClick={(e) => {
+					e.preventDefault();
+					const href = e.currentTarget.href;
+					invoke("host_open_external", { url: href }).catch(() =>
+						window.open(href, "_blank", "noopener"),
+					);
+				}}
+			>
+				{t("launcher.privacy")}
+			</a>
+		</p>
 	);
 }
 
@@ -376,6 +405,7 @@ export function Launcher(): ReactNode {
 				<div className="mt-3">
 					<ErrorText error={failure} />
 				</div>
+				<PrivacyNote mobile={mobile} />
 			</AuthCard>
 		);
 	}
@@ -443,6 +473,7 @@ export function Launcher(): ReactNode {
 					)}
 					<ErrorText error={failure} />
 				</form>
+				<PrivacyNote mobile={mobile} />
 			</AuthCard>
 		);
 	}

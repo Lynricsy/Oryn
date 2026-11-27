@@ -257,6 +257,19 @@ describe("连接页（移动平台）", () => {
 		Reflect.deleteProperty(navigator, "clipboard");
 	});
 
+	it("connect：说明配对后向推送网关登记设备；隐私政策链接交给 host_open_external", async () => {
+		plugin.host_open_external = null;
+		render(<Launcher />);
+		const note = await screen.findByTestId("launcher-privacy");
+		expect(note).toHaveTextContent("push.oryn.best");
+		fireEvent.click(screen.getByRole("link", { name: "隐私政策" }));
+		await waitFor(() =>
+			expect(invoke).toHaveBeenCalledWith("host_open_external", {
+				url: "https://docs.oryn.best/privacy/",
+			}),
+		);
+	});
+
 	it("不提 Oryn Desktop 与系统凭据库；版本写作 Oryn x.y.z；系统栏颜色交给 host_set_chrome", async () => {
 		withState({ step: "connect", serverUrl: "" }, { tokenStore: "keystore" });
 		const { container } = render(<Launcher />);
@@ -470,6 +483,24 @@ describe("连接页（桌面平台）", () => {
 	});
 	afterEach(() => {
 		delete window.__ORYN_HOST__;
+	});
+
+	it("connect：没有推送说明；壳不允许 host_open_external 时退回新窗口打开英文隐私政策", async () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		withState({ step: "connect", serverUrl: "" }, { lang: "en" });
+		render(<Launcher />);
+		const link = await screen.findByRole("link", { name: "Privacy policy" });
+		expect(screen.getByTestId("launcher-privacy")).not.toHaveTextContent(
+			"push.oryn.best",
+		);
+		fireEvent.click(link);
+		await waitFor(() =>
+			expect(open).toHaveBeenCalledWith(
+				"https://docs.oryn.best/privacy/en/",
+				"_blank",
+				"noopener",
+			),
+		);
 	});
 
 	it("文案不变、没有扫码按钮、不同步系统栏", async () => {
