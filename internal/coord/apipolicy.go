@@ -293,7 +293,7 @@ func buildAPIPolicy() map[string]opPolicy {
 	// settings
 	set("settings", opRead, none, "getGitIdentity", "getAgentIdentity", "listRoleIdentities", "listAgentAvatars", "getComposerPrefs",
 		"getLanguageSettings", "getGenerativeUISettings", "getSelectionActions", "getModelCatalog", "getUserIdentity", "listAgentConfigFiles", "getAgentConfigApplyStatus", "listSecrets", "listDevices",
-		"getOpsSettings")
+		"getOpsSettings", "getAiDataConsent")
 	set("settings", opRead, opPolicy{Check: func(path map[string]string) error {
 		// 与 Home.Get 同一套规范化（agentcfg.CleanPath）：./mcp.json、x/../mcp.json 之类的等价路径同样拒绝。
 		// 规范化失败的路径 Home.Get 也会以同一错误拒绝、读不到文件，交给处理器回原有错误码。
@@ -314,6 +314,8 @@ func buildAPIPolicy() map[string]opPolicy {
 		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll", "patchOpsSettings",
 		"listPasskeys", "addPasskeyBegin", "addPasskeyFinish", "renamePasskey", "deletePasskey", "reauthBegin", "reauthFinish",
 		"getRecoveryCodeStatus", "regenerateRecoveryCodes")
+	// AI 数据共享同意（App Store 5.1.2(i)）只能由主人本人在界面上给出或撤回，助手只读
+	set("settings", opDeny, deny(denyHuman), "putAiDataConsent", "deleteAiDataConsent")
 
 	// insights
 	set("insights", opRead, none, "getHealthz", "searchMessages", "getStatsMeta", "getUsageStats", "exportUsageRecords", "getToolStats",
