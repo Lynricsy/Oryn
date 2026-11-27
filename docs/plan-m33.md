@@ -206,7 +206,7 @@ form-action 'none'; base-uri 'none'; webrtc 'block'; frame-ancestors <ancestors>
 - 首帧主题走 URL 片段：`<url>#theme=<encodeURIComponent(JSON{scheme, vars})>`，运行时在 `<head>` 里同步读出，不闪烁；之后主题变化（`oryn:themechange`）走 `theme` 消息。值里的 `< > ; { }` 一律去掉。
 - 主题变量（与 Core 的 SVG 约定、`AskFormView.tsx:56` 的映射同名）：`--fg --muted --border --surface --accent --success --warning --error --c1…--c6`，另加 `--bg --font --mono --radius`。父页面用 `getComputedStyle` 取解析后的值。
 - 页面 API：`window.oryn.sendPrompt(text)`、`window.oryn.palette`（`--c1…--c6` 的值）。
-- 高度：`height` 是最小高度；帧跟随 `resize` 长高，没有上限，内容不在帧内滚动。页面高度随帧高变化（`100vh`、`height: 100%` 一类）时，运行时连续 3 次看到「帧变高多少内容就跟着变高多少」即认定耦合，报一次 480 px 后停止上报，之后内容真的超出视口再继续。Web 按 `toolCallId` 记住上次高度，重新挂载时不跳动。参数流到第一个块之前（声明式）或帧挂载之前（HTML）显示 `ViewComposing` 占位。
+- 高度：`height` 是最小高度；帧跟随 `resize` 长高，没有上限，内容不在帧内滚动。页面高度随帧高变化（`100vh`、`height: 100%` 一类）时，运行时连续 3 次看到「帧变高多少内容就跟着变高多少」即认定耦合，报一次 480 px；之后看超出视口的部分 `h - v`，只有它比见过的最小值多出 16 px 才上报（比增量而不是绝对值：`100vh` 加 24 px 页边距每轮都超出视口 24 px，按绝对值判会一路撑高），内容缩到比视口矮也上报。Web 按 `toolCallId` 记住上次高度，重新挂载时不跳动。参数流到第一个块之前（声明式）或帧挂载之前（HTML）显示 `ViewComposing` 占位。
 
 ### C10 Web 渲染契约
 

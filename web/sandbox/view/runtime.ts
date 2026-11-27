@@ -173,11 +173,14 @@ export function install(win: Window, parent: Window, css: string): void {
 		);
 	};
 	// 视口耦合：页面用 100vh、height: 100% 之类布局时，内容高度跟着帧高走——按内容定高，帧每长一点内容又长一点，一路撑高。
-	// 连续 COUPLED_STEPS 次「帧变高多少、内容就跟着变高多少」认定为耦合：报一次 VIEW_FILL_HEIGHT（父页面按最小高度取大），
-	// 之后只在内容明显超出视口（不随视口变化的那部分内容变多了）时才继续上报。
+	// 连续 COUPLED_STEPS 次「帧变高多少、内容就跟着变高多少」认定为耦合：报一次 VIEW_FILL_HEIGHT（父页面按最小高度取大）。
+	// 之后看「超出视口的部分」over = h - v：它是不随视口变化的那部分内容（页边距、视口之外的块）。只有 over 比见过的
+	// 最小值多出 COUPLED_SLACK 才上报——比的是 over 的增量，不是 over 本身，否则 100vh 加 24px 页边距每轮都超出、每轮涨 24px。
+	// 内容缩到比视口还矮（over 明显为负）也上报，帧跟着变矮。
 	let viewport = win.innerHeight;
 	let coupledSteps = 0;
 	let coupled = false;
+	let overBase = 0;
 	let scheduled = false;
 	const report = () => {
 		scheduled = false;
@@ -186,14 +189,23 @@ export function install(win: Window, parent: Window, css: string): void {
 		const v = win.innerHeight;
 		const grew = v - viewport;
 		viewport = v;
-		if (h === lastHeight) return;
 		if (coupled) {
+			const over = h - v;
 			// hello 之后（lastHeight 置 -1）照常报一次，父页面才有高度
-			if (lastHeight >= 0 && h <= v + COUPLED_SLACK) return;
+			const settled =
+				lastHeight >= 0 &&
+				(h === lastHeight ||
+					(over >= -COUPLED_SLACK && over <= overBase + COUPLED_SLACK));
+			overBase = Math.min(overBase, over);
+			if (settled) return;
+			overBase = over;
+		} else if (h === lastHeight) {
+			return;
 		} else if (lastHeight >= 0 && grew > 0 && h - lastHeight >= grew - 1) {
 			coupledSteps++;
 			if (coupledSteps >= COUPLED_STEPS) {
 				coupled = true;
+				overBase = h - v;
 				lastHeight = Math.max(v, VIEW_FILL_HEIGHT);
 				send({ kind: "resize", height: lastHeight });
 				return;
