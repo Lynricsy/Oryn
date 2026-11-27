@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
+	"github.com/Lynricsy/Oryn/internal/agentcfg"
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/schedule"
 )
 
@@ -36,8 +39,12 @@ func writeScheduleErr(w http.ResponseWriter, r *http.Request, err error) {
 	case schedule.CodeNotFound, schedule.CodeScheduleNotFound:
 		status = http.StatusNotFound
 	case schedule.CodeScheduleBusy, schedule.CodeNameTaken, schedule.CodeThreadArchived, schedule.CodeScheduleLimit, schedule.CodeConflict,
-		schedule.CodeScheduleConflict:
+		schedule.CodeScheduleConflict, schedule.CodeSchedulePaused, schedule.CodeProjectArchived:
 		status = http.StatusConflict
+	case schedule.CodeBadSignature:
+		status = http.StatusUnauthorized
+	case schedule.CodeUnavailable:
+		status = http.StatusServiceUnavailable
 	}
 	WriteError(w, status, se.Code, se.Message)
 }
@@ -260,4 +267,66 @@ func (s *Server) DeleteThreadSchedule(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PutScheduleWebhook 对应 `PUT schedules/{id}/webhook`：开启或修改入站 Webhook（M31；只有主人能调，助手的 oryn 工具被策略表拒绝）。
+func (s *Server) PutScheduleWebhook(w http.ResponseWriter, r *http.Request, id apigen.ScheduleIDPath) {
+	svc, ok := s.scheduleSvc(w)
+	if !ok {
+		return
+	}
+	var in apigen.ScheduleWebhookInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	res, err := svc.SetWebhook(r.Context(), id, in)
+	if err != nil {
+		writeScheduleErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
+}
+
+// DeleteScheduleWebhook 对应 `DELETE schedules/{id}/webhook`（幂等）。
+func (s *Server) DeleteScheduleWebhook(w http.ResponseWriter, r *http.Request, id apigen.ScheduleIDPath) {
+	svc, ok := s.scheduleSvc(w)
+	if !ok {
+		return
+	}
+	if err := svc.DeleteWebhook(r.Context(), id); err != nil {
+		writeScheduleErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ReceiveScheduleWebhook 对应公开的 `POST public/hooks/{key}`（M31）：按来源 IP 限流、读至多 64 KiB 请求体后交给调度器。
+func (s *Server) ReceiveScheduleWebhook(w http.ResponseWriter, r *http.Request, key string) {
+	svc, ok := s.scheduleSvc(w)
+	if !ok {
+		return
+	}
+	if !s.rateLimit(w, r, auth.LimitWebhook) {
+		return
+	}
+	if r.ContentLength > schedule.WebhookMaxBody {
+		WriteError(w, http.StatusRequestEntityTooLarge, "too_large", "请求体超过 64 KiB")
+		return
+	}
+	body, err := readBody(r, schedule.WebhookMaxBody)
+	if err != nil {
+		if errors.Is(err, agentcfg.ErrTooLarge) {
+			WriteError(w, http.StatusRequestEntityTooLarge, "too_large", "请求体超过 64 KiB")
+		} else {
+			WriteError(w, http.StatusBadRequest, "invalid_request", "读取请求体失败")
+		}
+		return
+	}
+	// 调用方断开不撤回已受理的运行（发送方的超时常常短于建线程）
+	res, err := svc.TriggerWebhook(context.WithoutCancel(r.Context()), schedule.WebhookCall{Key: key, Body: body, Header: r.Header, Query: r.URL.Query()})
+	if err != nil {
+		writeScheduleErr(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, res)
 }

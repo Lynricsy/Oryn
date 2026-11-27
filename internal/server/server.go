@@ -383,6 +383,8 @@ func (s *Server) init(ctx context.Context) error {
 		// M19 3.3：交给助手的运行结果进主线（coord 晚于 schedule 构造，用闭包）
 		HandOff: func(ctx context.Context, h schedule.HandOff) { s.Coord.PostToMain(ctx, h) },
 		SSHGate: s.SSH, LocalGate: localGate,
+		// M31：入站 Webhook 的调用地址与签名密钥
+		PublicURL: cfg.PublicURL, Box: box,
 	}, s.Store, s.Threads, s.Orbs, s.Notify)
 	s.Coord = coord.New(coord.Config{Now: scheduleNow, AfterFunc: scheduleAfterFunc, Model: cfg.Coordinator.Model, PublicURL: cfg.PublicURL,
 		MCPToken: mcpToken, ResearchMCPToken: researchToken, KeepWarm: coord.KeepWarmEvery},

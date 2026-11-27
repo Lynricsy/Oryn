@@ -3337,9 +3337,10 @@ func (e ScheduleCreatedBy) Valid() bool {
 
 // Defines values for ScheduleKind.
 const (
-	ScheduleKindCron  ScheduleKind = "cron"
-	ScheduleKindEvery ScheduleKind = "every"
-	ScheduleKindOnce  ScheduleKind = "once"
+	ScheduleKindCron   ScheduleKind = "cron"
+	ScheduleKindEvery  ScheduleKind = "every"
+	ScheduleKindManual ScheduleKind = "manual"
+	ScheduleKindOnce   ScheduleKind = "once"
 )
 
 // Valid indicates whether the value is a known member of the ScheduleKind enum.
@@ -3348,6 +3349,8 @@ func (e ScheduleKind) Valid() bool {
 	case ScheduleKindCron:
 		return true
 	case ScheduleKindEvery:
+		return true
+	case ScheduleKindManual:
 		return true
 	case ScheduleKindOnce:
 		return true
@@ -3451,6 +3454,7 @@ const (
 	ScheduleRunTriggerCatchup  ScheduleRunTrigger = "catchup"
 	ScheduleRunTriggerManual   ScheduleRunTrigger = "manual"
 	ScheduleRunTriggerSchedule ScheduleRunTrigger = "schedule"
+	ScheduleRunTriggerWebhook  ScheduleRunTrigger = "webhook"
 )
 
 // Valid indicates whether the value is a known member of the ScheduleRunTrigger enum.
@@ -3461,6 +3465,8 @@ func (e ScheduleRunTrigger) Valid() bool {
 	case ScheduleRunTriggerManual:
 		return true
 	case ScheduleRunTriggerSchedule:
+		return true
+	case ScheduleRunTriggerWebhook:
 		return true
 	default:
 		return false
@@ -8063,7 +8069,7 @@ type LinkCtlScheduleParams struct {
 type LinkCtlSchedulePutParams struct {
 	// Input 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
 	// 不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
-	// `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
+	// `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。`kind = manual` 只用于 `new_thread`，不得带 `cron` / `every` / `at` / `endsAt`。
 	// 模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
 	// `projectId` / `spaceId` / `role` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
 	// `new_thread` 的 `role` 与 `model` 至多给一个；
@@ -11809,7 +11815,8 @@ type Schedule struct {
 	ID       ScheduleID `json:"id"`
 	KeepLast int        `json:"keepLast"`
 
-	// Kind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+	// Kind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性；`manual` 没有时间触发，只由手动触发（`POST /schedules/{id}/run`）
+	// 或入站 Webhook（`POST /public/hooks/{key}`）触发，仅 `new_thread`，`nextRunAt` 恒省略
 	Kind    ScheduleKind `json:"kind"`
 	LastRun *ScheduleRun `json:"lastRun,omitempty"`
 
@@ -11862,6 +11869,9 @@ type Schedule struct {
 
 	// UpdatedAt UTC 毫秒时间戳
 	UpdatedAt TimestampMs `json:"updatedAt"`
+
+	// Webhook 入站 Webhook；省略 = 没有
+	Webhook *ScheduleWebhook `json:"webhook,omitempty"`
 }
 
 // ScheduleCreatedBy defines model for ScheduleCreatedBy.
@@ -11891,7 +11901,7 @@ type ScheduleID = string
 
 // ScheduleInput 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
 // 不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
-// `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
+// `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。`kind = manual` 只用于 `new_thread`，不得带 `cron` / `every` / `at` / `endsAt`。
 // 模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
 // `projectId` / `spaceId` / `role` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
 // `new_thread` 的 `role` 与 `model` 至多给一个；
@@ -11927,7 +11937,8 @@ type ScheduleInput struct {
 	// KeepLast 仅 `new_thread`：只保留最近 N 个未归档的运行线程，更早且已静止、未置顶的自动归档（缺省 5）
 	KeepLast *int `json:"keepLast,omitempty"`
 
-	// Kind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+	// Kind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性；`manual` 没有时间触发，只由手动触发（`POST /schedules/{id}/run`）
+	// 或入站 Webhook（`POST /public/hooks/{key}`）触发，仅 `new_thread`，`nextRunAt` 恒省略
 	Kind ScheduleKind `json:"kind"`
 
 	// Mode `thread` 到点向一个已有线程追加提示词；`new_thread` 每次运行用固定提示词新建一个线程
@@ -11969,7 +11980,8 @@ type ScheduleInput struct {
 	Timezone *string `json:"timezone,omitempty"`
 }
 
-// ScheduleKind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+// ScheduleKind `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性；`manual` 没有时间触发，只由手动触发（`POST /schedules/{id}/run`）
+// 或入站 Webhook（`POST /public/hooks/{key}`）触发，仅 `new_thread`，`nextRunAt` 恒省略
 type ScheduleKind string
 
 // ScheduleList defines model for ScheduleList.
@@ -11998,7 +12010,7 @@ type ScheduleRun struct {
 	// DeliveredAt UTC 毫秒时间戳
 	DeliveredAt *TimestampMs `json:"deliveredAt,omitempty"`
 
-	// Error 如 `gate`（运行前闸门判定本次不必运行）、`overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因
+	// Error 如 `gate`（运行前闸门判定本次不必运行）、`overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除）、`github_agent_required`（Webhook 运行要求 Agent 账号可用），或创建线程失败、回合出错的原因
 	Error *string `json:"error,omitempty"`
 
 	// FinishedAt UTC 毫秒时间戳
@@ -12009,6 +12021,9 @@ type ScheduleRun struct {
 
 	// Missed 被合并掉的触发数
 	Missed int `json:"missed"`
+
+	// Payload 仅 `trigger = webhook`：收到的请求（不可信的外部内容）
+	Payload *ScheduleWebhookPayload `json:"payload,omitempty"`
 
 	// ScheduleID `sch_<ulid>`（M9）
 	ScheduleID ScheduleID `json:"scheduleId"`
@@ -12023,7 +12038,7 @@ type ScheduleRun struct {
 	// ThreadID `thread` 模式为目标线程；`new_thread` 模式为建出的线程（建出之前或创建失败时省略）
 	ThreadID *ThreadID `json:"threadId,omitempty"`
 
-	// Trigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
+	// Trigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发；`webhook` 入站 Webhook 触发
 	Trigger ScheduleRunTrigger `json:"trigger"`
 }
 
@@ -12038,8 +12053,64 @@ type ScheduleRunList struct {
 // ScheduleRunStatus defines model for ScheduleRunStatus.
 type ScheduleRunStatus string
 
-// ScheduleRunTrigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
+// ScheduleRunTrigger `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发；`webhook` 入站 Webhook 触发
 type ScheduleRunTrigger string
+
+// ScheduleWebhook 定时的入站 Webhook（地址里的密钥只在生成时返回一次）
+type ScheduleWebhook struct {
+	// CreatedAt UTC 毫秒时间戳
+	CreatedAt TimestampMs `json:"createdAt"`
+
+	// HasSecret 是否要求签名（`X-Oryn-Signature-256` 或 `X-Hub-Signature-256`）
+	HasSecret bool `json:"hasSecret"`
+
+	// LastCalledAt 最近一次通过校验的调用
+	LastCalledAt *TimestampMs `json:"lastCalledAt,omitempty"`
+
+	// RotatedAt 最近一次生成地址密钥的时刻
+	RotatedAt TimestampMs `json:"rotatedAt"`
+}
+
+// ScheduleWebhookAccepted defines model for ScheduleWebhookAccepted.
+type ScheduleWebhookAccepted struct {
+	// Error `status = skipped` 时的原因（`overlap`、`overlap_cap`）
+	Error *string `json:"error,omitempty"`
+
+	// RunID `srn_<ulid>`（M9，定时的一次运行）
+	RunID  ScheduleRunID     `json:"runId"`
+	Status ScheduleRunStatus `json:"status"`
+}
+
+// ScheduleWebhookInput defines model for ScheduleWebhookInput.
+type ScheduleWebhookInput struct {
+	// RotateKey 换一个新的地址密钥（旧地址立即失效）；首次开启时总会生成
+	RotateKey *bool `json:"rotateKey,omitempty"`
+
+	// Secret 签名密钥：省略 = 保留原值；空串 = 去掉（不再要求签名）
+	Secret *string `json:"secret,omitempty"`
+}
+
+// ScheduleWebhookPayload 入站 Webhook 收到的请求
+type ScheduleWebhookPayload struct {
+	// Body 请求体原文（UTF-8）
+	Body        string  `json:"body"`
+	ContentType *string `json:"contentType,omitempty"`
+
+	// Headers 只记录 `User-Agent` 与名称含 `Event`、`Delivery` 的请求头（不含签名与凭据）
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// Query 查询参数（同名取第一个）
+	Query map[string]string `json:"query,omitempty"`
+}
+
+// ScheduleWebhookResult defines model for ScheduleWebhookResult.
+type ScheduleWebhookResult struct {
+	// URL 完整的调用地址，仅在本次生成了新密钥时返回（之后无法再取回，丢失只能换新）
+	URL *string `json:"url,omitempty"`
+
+	// Webhook 定时的入站 Webhook（地址里的密钥只在生成时返回一次）
+	Webhook ScheduleWebhook `json:"webhook"`
+}
 
 // SearchHit defines model for SearchHit.
 type SearchHit struct {
@@ -15198,6 +15269,9 @@ type PreviewScheduleJSONRequestBody = ScheduleInput
 
 // PutScheduleJSONRequestBody defines body for PutSchedule for application/json ContentType.
 type PutScheduleJSONRequestBody = ScheduleInput
+
+// PutScheduleWebhookJSONRequestBody defines body for PutScheduleWebhook for application/json ContentType.
+type PutScheduleWebhookJSONRequestBody = ScheduleWebhookInput
 
 // PutSecretJSONRequestBody defines body for PutSecret for application/json ContentType.
 type PutSecretJSONRequestBody = SecretPut
@@ -18690,6 +18764,9 @@ type ServerInterface interface {
 	// ReceiveGitHubWebhook 仓库 webhook 入口（按该仓库 hook 的 secret 校验 `X-Hub-Signature-256`；同一 `X-GitHub-Delivery` 只处理一次）
 	// (POST /api/v1/public/github/webhook)
 	ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Request)
+	// ReceiveScheduleWebhook 定时的入站 Webhook（M31）：触发一次运行（`trigger = webhook`）
+	// (POST /api/v1/public/hooks/{key})
+	ReceiveScheduleWebhook(w http.ResponseWriter, r *http.Request, key string)
 	// GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
 	// (GET /api/v1/public/shares/{slug})
 	GetPublicShare(w http.ResponseWriter, r *http.Request, slug ShareSlugPath)
@@ -18765,6 +18842,12 @@ type ServerInterface interface {
 	// ListScheduleRuns 最近的运行记录（新的在前；每个定时保留最近 200 条）
 	// (GET /api/v1/schedules/{id}/runs)
 	ListScheduleRuns(w http.ResponseWriter, r *http.Request, id ScheduleIDPath, params ListScheduleRunsParams)
+	// DeleteScheduleWebhook 关闭定时的入站 Webhook（M31；幂等，地址立即失效）
+	// (DELETE /api/v1/schedules/{id}/webhook)
+	DeleteScheduleWebhook(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
+	// PutScheduleWebhook 开启或修改定时的入站 Webhook（M31；只有主人能改）
+	// (PUT /api/v1/schedules/{id}/webhook)
+	PutScheduleWebhook(w http.ResponseWriter, r *http.Request, id ScheduleIDPath)
 	// SearchMessages 对话内容全文搜索
 	// (GET /api/v1/search)
 	SearchMessages(w http.ResponseWriter, r *http.Request, params SearchMessagesParams)
@@ -20643,6 +20726,12 @@ func (_ Unimplemented) ReceiveGitHubWebhook(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// ReceiveScheduleWebhook 定时的入站 Webhook（M31）：触发一次运行（`trigger = webhook`）
+// (POST /api/v1/public/hooks/{key})
+func (_ Unimplemented) ReceiveScheduleWebhook(w http.ResponseWriter, r *http.Request, key string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetPublicShare 公开分享的元数据（不含线程 id、orb、项目、标签、模型配置）
 // (GET /api/v1/public/shares/{slug})
 func (_ Unimplemented) GetPublicShare(w http.ResponseWriter, r *http.Request, slug ShareSlugPath) {
@@ -20790,6 +20879,18 @@ func (_ Unimplemented) RunSchedule(w http.ResponseWriter, r *http.Request, id Sc
 // ListScheduleRuns 最近的运行记录（新的在前；每个定时保留最近 200 条）
 // (GET /api/v1/schedules/{id}/runs)
 func (_ Unimplemented) ListScheduleRuns(w http.ResponseWriter, r *http.Request, id ScheduleIDPath, params ListScheduleRunsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteScheduleWebhook 关闭定时的入站 Webhook（M31；幂等，地址立即失效）
+// (DELETE /api/v1/schedules/{id}/webhook)
+func (_ Unimplemented) DeleteScheduleWebhook(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutScheduleWebhook 开启或修改定时的入站 Webhook（M31；只有主人能改）
+// (PUT /api/v1/schedules/{id}/webhook)
+func (_ Unimplemented) PutScheduleWebhook(w http.ResponseWriter, r *http.Request, id ScheduleIDPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -29494,6 +29595,32 @@ func (siw *ServerInterfaceWrapper) ReceiveGitHubWebhook(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// ReceiveScheduleWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveScheduleWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "key" -------------
+	var key string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "key", chi.URLParam(r, "key"), &key, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveScheduleWebhook(w, r, key)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetPublicShare operation middleware
 func (siw *ServerInterfaceWrapper) GetPublicShare(w http.ResponseWriter, r *http.Request) {
 
@@ -30146,6 +30273,58 @@ func (siw *ServerInterfaceWrapper) ListScheduleRuns(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListScheduleRuns(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteScheduleWebhook operation middleware
+func (siw *ServerInterfaceWrapper) DeleteScheduleWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteScheduleWebhook(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutScheduleWebhook operation middleware
+func (siw *ServerInterfaceWrapper) PutScheduleWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ScheduleIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutScheduleWebhook(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34011,6 +34190,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/v1/schedules/{id}/runs", wrapper.ListScheduleRuns)
 	})
 	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/schedules/{id}/webhook", wrapper.DeleteScheduleWebhook)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/schedules/{id}/webhook", wrapper.PutScheduleWebhook)
+	})
+	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/v1/threads/{id}/schedule", wrapper.DeleteThreadSchedule)
 	})
 	r.Group(func(r chi.Router) {
@@ -34087,6 +34272,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/public/github/webhook", wrapper.ReceiveGitHubWebhook)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/public/hooks/{key}", wrapper.ReceiveScheduleWebhook)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/public/github/oauth/callback", wrapper.FinishGitHubOAuth)

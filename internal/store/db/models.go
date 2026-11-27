@@ -1254,6 +1254,16 @@ type ScheduleRun struct {
 	FinishedAt   *int64  `json:"finishedAt"`
 	Status       string  `json:"status"`
 	Error        *string `json:"error"`
+	Payload      *string `json:"payload"`
+}
+
+type ScheduleWebhook struct {
+	ScheduleID   string `json:"scheduleId"`
+	KeyHash      string `json:"keyHash"`
+	SecretEnc    []byte `json:"secretEnc"`
+	CreatedAt    int64  `json:"createdAt"`
+	RotatedAt    int64  `json:"rotatedAt"`
+	LastCalledAt *int64 `json:"lastCalledAt"`
 }
 
 type SearchDoc struct {

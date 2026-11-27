@@ -212,6 +212,8 @@ type fireParams struct {
 	scheduledFor int64
 	trigger      string
 	missed       int64
+	// payload 是 Webhook 运行收到的请求（JSON，与 schedule_runs.payload 相同）；其余运行为空。
+	payload string
 }
 
 // fire 处理一个到期的定时：事务里推进并判定，事务外投递 / 建线程。调用方持有 loopMu。
@@ -259,7 +261,7 @@ func (s *Service) fire(ctx context.Context, id string, now time.Time) {
 		if err := q.AdvanceSchedule(ctx, adv); err != nil {
 			return err
 		}
-		runID, err := insertRun(ctx, q, sc, trigger, scheduledFor, missed, nowMs, status, reason)
+		runID, err := insertRun(ctx, q, sc, trigger, scheduledFor, missed, nowMs, status, reason, nil)
 		if err != nil {
 			return err
 		}
@@ -327,10 +329,10 @@ func decide(ctx context.Context, q *db.Queries, sc db.Schedule) (status, reason 
 	return runPending, "", false, nil
 }
 
-func insertRun(ctx context.Context, q *db.Queries, sc db.Schedule, trigger string, scheduledFor, missed, nowMs int64, status, reason string) (string, error) {
+func insertRun(ctx context.Context, q *db.Queries, sc db.Schedule, trigger string, scheduledFor, missed, nowMs int64, status, reason string, payload *string) (string, error) {
 	p := db.InsertScheduleRunParams{
 		ID: ids.New("srn"), ScheduleID: sc.ID, ThreadID: sc.ThreadID, Trigger: trigger, ScheduledFor: scheduledFor,
-		Missed: missed, StartedAt: nowMs, Status: status, Error: optStr(reason),
+		Missed: missed, StartedAt: nowMs, Status: status, Error: optStr(reason), Payload: payload,
 	}
 	if status == runSkipped {
 		p.FinishedAt = &nowMs
@@ -378,7 +380,7 @@ func (s *Service) RunNow(ctx context.Context, id string) (apigen.ScheduleRun, er
 		}); err != nil {
 			return err
 		}
-		runID, err := insertRun(ctx, q, sc, triggerManual, nowMs, 0, nowMs, runPending, "")
+		runID, err := insertRun(ctx, q, sc, triggerManual, nowMs, 0, nowMs, runPending, "", nil)
 		if err != nil {
 			return err
 		}
@@ -408,7 +410,8 @@ func (s *Service) start(ctx context.Context, fp fireParams) {
 	s.launch(ctx, fp, "")
 }
 
-// launch 投递 / 建线程；preface 非空时（闸门输出）放在头行与提示词之间。调用方持有 loopMu。
+// launch 投递 / 建线程；preface 非空时（闸门输出）放在头行与提示词之间。Webhook 运行把收到的请求作为不可信数据块
+// 接在提示词之后（只有 new_thread 定时能开 Webhook）。调用方持有 loopMu。
 func (s *Service) launch(ctx context.Context, fp fireParams, preface string) {
 	loc := loadLoc(fp.sc.Timezone)
 	text := header(fp, loc) + "\n"
@@ -416,6 +419,9 @@ func (s *Service) launch(ctx context.Context, fp fireParams, preface string) {
 		text += preface + "\n\n"
 	}
 	text += expand(fp, s.cfg.Now(), loc)
+	if fp.trigger == triggerWebhook {
+		text += "\n\n" + webhookBlock(fp.payload)
+	}
 	if fp.sc.Mode == ModeThread {
 		s.deliver(ctx, fp, text)
 		return
@@ -464,12 +470,15 @@ func (s *Service) deliveryFailed(ctx context.Context, sc db.Schedule, threadID, 
 // createThread 以运行 id 为标签新建线程（契约 C1.5）：首条提示词的终态由 TurnEnded 结算。
 func (s *Service) createThread(ctx context.Context, fp fireParams, loc *time.Location, text string) {
 	sc := fp.sc
-	// 项目级定时是全自动线程（R6），按自动化身份取 GitHub 身份；不属于项目的定时与手动建的线程一样用我的账号
+	// 项目级定时是全自动线程（R6），按自动化身份取 GitHub 身份；不属于项目的定时与手动建的线程一样用我的账号。
+	// Webhook 运行由不可信的外部输入驱动（M31）：一律全自动且 Untrusted——GitHub 只用 Agent 账号、不回退到我的账号，
+	// SSH 只能用允许全自动线程的主机。
+	webhook := fp.trigger == triggerWebhook
 	p := threads.CreateParams{
 		ProjectID: deref(sc.ProjectID), Prompt: text, Provider: deref(sc.Provider), Type: deref(sc.OrbType),
 		Role: deref(sc.Role), Model: parseModel(sc.Model), ThinkingLevel: deref(sc.ThinkingLevel), SpaceID: deref(sc.SpaceID),
 		Title:      sc.Name + " · " + time.UnixMilli(fp.scheduledFor).In(loc).Format("01-02 15:04"),
-		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID, Automation: sc.ProjectID != nil,
+		ScheduleID: sc.ID, ScheduleRun: fp.run, Tag: fp.runID, Automation: sc.ProjectID != nil || webhook, Untrusted: webhook,
 	}
 	s.mu.Lock()
 	s.creating++
@@ -674,11 +683,11 @@ func (s *Service) settle(ctx context.Context, run db.ScheduleRun, threadID strin
 		}
 		// 安静结束（agent 回复 [SILENT]）：没有值得交给助手的内容
 		if !ev.Quiet {
-			s.handOff(ctx, run.ScheduleID, threadID, "completed", ev, "")
+			s.handOff(ctx, run, threadID, "completed", ev, "")
 		}
 	case threads.TurnAborted:
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "aborted")
-		s.handOff(ctx, run.ScheduleID, threadID, "aborted", ev, "aborted")
+		s.handOff(ctx, run, threadID, "aborted", ev, "aborted")
 	case threads.TurnError:
 		reason := ev.Error
 		if reason == "" {
@@ -692,22 +701,25 @@ func (s *Service) settle(ctx context.Context, run db.ScheduleRun, threadID strin
 		}
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, reason)
 		s.countFailure(ctx, run.ScheduleID)
-		s.handOff(ctx, run.ScheduleID, threadID, "failed", ev, reason)
+		s.handOff(ctx, run, threadID, "failed", ev, reason)
 	default:
 		s.finishRun(ctx, run.ScheduleID, run.ID, runFailed, "outcome_unknown")
 	}
 }
 
-// handOff 把开着“交给助手”的 new_thread 运行的结果交给 Config.HandOff（M19 步骤 3.3）。
-func (s *Service) handOff(ctx context.Context, scheduleID, threadID, outcome string, ev threads.TurnEvent, errText string) {
+// handOff 把开着“交给助手”的 new_thread 运行的结果交给 Config.HandOff（M19 步骤 3.3）；Webhook 运行的结果标为受限（M31）。
+func (s *Service) handOff(ctx context.Context, run db.ScheduleRun, threadID, outcome string, ev threads.TurnEvent, errText string) {
 	if s.cfg.HandOff == nil || threadID == "" {
 		return
 	}
-	sc, err := s.st.Q.GetSchedule(ctx, scheduleID)
+	sc, err := s.st.Q.GetSchedule(ctx, run.ScheduleID)
 	if err != nil || sc.Mode != ModeNewThread || sc.HandToAssistant == 0 {
 		return
 	}
-	h := HandOff{Kind: "schedule", SourceID: sc.ID, SourceName: sc.Name, ThreadID: threadID, Outcome: outcome, Error: errText}
+	h := HandOff{
+		Kind: "schedule", SourceID: sc.ID, SourceName: sc.Name, ThreadID: threadID, Outcome: outcome, Error: errText,
+		Restricted: run.Trigger == triggerWebhook,
+	}
 	if ev.HasText {
 		h.Text = ev.Text
 	}
@@ -968,8 +980,11 @@ func header(fp fireParams, loc *time.Location) string {
 	b.WriteString(headerFixed)
 	fmt.Fprintf(&b, "%q #%d%s%s (%s)", displayName(fp.sc.Name), fp.run, headerAt,
 		time.UnixMilli(fp.scheduledFor).In(loc).Format(time.RFC3339), fp.sc.Timezone)
-	if fp.trigger == triggerCatchup {
+	switch fp.trigger {
+	case triggerCatchup:
 		fmt.Fprintf(&b, " · late, %d missed runs coalesced", fp.missed)
+	case triggerWebhook:
+		b.WriteString(" · triggered by an inbound webhook")
 	}
 	if fp.sc.CreatedBy == createdByAgent {
 		b.WriteString(" · defined by an agent")

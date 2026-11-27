@@ -263,3 +263,39 @@ func TestResearchInboxBatchesSeparately(t *testing.T) {
 	}
 	assert.Zero(t, e.pendingInbox())
 }
+
+// M31：入站 Webhook 驱动的定时运行结果（HandOff.Restricted）同样只投给受限的主线 agent，按运行结果的格式成文。
+func TestRestrictedScheduleResultGoesToRestrictedAgent(t *testing.T) {
+	e := newEnv(t, false)
+	fa := &fakeAfter{}
+	e.c.cfg.AfterFunc = fa.AfterFunc
+	sent := make(chan string, 8)
+	e.c.sentInbox = func(_, text string) { sent <- text }
+	main, err := e.c.EnsureMain(e.ctx)
+	require.NoError(t, err)
+	require.NoError(t, e.th.KeepWarm(e.ctx, main.ID))
+	require.Eventually(t, func() bool {
+		v, known := e.th.AgentVariant(e.ctx, main.ID)
+		return known && v == ""
+	}, 10*time.Second, 20*time.Millisecond, "主线以完整表起来")
+
+	id := e.workRow()
+	e.c.PostToMain(e.ctx, schedule.HandOff{Kind: "schedule", SourceID: "sch_1", SourceName: "alerts", ThreadID: id,
+		Outcome: "completed", Text: "disk full on web1", Restricted: true})
+	require.True(t, fa.fireLast(), "合并定时器")
+	select {
+	case got := <-sent:
+		t.Fatalf("完整表的主线不得收到受限收件：%s", got)
+	default:
+	}
+
+	text := waitSent(t, e, fa, sent)
+	assert.True(t, strings.HasPrefix(text, inboxStatusHeader+" 1 result(s).\n"), text)
+	assert.Contains(t, text, "disk full on web1")
+	starts := e.orbs.Starts(main.ID)
+	require.NotEmpty(t, starts)
+	last := starts[len(starts)-1]
+	require.NotNil(t, last.Variant)
+	assert.Equal(t, apigen.AgentVariantMainRestricted, *last.Variant)
+	assert.Zero(t, e.pendingInbox())
+}

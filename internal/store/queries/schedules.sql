@@ -104,11 +104,12 @@ SELECT id, CAST(thread_id AS TEXT) AS thread_id, enabled, next_run_at FROM sched
 
 -- Runs.
 
+-- payload is set only for trigger = webhook (the received request as JSON).
 -- name: InsertScheduleRun :exec
 INSERT INTO schedule_runs (id, schedule_id, thread_id, trigger, scheduled_for, missed, started_at, delivered_at,
-                           finished_at, status, error)
+                           finished_at, status, error, payload)
 VALUES (@id, @schedule_id, @thread_id, @trigger, @scheduled_for, @missed, @started_at, @delivered_at,
-        @finished_at, @status, @error);
+        @finished_at, @status, @error, @payload);
 
 -- name: GetScheduleRun :one
 SELECT * FROM schedule_runs WHERE id = @id;
@@ -164,3 +165,24 @@ DELETE FROM thread_reports WHERE thread_id = @thread_id AND gen = @gen;
 -- Detach new_thread schedules from a deleted space (space_id has no FK; cleared by code).
 -- name: ClearSpaceSchedules :exec
 UPDATE schedules SET space_id = NULL WHERE space_id = @space_id;
+
+-- Inbound webhooks (M31): at most one per schedule. key_hash is the hex SHA-256 of the key in the URL.
+
+-- name: GetScheduleWebhook :one
+SELECT * FROM schedule_webhooks WHERE schedule_id = @schedule_id;
+
+-- name: GetScheduleWebhookByKey :one
+SELECT * FROM schedule_webhooks WHERE key_hash = @key_hash;
+
+-- Creates the webhook or replaces its key and signing secret; created_at and last_called_at stay.
+-- name: UpsertScheduleWebhook :exec
+INSERT INTO schedule_webhooks (schedule_id, key_hash, secret_enc, created_at, rotated_at)
+VALUES (@schedule_id, @key_hash, @secret_enc, @created_at, @rotated_at)
+ON CONFLICT (schedule_id) DO UPDATE SET key_hash = excluded.key_hash, secret_enc = excluded.secret_enc,
+    rotated_at = excluded.rotated_at;
+
+-- name: TouchScheduleWebhook :exec
+UPDATE schedule_webhooks SET last_called_at = @last_called_at WHERE schedule_id = @schedule_id;
+
+-- name: DeleteScheduleWebhook :execrows
+DELETE FROM schedule_webhooks WHERE schedule_id = @schedule_id;

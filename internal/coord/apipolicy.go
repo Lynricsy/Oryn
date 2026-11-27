@@ -234,6 +234,9 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("schedules", opWrite, none, "runSchedule")
 	set("schedules", opDeny, deny(denyNative("set_schedule")), "createSchedule", "putSchedule", "deleteSchedule", "pauseSchedule",
 		"resumeSchedule", "putThreadSchedule", "deleteThreadSchedule")
+	// 入站 Webhook（M31）：开启 / 换新的响应里是调用地址（凭据），只能主人本人做；关闭要主人确认
+	set("schedules", opDeny, deny(denyCredential), "putScheduleWebhook")
+	set("schedules", opConfirm, none, "deleteScheduleWebhook")
 
 	// github
 	set("github", opRead, none, "getGitHubStatus", "listGitHubRepos", "listGitHubHooks", "listGitHubAudit", "listGitHubTasks",
@@ -310,7 +313,7 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("desktop", opConfirm, thread, "bindThreadBrowserRelay")
 	// 内部接口：不是用户操作，不进文档
 	set("", opDeny, none, "getBlob", "createWsTicket", "connectWs", "orbDesktopSocket", "browserRelaySocket", "sshHostTerminal", "connectPublicShareWs",
-		"getPublicShare", "getPublicShareIdentity", "listPublicShareEntries", "getPublicShareBlob", "receiveGitHubWebhook",
+		"getPublicShare", "getPublicShareIdentity", "listPublicShareEntries", "getPublicShareBlob", "receiveGitHubWebhook", "receiveScheduleWebhook",
 		"finishGitHubOAuth", "providerHello", "providerClaimJob", "providerCompleteJob", "providerBye", "providerClaimFs",
 		"providerReplyFs", "orbLink", "orbWhoami", "prepareOrbSync", "getOrbSyncBundle")
 	return m

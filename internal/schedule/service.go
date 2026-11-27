@@ -13,6 +13,7 @@ package schedule
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 	"github.com/Lynricsy/Oryn/internal/threads"
@@ -48,6 +50,10 @@ type Config struct {
 	LocalGate LocalGate
 	// Go 在后台执行闸门（默认 `go f()`）；测试注入同步执行。
 	Go func(f func())
+	// PublicURL 是控制面的对外地址，用来拼入站 Webhook 的调用地址（M31）。
+	PublicURL string
+	// Box 封存入站 Webhook 的签名密钥（M31）；nil = 不能设置签名密钥，已有签名密钥的 Webhook 调用一律失败。
+	Box *secrets.Box
 }
 
 // HandOff 是一次交给助手的运行结果（定时与 GitHub 触发规则共用，由 coord.PostToMain 收进主线）。
@@ -56,6 +62,8 @@ type HandOff struct {
 	Kind, SourceID, SourceName string
 	// ThreadID 是运行线程；Outcome 是 completed / failed / aborted；Text 是该回合的最终回复（可空，收件时补取）。
 	ThreadID, Outcome, Text, Error string
+	// Restricted 为真表示运行由不可信的外部输入驱动（入站 Webhook，M31）：结果只交给受限的主线一轮。
+	Restricted bool
 }
 
 // Threads 是调度器需要的线程能力（*threads.Service 实现）。
@@ -118,9 +126,15 @@ const (
 	CodeScheduleConflict = "schedule_conflict"
 	CodeNotFound         = "not_found"
 	CodeConflict         = "conflict"
-	createdByUser        = "user"
-	createdByAgent       = "agent"
-	maxEnabledSchedules  = 200
+	// 入站 Webhook（M31）的调用方错误。
+	CodeBadSignature    = "bad_signature"
+	CodeSchedulePaused  = "schedule_paused"
+	CodeProjectArchived = "project_archived"
+	CodeInvalidRequest  = "invalid_request"
+	CodeUnavailable     = "unavailable"
+	createdByUser       = "user"
+	createdByAgent      = "agent"
+	maxEnabledSchedules = 200
 	// maxAgentEnabledSchedules 是 agent 定义的启用中定时上限（契约 C6.2）。
 	maxAgentEnabledSchedules = 20
 	// maxMainSchedules 是主线上线程内定时（提醒）的条数上限；其余线程至多一条。
@@ -159,6 +173,7 @@ const (
 	triggerSchedule = "schedule"
 	triggerCatchup  = "catchup"
 	triggerManual   = "manual"
+	triggerWebhook  = "webhook"
 
 	pausedUser     = "user"
 	pausedFailures = "failures"
@@ -395,7 +410,7 @@ func (s *Service) createLocked(ctx context.Context, in Input, createdBy string) 
 	var next *int64
 	var paused *string
 	if enabled {
-		if next = firstRun(norm, loc, now); next == nil {
+		if next = firstRun(norm, loc, now); next == nil && norm.Kind != KindManual {
 			return apigen.Schedule{}, invalid("the schedule would not fire before endsAt")
 		}
 	} else {
@@ -526,7 +541,7 @@ func (s *Service) updateLocked(ctx context.Context, id string, in Input, created
 	var next *int64
 	var paused *string
 	if enabled {
-		if next = firstRun(norm, loc, now); next == nil {
+		if next = firstRun(norm, loc, now); next == nil && norm.Kind != KindManual {
 			return apigen.Schedule{}, invalid("the schedule would not fire before endsAt")
 		}
 	} else {
@@ -969,7 +984,7 @@ func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) (apig
 		if !ok {
 			return apigen.Schedule{}, invalid("the schedule has finished; change its time first")
 		}
-		p.NextRunAt, p.Failures = &next, 0
+		p.NextRunAt, p.Failures = next, 0
 	}
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
 		if enabled && !row.Enabled {
@@ -986,23 +1001,26 @@ func (s *Service) SetEnabled(ctx context.Context, id string, enabled bool) (apig
 	return s.Get(ctx, id)
 }
 
-// resumeNext 返回恢复时的 next_run_at；一次性已触发或下一次越过截止时间时为 false。
-func (s *Service) resumeNext(row db.Schedule, now time.Time) (int64, bool) {
+// resumeNext 返回恢复时的 next_run_at（manual 为 nil）；一次性已触发或下一次越过截止时间时为 false。
+func (s *Service) resumeNext(row db.Schedule, now time.Time) (*int64, bool) {
+	if row.Kind == KindManual {
+		return nil, true
+	}
 	if row.EndsAt != nil && *row.EndsAt <= now.UnixMilli() {
-		return 0, false
+		return nil, false
 	}
 	if row.Kind == KindOnce {
 		if row.RunAt == nil || (row.PausedReason != nil && *row.PausedReason == pausedDone) || row.RunCount > 0 ||
 			*row.RunAt < now.Add(-onceGrace).UnixMilli() {
-			return 0, false
+			return nil, false
 		}
-		return *row.RunAt, true
+		return row.RunAt, true
 	}
 	t, ok := NextAfter(row.Kind, row.Spec, loadLoc(row.Timezone), now)
 	if !ok || (row.EndsAt != nil && t.UnixMilli() > *row.EndsAt) {
-		return 0, false
+		return nil, false
 	}
-	return t.UnixMilli(), true
+	return new(t.UnixMilli()), true
 }
 
 // List 列出定时（按创建时间）。
@@ -1051,7 +1069,10 @@ func (s *Service) Preview(in Input) ([]int64, error) {
 		return nil, err
 	}
 	out := []int64{}
-	if norm.Kind == KindOnce {
+	switch norm.Kind {
+	case KindManual:
+		return out, nil
+	case KindOnce:
 		if norm.EndsAt == nil || *norm.At <= *norm.EndsAt {
 			out = append(out, *norm.At)
 		}
@@ -1101,6 +1122,12 @@ func (s *Service) toAPI(ctx context.Context, r db.Schedule) (apigen.Schedule, er
 		Role: r.Role, ThinkingLevel: r.ThinkingLevel, Provider: r.Provider, OrbType: r.OrbType, Model: parseModel(r.Model),
 		HandToAssistant: r.HandToAssistant != 0, Gate: gateOf(r),
 	}
+	switch hook, err := s.st.Q.GetScheduleWebhook(ctx, r.ID); {
+	case err == nil:
+		out.Webhook = webhookAPI(hook)
+	case !errors.Is(err, sql.ErrNoRows):
+		return apigen.Schedule{}, err
+	}
 	switch r.Kind {
 	case KindCron:
 		out.Cron = new(r.Spec)
@@ -1123,11 +1150,18 @@ func (s *Service) toAPI(ctx context.Context, r db.Schedule) (apigen.Schedule, er
 }
 
 func runAPI(r db.ScheduleRun) apigen.ScheduleRun {
-	return apigen.ScheduleRun{
+	out := apigen.ScheduleRun{
 		ID: r.ID, ScheduleID: r.ScheduleID, ThreadID: r.ThreadID, Trigger: apigen.ScheduleRunTrigger(r.Trigger),
 		ScheduledFor: r.ScheduledFor, Missed: int(r.Missed), StartedAt: r.StartedAt, DeliveredAt: r.DeliveredAt,
 		FinishedAt: r.FinishedAt, Status: apigen.ScheduleRunStatus(r.Status), Error: r.Error,
 	}
+	if r.Payload != nil {
+		var p apigen.ScheduleWebhookPayload
+		if err := json.Unmarshal([]byte(*r.Payload), &p); err == nil {
+			out.Payload = &p
+		}
+	}
+	return out
 }
 
 // modelStr 把模型写成库里的 "provider/id"。

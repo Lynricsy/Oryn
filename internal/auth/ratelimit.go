@@ -33,6 +33,8 @@ var (
 	LimitPairStart = Limit{Name: "pair_start", Burst: 5, Every: 20 * time.Second}
 	// 轮询间隔 2s，正常客户端每秒至多 0.5 次
 	LimitPairPoll = Limit{Name: "pair_poll", Burst: 10, Every: time.Second}
+	// 定时的入站 Webhook（M31）：同一来源每 2 秒补一次，可连发 30 次
+	LimitWebhook = Limit{Name: "webhook", Burst: 30, Every: 2 * time.Second}
 )
 
 // maxLimiterKeys 是限流表的规模上限；超出时清掉已回满的桶，仍超出则整表重置。

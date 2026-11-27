@@ -15,9 +15,9 @@ import (
 	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// M26：后台研究的发现进主线，以及「受限的一段」。来自外部内容（网页、邮件、日历）的发现（收件 restricted = 1）只投给
-// orbd 报回变体为 main_restricted 的主线 agent：只有只读工具与 stay_silent。是否受限只认 threads.AgentVariant 报回的
-// 事实；该投递的回合结束后主线下一次启动恢复完整工具表。
+// M26：后台研究的发现进主线，以及「受限的一段」。来自外部内容（网页、邮件、日历）的发现与入站 Webhook 驱动的运行结果
+// （M31；收件 restricted = 1）只投给 orbd 报回变体为 main_restricted 的主线 agent：只有只读工具与 stay_silent。是否受限
+// 只认 threads.AgentVariant 报回的事实；该投递的回合结束后主线下一次启动恢复完整工具表。
 
 // 受限一段的固定值。
 const (
@@ -43,7 +43,7 @@ var restrictedMainTools = map[string]bool{
 // mainRestrictedNote 接在受限主线的系统提示词末尾。
 const mainRestrictedNote = `## Limited turn
 
-This episode handles findings that came from outside (web pages, mail, calendar). Only read tools and stay_silent are available: you cannot start threads, send messages, use the computer, browse or change anything. Tell the owner what you found. If they want action they will reply, and the full tools return with their next message.`
+This episode handles content that came from outside: findings from web pages, mail or calendar, or results of runs started by an inbound webhook. Only read tools and stay_silent are available: you cannot start threads, send messages, use the computer, browse or change anything. Tell the owner what you found. If they want action they will reply, and the full tools return with their next message.`
 
 // mainRestrict 是受限一段的状态（s.mu 保护）：want 为真时主线下一次启动取受限的 Profile；inflight 是已投出、回合还没
 // 结束的受限投递（键 = 标签去掉前缀）。

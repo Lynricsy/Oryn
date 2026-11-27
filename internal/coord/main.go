@@ -352,6 +352,7 @@ type inboxState struct {
 
 // PostToMain 收下一次交给助手的运行结果（定时与 GitHub 触发规则的 HandOff 回调）：写进 assistant_inbox，并在没有
 // 待发的合并定时器时排一个；到点由 flushInbox 合并成一条自动消息投进主线。不阻塞、不调用线程服务。
+// h.Restricted（入站 Webhook 驱动的运行，M31）的收件只投给受限的主线一轮。
 func (s *Service) PostToMain(ctx context.Context, h schedule.HandOff) {
 	p := db.InsertAssistantInboxParams{
 		ID: ids.New("inb"), Kind: h.Kind, SourceID: h.SourceID, SourceName: h.SourceName, ThreadID: h.ThreadID,
@@ -359,6 +360,9 @@ func (s *Service) PostToMain(ctx context.Context, h schedule.HandOff) {
 	}
 	if h.Error != "" {
 		p.Error = &h.Error
+	}
+	if h.Restricted {
+		p.Restricted = 1
 	}
 	if err := s.st.Q.InsertAssistantInbox(ctx, p); err != nil {
 		slog.Warn("coord: 写入主线收件失败", "thread", h.ThreadID, "source", h.SourceID, "err", err)
@@ -425,7 +429,7 @@ func (s *Service) flushInbox(ctx context.Context) {
 	groups := groupInbox(rows)
 	g := &groups[0]
 	if g.restricted {
-		if text := s.researchText(ctx, g); text != "" && s.sendRestricted(ctx, main.ID, g.rows, text) {
+		if text := s.groupText(ctx, g); text != "" && s.sendRestricted(ctx, main.ID, g.rows, text) {
 			s.finishInbox(ctx, main.ID, g.rows, text, len(groups) > 1 || len(rows) == inboxScan)
 			return
 		} else if text == "" {
@@ -450,20 +454,24 @@ func (s *Service) flushInbox(ctx context.Context) {
 		s.retryModeLater()
 		return
 	}
-	var text string
-	if g.research {
-		if text = s.researchText(ctx, g); text == "" {
-			s.armInbox()
-			return
-		}
-	} else {
-		text = s.automationText(ctx, g.rows)
+	text := s.groupText(ctx, g)
+	if text == "" {
+		s.armInbox()
+		return
 	}
 	if _, err := s.th.Deliver(ctx, main.ID, threads.AutoMessage{Text: text}, nil); err != nil {
 		slog.Info("coord: 主线收件投递失败，稍后重试", "pending", len(rows), "err", err)
 		return
 	}
 	s.finishInbox(ctx, main.ID, g.rows, text, len(groups) > 1 || len(rows) == inboxScan)
+}
+
+// groupText 把一组收件拼成一条自动消息：研究发现按研究格式，其余按运行结果格式；返回空串表示整组都解不出。
+func (s *Service) groupText(ctx context.Context, g *inboxGroup) string {
+	if g.research {
+		return s.researchText(ctx, g)
+	}
+	return s.automationText(ctx, g.rows)
 }
 
 // automationText 把一组交给助手的运行结果合并成一条自动消息（M19 的格式）。

@@ -4848,6 +4848,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/schedules/{id}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 开启或修改定时的入站 Webhook（M31；只有主人能改）
+         * @description 仅 `new_thread` 定时（否则 400 `invalid_schedule`）。没有 Webhook 时新建并生成地址密钥；`rotateKey = true` 时换新密钥，旧地址立即失效。
+         *     生成了新密钥时响应带一次性的完整地址 `url`（`<public_url>/api/v1/public/hooks/<key>`），之后无法取回。
+         *     `secret`：省略 = 保留原值，空串 = 去掉，其余为新的签名密钥（≤256 字符）。控制面没有密钥盒时设置签名密钥 → 503 `unavailable`。
+         *     定时不存在 → 404 `schedule_not_found`。
+         */
+        put: operations["putScheduleWebhook"];
+        post?: never;
+        /**
+         * 关闭定时的入站 Webhook（M31；幂等，地址立即失效）
+         * @description 定时不存在 → 404 `schedule_not_found`；没有 Webhook 时同样回 204。
+         */
+        delete: operations["deleteScheduleWebhook"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/threads/{id}/schedule": {
         parameters: {
             query?: never;
@@ -5216,6 +5245,35 @@ export interface paths {
         put?: never;
         /** 仓库 webhook 入口（按该仓库 hook 的 secret 校验 `X-Hub-Signature-256`；同一 `X-GitHub-Delivery` 只处理一次） */
         post: operations["receiveGitHubWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/public/hooks/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 定时 Webhook 的地址密钥（`owh_` 开头） */
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 定时的入站 Webhook（M31）：触发一次运行（`trigger = webhook`）
+         * @description 请求体为任意 UTF-8 文本（≤64 KiB），连同 `User-Agent`、名称含 `Event` / `Delivery` 的请求头与查询参数作为不可信数据块
+         *     附在提示词之后，交给新线程。Webhook 运行建出的线程是全自动线程，GitHub 身份只用 Agent 账号（不可用时运行失败，
+         *     `error = github_agent_required`，不回退到主人账号）；只能用允许全自动线程的 SSH 主机。开着「交给助手」时结果只交给受限的主线一轮。
+         *     定时设了签名密钥时须带 `X-Oryn-Signature-256` 或 `X-Hub-Signature-256: sha256=<hex(HMAC-SHA256(密钥, 原始请求体))>`，否则 401 `bad_signature`。
+         *     密钥无效 → 404 `not_found`；定时已暂停 → 409 `schedule_paused`；项目已归档 → 409 `project_archived`；
+         *     请求体过大 → 413；不是 UTF-8 → 400 `invalid_request`；按来源 IP 限流 → 429 `rate_limited`。
+         *     上一次运行未结束（按定时的 `overlap`）时仍记一条 `skipped` 运行并回 202。
+         */
+        post: operations["receiveScheduleWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9951,10 +10009,11 @@ export interface components {
             open: number;
         };
         /**
-         * @description `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性
+         * @description `cron` 5 段表达式或宏；`every` 固定间隔；`once` 一次性；`manual` 没有时间触发，只由手动触发（`POST /schedules/{id}/run`）
+         *     或入站 Webhook（`POST /public/hooks/{key}`）触发，仅 `new_thread`，`nextRunAt` 恒省略
          * @enum {string}
          */
-        ScheduleKind: "cron" | "every" | "once";
+        ScheduleKind: "cron" | "every" | "once" | "manual";
         /**
          * @description `thread` 到点向一个已有线程追加提示词；`new_thread` 每次运行用固定提示词新建一个线程
          * @enum {string}
@@ -9995,7 +10054,7 @@ export interface components {
         /**
          * @description 定时的定义（创建、替换、预览共用）。时间字段：`kind = cron` 须给 `cron`（恰好 5 段，或 `@hourly @daily @midnight @weekly @monthly @yearly @annually`；
          *     不接受 `TZ=` / `CRON_TZ=` 前缀与 `@every`）；`kind = every` 须给 `every`（Go 时长串，≥`1m`、≤`8784h`、整秒）；`kind = once` 须给 `at`（不早于当前 60 秒）。
-         *     `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。
+         *     `timezone` 为 IANA 名称，缺省 `UTC`；`endsAt` 须晚于当前。`kind = manual` 只用于 `new_thread`，不得带 `cron` / `every` / `at` / `endsAt`。
          *     模式规则（违反即 400 `invalid_schedule`）：`POST /schedules` 必须给 `mode`；`thread` 必须给 `threadId` 且不得带
          *     `projectId` / `spaceId` / `role` / `model` / `thinkingLevel` / `provider` / `orbType` / `overlap` / `keepLast`；
          *     `new_thread` 的 `role` 与 `model` 至多给一个；
@@ -10085,6 +10144,8 @@ export interface components {
             /** @description 交给助手（只对 `new_thread` 有意义） */
             handToAssistant: boolean;
             gate?: components["schemas"]["ScheduleGate"];
+            /** @description 入站 Webhook；省略 = 没有 */
+            webhook?: components["schemas"]["ScheduleWebhook"];
             pausedReason?: components["schemas"]["SchedulePausedReason"];
             /** @description 省略 = 不会再触发（暂停或已结束） */
             nextRunAt?: components["schemas"]["TimestampMs"];
@@ -10109,10 +10170,10 @@ export interface components {
             rev: number;
         };
         /**
-         * @description `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发
+         * @description `schedule` 按时；`catchup` 迟到 60 秒以上（含重启补跑，错过的合并为一次）；`manual` 手动触发；`webhook` 入站 Webhook 触发
          * @enum {string}
          */
-        ScheduleRunTrigger: "schedule" | "catchup" | "manual";
+        ScheduleRunTrigger: "schedule" | "catchup" | "manual" | "webhook";
         /** @enum {string} */
         ScheduleRunStatus: "pending" | "running" | "needs_input" | "completed" | "failed" | "skipped";
         ScheduleRun: {
@@ -10128,8 +10189,10 @@ export interface components {
             deliveredAt?: components["schemas"]["TimestampMs"];
             finishedAt?: components["schemas"]["TimestampMs"];
             status: components["schemas"]["ScheduleRunStatus"];
-            /** @description 如 `gate`（运行前闸门判定本次不必运行）、`overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除），或创建线程失败、回合出错的原因 */
+            /** @description 如 `gate`（运行前闸门判定本次不必运行）、`overlap`、`overlap_cap`、`thread_archived`、`project_archived`、`deliver_timeout`、`interrupted`、`stale`、`aborted`（回合被中断）、`agent_exited`（agent 进程退出）、`outcome_unknown`（无法确认回合结果）、`thread_deleted`（线程被删除）、`github_agent_required`（Webhook 运行要求 Agent 账号可用），或创建线程失败、回合出错的原因 */
             error?: string;
+            /** @description 仅 `trigger = webhook`：收到的请求（不可信的外部内容） */
+            payload?: components["schemas"]["ScheduleWebhookPayload"];
         };
         ScheduleList: {
             schedules: components["schemas"]["Schedule"][];
@@ -10139,6 +10202,47 @@ export interface components {
         };
         SchedulePreview: {
             next: components["schemas"]["TimestampMs"][];
+        };
+        /** @description 定时的入站 Webhook（地址里的密钥只在生成时返回一次） */
+        ScheduleWebhook: {
+            /** @description 是否要求签名（`X-Oryn-Signature-256` 或 `X-Hub-Signature-256`） */
+            hasSecret: boolean;
+            createdAt: components["schemas"]["TimestampMs"];
+            /** @description 最近一次生成地址密钥的时刻 */
+            rotatedAt: components["schemas"]["TimestampMs"];
+            /** @description 最近一次通过校验的调用 */
+            lastCalledAt?: components["schemas"]["TimestampMs"];
+        };
+        ScheduleWebhookInput: {
+            /** @description 换一个新的地址密钥（旧地址立即失效）；首次开启时总会生成 */
+            rotateKey?: boolean;
+            /** @description 签名密钥：省略 = 保留原值；空串 = 去掉（不再要求签名） */
+            secret?: string;
+        };
+        ScheduleWebhookResult: {
+            webhook: components["schemas"]["ScheduleWebhook"];
+            /** @description 完整的调用地址，仅在本次生成了新密钥时返回（之后无法再取回，丢失只能换新） */
+            url?: string;
+        };
+        /** @description 入站 Webhook 收到的请求 */
+        ScheduleWebhookPayload: {
+            contentType?: string;
+            /** @description 只记录 `User-Agent` 与名称含 `Event`、`Delivery` 的请求头（不含签名与凭据） */
+            headers?: {
+                [key: string]: string;
+            };
+            /** @description 查询参数（同名取第一个） */
+            query?: {
+                [key: string]: string;
+            };
+            /** @description 请求体原文（UTF-8） */
+            body: string;
+        };
+        ScheduleWebhookAccepted: {
+            runId: components["schemas"]["ScheduleRunId"];
+            status: components["schemas"]["ScheduleRunStatus"];
+            /** @description `status = skipped` 时的原因（`overlap`、`overlap_cap`） */
+            error?: string;
         };
         CoordinatorStatus: {
             available: boolean;
@@ -20703,6 +20807,54 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    putScheduleWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleWebhookInput"];
+            };
+        };
+        responses: {
+            /** @description 设置后的 Webhook */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleWebhookResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteScheduleWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ScheduleIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已关闭 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getThreadSchedule: {
         parameters: {
             query?: never;
@@ -21315,6 +21467,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    receiveScheduleWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 定时 Webhook 的地址密钥（`owh_` 开头） */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "*/*": string;
+            };
+        };
+        responses: {
+            /** @description 已受理 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleWebhookAccepted"];
+                };
             };
             default: components["responses"]["Error"];
         };

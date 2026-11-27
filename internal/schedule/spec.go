@@ -18,6 +18,8 @@ const (
 	KindCron  = "cron"
 	KindEvery = "every"
 	KindOnce  = "once"
+	// KindManual 没有时间触发：只由手动或入站 Webhook 触发（M31，仅 new_thread），next_run_at 恒为 NULL。
+	KindManual = "manual"
 
 	ModeThread    = "thread"
 	ModeNewThread = "new_thread"
@@ -128,6 +130,9 @@ func Validate(in Input, now time.Time) (Input, *time.Location, error) {
 	}
 	switch norm.Mode {
 	case "", ModeThread:
+		if norm.Kind == KindManual {
+			return Input{}, nil, invalid("kind manual is only for mode new_thread")
+		}
 		if norm.ProjectID != "" || norm.SpaceID != "" || norm.Role != "" || norm.ThinkingLevel != "" || norm.Provider != "" ||
 			norm.OrbType != "" || norm.Overlap != "" || norm.Model != nil || norm.KeepLast != nil {
 			return Input{}, nil, invalid("projectId, spaceId, role, model, thinkingLevel, provider, orbType, overlap and keepLast are only for mode new_thread")
@@ -263,8 +268,13 @@ func validateTime(in Input, now time.Time) (Input, *time.Location, error) {
 			return Input{}, nil, invalid("at is in the past")
 		}
 		in.Cron, in.Every = "", ""
+	case KindManual:
+		if strings.TrimSpace(in.Cron) != "" || strings.TrimSpace(in.Every) != "" || in.At != nil || in.EndsAt != nil {
+			return Input{}, nil, invalid("kind manual takes no cron, every, at or endsAt")
+		}
+		in.Cron, in.Every = "", ""
 	default:
-		return Input{}, nil, invalid("kind must be cron, every or once")
+		return Input{}, nil, invalid("kind must be cron, every, once or manual")
 	}
 	if in.EndsAt != nil && *in.EndsAt <= now.UnixMilli() {
 		return Input{}, nil, invalid("endsAt must be in the future")
@@ -272,12 +282,15 @@ func validateTime(in Input, now time.Time) (Input, *time.Location, error) {
 	return in, loc, nil
 }
 
-// firstRun 返回新定义的首个 next_run_at（毫秒）；没有（截止时间之前不会触发）时为 nil。
+// firstRun 返回新定义的首个 next_run_at（毫秒）；没有（截止时间之前不会触发、manual）时为 nil。
 func firstRun(in Input, loc *time.Location, now time.Time) *int64 {
 	var next int64
-	if in.Kind == KindOnce {
+	switch in.Kind {
+	case KindManual:
+		return nil
+	case KindOnce:
 		next = *in.At
-	} else {
+	default:
 		t, ok := NextAfter(in.Kind, in.spec(), loc, now)
 		if !ok {
 			return nil

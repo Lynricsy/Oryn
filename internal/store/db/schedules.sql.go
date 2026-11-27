@@ -118,6 +118,18 @@ func (q *Queries) DeleteScheduleByThread(ctx context.Context, threadID string) (
 	return result.RowsAffected()
 }
 
+const deleteScheduleWebhook = `-- name: DeleteScheduleWebhook :execrows
+DELETE FROM schedule_webhooks WHERE schedule_id = ?1
+`
+
+func (q *Queries) DeleteScheduleWebhook(ctx context.Context, scheduleID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteScheduleWebhook, scheduleID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteThreadReportGen = `-- name: DeleteThreadReportGen :execrows
 DELETE FROM thread_reports WHERE thread_id = ?1 AND gen = ?2
 `
@@ -283,7 +295,7 @@ func (q *Queries) GetScheduleByThread(ctx context.Context, threadID string) (Sch
 }
 
 const getScheduleRun = `-- name: GetScheduleRun :one
-SELECT id, schedule_id, thread_id, "trigger", scheduled_for, missed, started_at, delivered_at, finished_at, status, error FROM schedule_runs WHERE id = ?1
+SELECT id, schedule_id, thread_id, "trigger", scheduled_for, missed, started_at, delivered_at, finished_at, status, error, payload FROM schedule_runs WHERE id = ?1
 `
 
 func (q *Queries) GetScheduleRun(ctx context.Context, id string) (ScheduleRun, error) {
@@ -301,6 +313,7 @@ func (q *Queries) GetScheduleRun(ctx context.Context, id string) (ScheduleRun, e
 		&i.FinishedAt,
 		&i.Status,
 		&i.Error,
+		&i.Payload,
 	)
 	return i, err
 }
@@ -320,6 +333,44 @@ func (q *Queries) GetScheduleSummary(ctx context.Context, threadID string) (GetS
 	row := q.db.QueryRowContext(ctx, getScheduleSummary, threadID)
 	var i GetScheduleSummaryRow
 	err := row.Scan(&i.ID, &i.Enabled, &i.NextRunAt)
+	return i, err
+}
+
+const getScheduleWebhook = `-- name: GetScheduleWebhook :one
+
+SELECT schedule_id, key_hash, secret_enc, created_at, rotated_at, last_called_at FROM schedule_webhooks WHERE schedule_id = ?1
+`
+
+// Inbound webhooks (M31): at most one per schedule. key_hash is the hex SHA-256 of the key in the URL.
+func (q *Queries) GetScheduleWebhook(ctx context.Context, scheduleID string) (ScheduleWebhook, error) {
+	row := q.db.QueryRowContext(ctx, getScheduleWebhook, scheduleID)
+	var i ScheduleWebhook
+	err := row.Scan(
+		&i.ScheduleID,
+		&i.KeyHash,
+		&i.SecretEnc,
+		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.LastCalledAt,
+	)
+	return i, err
+}
+
+const getScheduleWebhookByKey = `-- name: GetScheduleWebhookByKey :one
+SELECT schedule_id, key_hash, secret_enc, created_at, rotated_at, last_called_at FROM schedule_webhooks WHERE key_hash = ?1
+`
+
+func (q *Queries) GetScheduleWebhookByKey(ctx context.Context, keyHash string) (ScheduleWebhook, error) {
+	row := q.db.QueryRowContext(ctx, getScheduleWebhookByKey, keyHash)
+	var i ScheduleWebhook
+	err := row.Scan(
+		&i.ScheduleID,
+		&i.KeyHash,
+		&i.SecretEnc,
+		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.LastCalledAt,
+	)
 	return i, err
 }
 
@@ -425,9 +476,9 @@ func (q *Queries) InsertSchedule(ctx context.Context, arg InsertScheduleParams) 
 const insertScheduleRun = `-- name: InsertScheduleRun :exec
 
 INSERT INTO schedule_runs (id, schedule_id, thread_id, trigger, scheduled_for, missed, started_at, delivered_at,
-                           finished_at, status, error)
+                           finished_at, status, error, payload)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-        ?9, ?10, ?11)
+        ?9, ?10, ?11, ?12)
 `
 
 type InsertScheduleRunParams struct {
@@ -442,9 +493,11 @@ type InsertScheduleRunParams struct {
 	FinishedAt   *int64  `json:"finishedAt"`
 	Status       string  `json:"status"`
 	Error        *string `json:"error"`
+	Payload      *string `json:"payload"`
 }
 
 // Runs.
+// payload is set only for trigger = webhook (the received request as JSON).
 func (q *Queries) InsertScheduleRun(ctx context.Context, arg InsertScheduleRunParams) error {
 	_, err := q.db.ExecContext(ctx, insertScheduleRun,
 		arg.ID,
@@ -458,6 +511,7 @@ func (q *Queries) InsertScheduleRun(ctx context.Context, arg InsertScheduleRunPa
 		arg.FinishedAt,
 		arg.Status,
 		arg.Error,
+		arg.Payload,
 	)
 	return err
 }
@@ -527,7 +581,7 @@ func (q *Queries) ListDueSchedules(ctx context.Context, now int64) ([]Schedule, 
 }
 
 const listOpenScheduleRuns = `-- name: ListOpenScheduleRuns :many
-SELECT id, schedule_id, thread_id, "trigger", scheduled_for, missed, started_at, delivered_at, finished_at, status, error FROM schedule_runs WHERE status IN ('pending', 'running', 'needs_input') ORDER BY started_at, id
+SELECT id, schedule_id, thread_id, "trigger", scheduled_for, missed, started_at, delivered_at, finished_at, status, error, payload FROM schedule_runs WHERE status IN ('pending', 'running', 'needs_input') ORDER BY started_at, id
 `
 
 // All unfinished runs (scheduler recovery), oldest first.
@@ -552,6 +606,7 @@ func (q *Queries) ListOpenScheduleRuns(ctx context.Context) ([]ScheduleRun, erro
 			&i.FinishedAt,
 			&i.Status,
 			&i.Error,
+			&i.Payload,
 		); err != nil {
 			return nil, err
 		}
@@ -567,7 +622,7 @@ func (q *Queries) ListOpenScheduleRuns(ctx context.Context) ([]ScheduleRun, erro
 }
 
 const listScheduleRuns = `-- name: ListScheduleRuns :many
-SELECT id, schedule_id, thread_id, "trigger", scheduled_for, missed, started_at, delivered_at, finished_at, status, error FROM schedule_runs WHERE schedule_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2
+SELECT id, schedule_id, thread_id, "trigger", scheduled_for, missed, started_at, delivered_at, finished_at, status, error, payload FROM schedule_runs WHERE schedule_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2
 `
 
 type ListScheduleRunsParams struct {
@@ -597,6 +652,7 @@ func (q *Queries) ListScheduleRuns(ctx context.Context, arg ListScheduleRunsPara
 			&i.FinishedAt,
 			&i.Status,
 			&i.Error,
+			&i.Payload,
 		); err != nil {
 			return nil, err
 		}
@@ -835,6 +891,20 @@ func (q *Queries) SetScheduleRunThread(ctx context.Context, arg SetScheduleRunTh
 	return err
 }
 
+const touchScheduleWebhook = `-- name: TouchScheduleWebhook :exec
+UPDATE schedule_webhooks SET last_called_at = ?1 WHERE schedule_id = ?2
+`
+
+type TouchScheduleWebhookParams struct {
+	LastCalledAt *int64 `json:"lastCalledAt"`
+	ScheduleID   string `json:"scheduleId"`
+}
+
+func (q *Queries) TouchScheduleWebhook(ctx context.Context, arg TouchScheduleWebhookParams) error {
+	_, err := q.db.ExecContext(ctx, touchScheduleWebhook, arg.LastCalledAt, arg.ScheduleID)
+	return err
+}
+
 const trimScheduleRuns = `-- name: TrimScheduleRuns :exec
 DELETE FROM schedule_runs
 WHERE schedule_runs.schedule_id = CAST(?1 AS TEXT)
@@ -928,6 +998,33 @@ func (q *Queries) UpdateScheduleDef(ctx context.Context, arg UpdateScheduleDefPa
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const upsertScheduleWebhook = `-- name: UpsertScheduleWebhook :exec
+INSERT INTO schedule_webhooks (schedule_id, key_hash, secret_enc, created_at, rotated_at)
+VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT (schedule_id) DO UPDATE SET key_hash = excluded.key_hash, secret_enc = excluded.secret_enc,
+    rotated_at = excluded.rotated_at
+`
+
+type UpsertScheduleWebhookParams struct {
+	ScheduleID string `json:"scheduleId"`
+	KeyHash    string `json:"keyHash"`
+	SecretEnc  []byte `json:"secretEnc"`
+	CreatedAt  int64  `json:"createdAt"`
+	RotatedAt  int64  `json:"rotatedAt"`
+}
+
+// Creates the webhook or replaces its key and signing secret; created_at and last_called_at stay.
+func (q *Queries) UpsertScheduleWebhook(ctx context.Context, arg UpsertScheduleWebhookParams) error {
+	_, err := q.db.ExecContext(ctx, upsertScheduleWebhook,
+		arg.ScheduleID,
+		arg.KeyHash,
+		arg.SecretEnc,
+		arg.CreatedAt,
+		arg.RotatedAt,
+	)
+	return err
 }
 
 const upsertThreadReport = `-- name: UpsertThreadReport :exec
