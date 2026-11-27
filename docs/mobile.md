@@ -226,6 +226,32 @@ CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生
 
 CI 不覆盖运动途中的逐帧对齐：按住拖动只在卡片停住后取样比对页头与卡片的位置，开合只看到位后的截图，拖动、甩动、开合动画过程中页头 / 底栏与卡片是否每一帧都对齐，留给真机验收（`docs/plan-m20.md` 步骤 4.3）。
 
+### 隐私清单
+
+主包与 NSE 各带一份 `PrivacyInfo.xcprivacy`（源文件 `web/src-tauri/ios/PrivacyInfo.xcprivacy` 与 `web/src-tauri/ios/NotificationService/PrivacyInfo.xcprivacy`），由 XcodeGen 模板 `web/src-tauri/ios/project.yml` 显式放进各自 target 的 resources 阶段，落在 `Oryn.app/` 与 `Oryn.app/PlugIns/NotificationService.appex/` 根目录。`ios-check`（模拟器包）与 `ios-release`（IPA）都断言两份清单在包里且通过 `plutil -lint`；缺清单或漏报 required reason API 时 App Store Connect 以 ITMS-91053 退回。
+
+收集与追踪：
+
+- 不追踪（`NSPrivacyTracking` 为 false、无追踪域名），包里没有分析、崩溃上报或广告 SDK。
+- 开发者收集的数据只有设备 ID（`NSPrivacyCollectedDataTypeDeviceID`）：APNs 设备令牌经官方推送网关 `https://push.oryn.best` 登记（网关另存设备与主机公钥、App ID 与时间戳，推送内容端到端加密，网关看不到；见 [push-gateway.md](push-gateway.md)）。不关联用户身份、不用于追踪，用途为 App 功能。NSE 只在本机解密，清单里没有收集项。
+- 用户发给自己服务器（orynd）的对话、附件等不算开发者收集，所以不写进清单：服务器由用户自托管，开发者收不到这些内容。服务器把内容转给第三方模型提供商，由服务器所有者在 `models.yml` 里配置，由 App 内的同意提示与隐私政策（<https://docs.oryn.best/privacy/>）披露。App Store Connect 的「App 隐私」问卷按同一口径填写。
+
+主包声明的 required reason API（NSE 的源码 `ios/NotificationService` 与 `Sources/Shared` 不调用这些 API，`NSPrivacyAccessedAPITypes` 为空）：
+
+| 类别 | 理由 | 依据 |
+| --- | --- | --- |
+| UserDefaults | `CA92.1`（只有本 App 读写） | `PushStore.swift` 用 `UserDefaults.standard` 存推送状态；没有 App Group 套件 |
+| FileTimestamp | `C617.1`（App 容器内的文件）、`3B52.1`（用户分享进来的文件） | Rust 壳的 `std::fs` / `tokio::fs` 读写容器里的配置、事件日志与推送登记（`config.rs`、`eventlog.rs`、`pushgw.rs`），上传分享文件时取文件大小（`api.rs` 的 `upload_attachment`）。同一份 Rust 代码的 macOS 发布包 `llvm-nm -u` 引用了 `_stat`、`_fstat`、`_lstat` |
+| SystemBootTime | `35F9.1`（测 App 内事件的间隔） | `SinkFollow.swift` 用 `CACurrentMediaTime()`（以 `mach_absolute_time` 为时基）算开合动画的逐帧进度；Rust 的 `Instant` 在 Apple 平台用同一时钟（`clock_gettime(CLOCK_UPTIME_RAW)`）。二者都不在 Apple 列出的符号里，macOS 包也没有引用 `_mach_absolute_time`，这一项是保守声明 |
+
+没有声明磁盘空间（`statfs`、`statvfs`、`getattrlist` 系列与 `volumeAvailableCapacity*` 都没有用到）与活动键盘。
+
+以后要更新清单的情况：
+
+- 新增 Swift 代码、tauri 插件或 Rust 依赖后，对照 Apple 的 [required reason API 列表](https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api) 复核：Swift 源码搜 `UserDefaults`、`systemUptime`、`mach_absolute_time`、`attributesOfItem`、`modificationDate`、`creationDate`、`volumeAvailableCapacity`、`systemFreeSize`、`activeInputModes`；Rust 一侧在 macOS 上对构建出的 `Oryn.app/Oryn` 与 `PlugIns/NotificationService.appex/NotificationService` 跑 `nm -u`，找 `_stat`、`_fstat`、`_fstatat`、`_lstat`、`_getattrlist*`、`_fgetattrlist`、`_statfs`、`_statvfs`、`_fstatfs`、`_fstatvfs`、`_mach_absolute_time`。新出现的类别写进对应 target 的清单，理由取 Apple 文档里与实际用途相符的代码。
+- 引入自带二进制的第三方 SDK（xcframework 等）时，SDK 应带自己的隐私清单；没有的话把它的用法并进主包清单。
+- App 开始向开发者运营的服务发送新的数据（例如新增崩溃上报或分析）时，在 `NSPrivacyCollectedDataTypes` 里补上对应类型，同步更新 App Store Connect 的「App 隐私」问卷与隐私政策。
+
 ### APNs 推送与 Notification Service Extension
 
 iOS 只有一条推送通道：官方推送网关（`https://push.oryn.best`）转 APNs，协议见 [protocol.md](protocol.md)「官方推送网关」。配对后 App 自动启用推送（弹系统授权框）；登记编排（网关的 `info → challenges → grants`、orynd 订阅）全在 Rust 壳里，原生只提供 APNs 令牌、RFC 8291 接收端密钥与 challenge 事件：

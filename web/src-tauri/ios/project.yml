@@ -31,11 +31,16 @@ targets:
   # 与插件共用 plugins/oryn-mobile/ios/Sources/Shared）。target 名不得含 `_iOS`：tauri 按这个子串找要同步签名的配置
   # （tauri-cli 的 synchronize_project_config）；NSE 的签名来自 Signing.xcconfig（发版时由 ci/ios-nse.sh 写成手动签名）。
   # 本模板渲染到 gen/apple/project.yml，相对路径都以 gen/apple 为基准。
+  # 隐私清单（PrivacyInfo.xcprivacy）各 target 一份，显式放进 resources 阶段，落在 Oryn.app/ 与
+  # NotificationService.appex/ 根目录（内容与依据见 docs/mobile.md「隐私清单」）。
   NotificationService:
     type: app-extension
     platform: iOS
     sources:
       - path: ../../ios/NotificationService
+        excludes: ["PrivacyInfo.xcprivacy"]
+      - path: ../../ios/NotificationService/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: ../../plugins/oryn-mobile/ios/Sources/Shared
       - path: ../../plugins/oryn-mobile/android/src/main/assets/fonts/SymbolsNerdFontMono-Regular.ttf
         buildPhase: resources
@@ -86,6 +91,8 @@ targets:
       - path: {{prefix-path this}}{{/each}}
       - path: LaunchScreen.storyboard
       - path: ../../plugins/oryn-mobile/android/src/main/assets/fonts/SymbolsNerdFontMono-Regular.ttf
+        buildPhase: resources
+      - path: ../../ios/PrivacyInfo.xcprivacy
         buildPhase: resources
     info:
       path: {{app.name}}_iOS/Info.plist

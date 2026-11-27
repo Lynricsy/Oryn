@@ -504,6 +504,11 @@ jobs:
           if [[ "$nse_bid" != "com.lynricsy.oryn.NotificationService" ]]; then echo "::error::NotificationService.appex 的包名是 ${nse_bid}"; exit 1; fi
           nse_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$appex/Info.plist" 2>/dev/null || true)
           if [[ -z "$nse_name" || "$nse_name" == *'$('* ]]; then echo "::error::NotificationService.appex 缺少有效的 CFBundleDisplayName（App Store Connect 90360）"; exit 1; fi
+          # 隐私清单（App Store Connect 对未声明的 required reason API 以 ITMS-91053 退回）：主包与扩展各一份，且是合法 plist
+          for manifest in "$app/PrivacyInfo.xcprivacy" "$appex/PrivacyInfo.xcprivacy"; do
+            [[ -f "$manifest" ]] || { echo "::error::包里没有 ${manifest#"$app"/}（见 web/src-tauri/ios/project.yml 与 docs/mobile.md「隐私清单」）"; exit 1; }
+            plutil -lint "$manifest" || { echo "::error::${manifest#"$app"/} 不是合法的 plist"; exit 1; }
+          done
           echo "产物：${app}（版本 ${ver}）" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "path=$app" >> "$GITHUB_OUTPUT"
 
@@ -757,6 +762,10 @@ jobs:
             echo "::error::NotificationService.appex 的版本 ${nse_ver} / ${nse_build} 与主包 ${ver} / ${build} 不一致（App Store Connect 会退回）"
             exit 1
           fi
+          for manifest in "$app/PrivacyInfo.xcprivacy" "$appex/PrivacyInfo.xcprivacy"; do
+            [[ -f "$manifest" ]] || { echo "::error::IPA 里没有 ${manifest#"$app"/}（见 web/src-tauri/ios/project.yml 与 docs/mobile.md「隐私清单」）"; exit 1; }
+            plutil -lint "$manifest" || { echo "::error::${manifest#"$app"/} 不是合法的 plist"; exit 1; }
+          done
           nse_ent_xml=$(codesign -d --entitlements - --xml "$appex" 2>/dev/null)
           python3 - "$ent_xml" "$nse_ent_xml" <<'PY'
           import plistlib, sys
