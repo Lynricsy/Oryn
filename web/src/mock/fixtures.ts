@@ -7,6 +7,8 @@ import type {
 	Schemas,
 	Thread,
 } from "../api/client";
+import { buildViewReceipt, formatFormAnswer } from "../lib/view/answer";
+import { normalizeUiSpec } from "../lib/view/spec";
 import type { SessionState } from "../omp/types";
 
 export const NOW = Date.now();
@@ -4431,6 +4433,391 @@ const ZOO_WAIT_JOBS = [
 	},
 ];
 
+// ---------------------------------------------------------------- 视图样例（M33，render_ui / render_html）
+
+const VIEW_RENDERED = "Rendered.";
+const VIEW_RENDERED_INPUT =
+	"Rendered. The user's input will arrive as their next message; end this turn now.";
+
+/** 结果的 `details.view`（C3）：`spec` 是 execute 收到的参数（去掉 await）。 */
+function viewRendered(spec: Record<string, unknown>) {
+	return { view: { outcome: "rendered", spec } };
+}
+
+const VIEW_DASHBOARD = {
+	title: "重连改造：本周指标",
+	description: "灰度 20% 客户端，统计 11 月 18 日至 24 日。",
+	width: "wide",
+	blocks: [
+		{
+			type: "stats",
+			items: [
+				{
+					label: "重连成功率",
+					value: "99.2%",
+					delta: "+1.8%",
+					trend: "up",
+					hint: "对照组 97.4%",
+				},
+				{
+					label: "平均恢复时间",
+					value: "1.4 s",
+					delta: "-0.6 s",
+					trend: "down",
+				},
+				{ label: "补拉条目", value: 12840, delta: "持平", trend: "flat" },
+				{ label: "断线次数", value: 37, delta: "-12", trend: "down" },
+			],
+		},
+		{
+			type: "columns",
+			weights: [3, 2],
+			columns: [
+				{
+					blocks: [
+						{
+							type: "chart",
+							chartType: "line",
+							title: "每日恢复耗时（秒）",
+							height: 220,
+							data: {
+								labels: [
+									"周一",
+									"周二",
+									"周三",
+									"周四",
+									"周五",
+									"周六",
+									"周日",
+								],
+								datasets: [
+									{
+										label: "p50",
+										data: [2.1, 1.9, 1.6, 1.5, 1.3, 1.2, 1.2],
+										tension: 0.3,
+									},
+									{
+										label: "p95",
+										data: [6.8, 6.1, 4.9, 4.2, 3.6, 3.3, 3.1],
+										tension: 0.3,
+									},
+								],
+							},
+							options: { scales: { y: { beginAtZero: true } } },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "table",
+							caption: "按客户端",
+							columns: [
+								{ key: "client", label: "客户端" },
+								{ key: "rate", label: "成功率", align: "right" },
+								{ key: "ok", label: "达标", align: "center" },
+							],
+							rows: [
+								{ client: "Web", rate: "99.6%", ok: true },
+								{ client: "macOS", rate: "99.4%", ok: true },
+								{ client: "iOS", rate: "97.9%", ok: false },
+								{ client: "Android", rate: "99.1%", ok: true },
+							],
+						},
+					],
+				},
+			],
+		},
+		{
+			type: "alert",
+			tone: "warning",
+			title: "iOS 后台挂起",
+			text: "App 在后台超过 30 秒后系统会断开连接，回到前台时要等一次完整握手，拉低了 iOS 的成功率。",
+		},
+	],
+};
+
+const VIEW_OVERVIEW = {
+	title: "改动概览",
+	blocks: [
+		{
+			type: "tabs",
+			tabs: [
+				{
+					label: "进度",
+					blocks: [
+						{
+							type: "card",
+							title: "合并清单",
+							description: "合并前要过的检查",
+							blocks: [
+								{
+									type: "progress",
+									label: "检查通过",
+									value: 5,
+									max: 7,
+									tone: "info",
+								},
+								{
+									type: "keyValue",
+									items: [
+										{ label: "分支", value: "feat/reconnect-backoff" },
+										{ label: "改动文件", value: 9 },
+										{ label: "新增测试", value: 14 },
+									],
+								},
+								{
+									type: "badges",
+									items: [
+										{ label: "lint 通过", tone: "success" },
+										{ label: "go test -race 失败 1", tone: "danger" },
+										{ label: "等待评审", tone: "neutral" },
+									],
+								},
+							],
+						},
+					],
+				},
+				{
+					label: "提交",
+					blocks: [
+						{
+							type: "list",
+							ordered: true,
+							items: [
+								{
+									title: "指数退避替换固定 1 秒重试",
+									description:
+										"0.5 秒起步、每次翻倍、15 秒封顶，带 ±20% 抖动。",
+									meta: "a41c9e2",
+								},
+								{
+									title: "重连后按 afterSeq 补拉",
+									description: "服务端只重放断线期间的条目。",
+									meta: "7be0d13",
+								},
+								{ title: "断线时让在途命令失败", meta: "c02f5aa" },
+							],
+						},
+					],
+				},
+			],
+		},
+		{ type: "divider" },
+		{
+			type: "heading",
+			level: 3,
+			text: "握手时序",
+		},
+		{
+			type: "text",
+			text: "断线后客户端先等 **退避时间**，再带上 `afterSeq` 重新订阅；服务端补齐缺口后才推实时帧。",
+			muted: true,
+		},
+		{
+			type: "image",
+			src: `data:image/png;base64,${ZOO_PNG}`,
+			alt: "Oryn 品牌标",
+			caption: "图片块：只接受 https 与 data:image 地址",
+		},
+	],
+};
+
+const VIEW_SVG_ACTIONS = {
+	blocks: [
+		{
+			type: "svg",
+			caption: "重连状态机",
+			svg: '<svg viewBox="0 0 520 110" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif" font-size="13"><defs><marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" style="fill:var(--muted)"/></marker></defs><rect x="8" y="35" width="120" height="40" rx="10" style="fill:var(--surface);stroke:var(--border)"/><text x="68" y="60" text-anchor="middle" style="fill:var(--fg)">已连接</text><rect x="200" y="35" width="120" height="40" rx="10" style="fill:var(--surface);stroke:var(--warning)"/><text x="260" y="60" text-anchor="middle" style="fill:var(--fg)">退避等待</text><rect x="392" y="35" width="120" height="40" rx="10" style="fill:var(--surface);stroke:var(--c1)"/><text x="452" y="60" text-anchor="middle" style="fill:var(--fg)">补拉中</text><path d="M128 55H196" style="stroke:var(--muted)" marker-end="url(#a)"/><path d="M320 55H388" style="stroke:var(--muted)" marker-end="url(#a)"/><path d="M452 35C452 5 68 5 68 31" style="fill:none;stroke:var(--success)" marker-end="url(#a)"/><text x="260" y="16" text-anchor="middle" style="fill:var(--muted)" font-size="11">补齐后恢复实时推送</text></svg>',
+		},
+		{
+			type: "actions",
+			buttons: [
+				{
+					label: "就按这个改",
+					prompt: "就按这个状态机改，iOS 的后台挂起另开一个任务。",
+					variant: "primary",
+				},
+				{
+					label: "先只做 Web",
+					prompt: "这次先只改 Web 客户端，原生端下个版本再跟。",
+				},
+				{ label: "再想想", prompt: "先别动，我再想想。" },
+			],
+		},
+	],
+};
+
+const VIEW_FORM_OPEN = {
+	title: "开 PR 之前",
+	blocks: [
+		{
+			type: "form",
+			title: "合并选项",
+			description: "确认下面几项，我就去开 PR。",
+			columns: 2,
+			submitLabel: "开 PR",
+			fields: [
+				{
+					name: "branch",
+					label: "目标分支",
+					kind: "select",
+					required: true,
+					defaultValue: "main",
+					options: [
+						{ label: "main", value: "main" },
+						{ label: "release/2.4", value: "release-2.4" },
+					],
+				},
+				{
+					name: "backoffCap",
+					label: "退避上限（秒）",
+					kind: "number",
+					min: 5,
+					max: 60,
+					defaultValue: 15,
+				},
+				{
+					name: "reviewers",
+					label: "评审人",
+					kind: "multiselect",
+					required: true,
+					span: "full",
+					options: [
+						{ label: "林夏", value: "linxia" },
+						{ label: "Marco Rossi", value: "marco" },
+						{ label: "周屿", value: "zhouyu" },
+					],
+				},
+				{
+					name: "rollout",
+					label: "灰度比例（%）",
+					kind: "slider",
+					min: 0,
+					max: 100,
+					step: 5,
+					defaultValue: 20,
+					description: "合并后先放给这部分客户端",
+				},
+				{
+					name: "squash",
+					label: "压缩成一个提交",
+					kind: "switch",
+					defaultValue: true,
+				},
+				{
+					name: "notes",
+					label: "PR 说明补充",
+					kind: "textarea",
+					span: "full",
+					placeholder: "可选",
+				},
+			],
+		},
+	],
+};
+
+const VIEW_FORM_ANSWERED = {
+	blocks: [
+		{
+			type: "text",
+			text: "跑测试矩阵之前，选一下范围：",
+		},
+		{
+			type: "form",
+			title: "测试矩阵",
+			fields: [
+				{
+					name: "scope",
+					label: "范围",
+					kind: "radio",
+					required: true,
+					options: [
+						{ label: "只跑改动相关", value: "changed" },
+						{ label: "全量", value: "all" },
+					],
+				},
+				{
+					name: "race",
+					label: "带 -race",
+					kind: "checkbox",
+					defaultValue: true,
+				},
+				{ name: "until", label: "最晚完成日期", kind: "date" },
+			],
+		},
+	],
+};
+const VIEW_FORM_ANSWERED_CALL = "toolu_zoo_view_matrix";
+const VIEW_FORM_ANSWERED_VALUES = {
+	scope: "all",
+	race: true,
+	until: "2026-11-28",
+};
+
+/** 主人对已作答表单的回执（C4 的非阻塞回执，Web 生成的格式原样）。 */
+function viewFormReceipt(): string {
+	const spec = normalizeUiSpec(VIEW_FORM_ANSWERED);
+	const form = spec?.blocks[1];
+	if (form?.type !== "form") throw new Error("VIEW_FORM_ANSWERED 缺表单");
+	return buildViewReceipt(
+		VIEW_FORM_ANSWERED_CALL,
+		{ block: form.path, kind: "form", values: VIEW_FORM_ANSWERED_VALUES },
+		formatFormAnswer(form, VIEW_FORM_ANSWERED_VALUES),
+	);
+}
+
+const VIEW_HTML = {
+	html: '<div class="ov-card"><div class="ov-row"><span class="ov-label">各端成功率</span><span class="ov-badge">本周</span></div><canvas id="c" height="180"></canvas></div><script>new Chart(document.getElementById("c"),{type:"bar",data:{labels:["Web","macOS","iOS","Android"],datasets:[{label:"成功率",data:[99.6,99.4,97.9,99.1],backgroundColor:oryn.palette}]},options:{plugins:{legend:{display:false}},scales:{y:{min:95,max:100}}}});</script>',
+	libs: ["chartjs"],
+};
+
+const ZOO_VIEW_CALLS: (ZooCall & { id: string })[] = [
+	{
+		id: "toolu_zoo_view_dash",
+		name: "render_ui",
+		args: VIEW_DASHBOARD,
+		text: VIEW_RENDERED,
+		details: viewRendered(VIEW_DASHBOARD),
+	},
+	{
+		id: "toolu_zoo_view_overview",
+		name: "render_ui",
+		args: VIEW_OVERVIEW,
+		text: VIEW_RENDERED,
+		details: viewRendered(VIEW_OVERVIEW),
+	},
+	{
+		id: "toolu_zoo_view_svg",
+		name: "render_ui",
+		args: VIEW_SVG_ACTIONS,
+		text: VIEW_RENDERED_INPUT,
+		details: viewRendered(VIEW_SVG_ACTIONS),
+	},
+	{
+		id: "toolu_zoo_view_form",
+		name: "render_ui",
+		args: VIEW_FORM_OPEN,
+		text: VIEW_RENDERED_INPUT,
+		details: viewRendered(VIEW_FORM_OPEN),
+	},
+	{
+		id: "toolu_zoo_view_html",
+		name: "render_html",
+		args: VIEW_HTML,
+		text: VIEW_RENDERED,
+		details: viewRendered({ libs: ["chartjs"] }),
+	},
+	{
+		// 参数没通过 Core 的校验：execute 没被调用，结果没有 details.view
+		id: "toolu_zoo_view_invalid",
+		name: "render_ui",
+		args: { blocks: '[{"type":"chart","chartType":"bar"}]' },
+		text: 'Validation failed for tool "render_ui":\n  - blocks: must be array\n\nReceived arguments:\n{\n  "blocks": "[{\\"type\\":\\"chart\\",\\"chartType\\":\\"bar\\"}]"\n}',
+		isError: true,
+	},
+];
+
 /** 工具样例转录：每个注册工具一次调用 + 一次失败 + 一次运行中，外加 bashExecution、compaction、model_change。 */
 export function buildToolZooTranscript(): Entry[] {
 	seq = 0;
@@ -4511,6 +4898,48 @@ export function buildToolZooTranscript(): Entry[] {
 				tokensAfter: 31_500,
 			});
 		}
+	});
+	// 视图：一批直出的视图（含一次参数校验失败），再是一张已作答的表单与主人的回执
+	const pushCalls = (text: string, calls: (ZooCall & { id: string })[]) => {
+		push("message", {
+			message: assistant(
+				[
+					{ type: "text", text },
+					...calls.map((c) => ({
+						type: "toolCall",
+						id: c.id,
+						name: c.name,
+						arguments: c.args,
+					})),
+				],
+				ts + 4000,
+			),
+		});
+		for (const c of calls)
+			push("message", {
+				message: {
+					role: "toolResult",
+					toolCallId: c.id,
+					toolName: c.name,
+					content: c.text ? [{ type: "text", text: c.text }] : [],
+					details: c.details ?? {},
+					isError: c.isError === true,
+					timestamp: ts + 4000,
+				},
+			});
+	};
+	pushCalls("用视图汇总一下这次改造：", ZOO_VIEW_CALLS);
+	pushCalls("跑测试之前确认一下：", [
+		{
+			id: VIEW_FORM_ANSWERED_CALL,
+			name: "render_ui",
+			args: VIEW_FORM_ANSWERED,
+			text: VIEW_RENDERED_INPUT,
+			details: viewRendered(VIEW_FORM_ANSWERED),
+		},
+	]);
+	push("message", {
+		message: { role: "user", content: viewFormReceipt(), timestamp: ts + 4000 },
 	});
 	// 后台任务：三条转入后台的 bash（一条完成、一条失败、一条还在跑），之后是交付与输出提醒
 	push("message", {
