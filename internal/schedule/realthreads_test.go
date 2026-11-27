@@ -210,6 +210,11 @@ func TestRealThreadsRecoveredPromptErrors(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "provider exploded", deref(r.Error), "第 %d 次", i+1)
 	}
+	// 结算先写运行状态（finishRun）、再计失败次数（countFailure）：等到第三次计数落库再停调度器
+	p.waitUntil(t, "第三次失败计数", func() bool {
+		row, err := st.Q.GetSchedule(ctx, sc.ID)
+		return err == nil && row.Failures == 3
+	})
 	stop()
 	row, err := st.Q.GetSchedule(ctx, sc.ID)
 	require.NoError(t, err)
