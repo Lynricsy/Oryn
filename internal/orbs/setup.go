@@ -35,6 +35,9 @@ type SetupPlan struct {
 	ConfigHash string
 	// Withheld 是 runner 下发前因含形似密钥的内容被扣下、没有下发的全局 omp-home 文件（M21，见 planRunner）；orb 恒为空。
 	Withheld []agentcfg.Withheld
+	// EnvFallback 是 Params.Env 里环境变量降级的模型密钥的变量名（agentcfg.EnvFallbackName，按名排序）；runPhase 据此记下
+	// orbd 环境里现有哪些降级密钥（见 envwithdraw.go）。协调宿主与 runner 恒为空。
+	EnvFallback []string
 }
 
 // SetupSource 为 orb 生成 setup / resume 参数。
@@ -488,6 +491,7 @@ func (d *DefaultSetup) plan(ctx context.Context, prj *db.Project, orb db.Orb) (S
 			return plan, err
 		}
 		p.OmpHome = home
+		plan.EnvFallback = slices.Sorted(maps.Keys(rendered.Env))
 		// 环境变量降级的模型密钥优先于同名的 env 密钥与项目环境变量（模型供应商密钥只在全局）。
 		for k, v := range rendered.Env {
 			p.Env[k] = v
@@ -560,6 +564,52 @@ func (d *DefaultSetup) envConsent(ctx context.Context) func(string) bool {
 		id, third := aiconsent.ModelRecipient(key, "")
 		return !third || aiconsent.Check(ctx, d.AIConsent, id) == nil
 	}
+}
+
+// WithheldEnvKeys 返回当前同意记录扣下的环境变量降级 provider（按键排序）：不按同意过滤（a024f3fc 之前的行为）时会把
+// 真实密钥以环境变量注入工作 orb、而主人现在没有同意的 provider。判定与 plan 同一条渲染路径：渲染时被同意判定拒绝的
+// provider，去掉密钥绑定了上游主机的（旧行为下这类配置让渲染失败，不会注入）。没有 omp-home 或没有 models.yml 时为空。
+func (d *DefaultSetup) WithheldEnvKeys(ctx context.Context) ([]string, error) {
+	if d.Home == nil {
+		return nil, nil
+	}
+	files, err := d.Home.LoadAll()
+	if err != nil {
+		return nil, fmt.Errorf("读取 omp-home: %w", err)
+	}
+	models, ok := files[agentcfg.ModelsFile]
+	if !ok {
+		return nil, nil
+	}
+	var resolver agentcfg.Resolver = emptyResolver{}
+	if d.Vault != nil {
+		resolver = d.Vault
+	}
+	consent := d.envConsent(ctx)
+	var denied []string
+	opts := agentcfg.RenderOptions{EnvConsent: func(key string) bool {
+		ok := consent(key)
+		if !ok {
+			denied = append(denied, key)
+		}
+		return ok
+	}}
+	if _, err := agentcfg.RenderWith(map[string][]byte{agentcfg.ModelsFile: models}, resolver, opts); err != nil {
+		return nil, fmt.Errorf("变换 omp-home: %w", err)
+	}
+	var out []string
+	for _, key := range denied {
+		id, _, ok := resolver.Lookup(agentcfg.ModelKeySecretName(key))
+		if !ok {
+			continue
+		}
+		if _, hosts, _ := resolver.SecretByID(id); len(hosts) > 0 {
+			continue
+		}
+		out = append(out, key)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // renderHome 读全局 omp-home 并按 opts 变换（models.yml 的密钥换成占位符、baseUrl 改写到出站代理），返回下发清单与

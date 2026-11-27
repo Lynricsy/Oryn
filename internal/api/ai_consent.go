@@ -7,7 +7,7 @@ package api
 // 一律拒绝并回 `ai_consent_required`：
 //   - orb、协调宿主、记忆中转、artifact sample 的模型请求 → egress 的 /llm/ 路由（按路由的 provider 与上游主机）；
 //   - 不带 Oryn 密钥、上游在公网的 provider 由 agentcfg 同样改写到 /llm/ 路由；以环境变量降级的密钥在 orb setup 时
-//     只对已同意的 provider 注入；
+//     只对已同意的 provider 注入，同意记录变化后由 aiConsentChanged 从在跑的 orb 里收回（orbs.Service.WithdrawEnvKeys）；
 //   - 记忆的嵌入 / 重排接口 → 记忆中转（memory.relay.endpoint）；助手记忆的判断模型 → ownermem.decideScores；
 //   - 全局助手与后台研究联网 → egress 的正向代理（web:public）。
 // 后台任务（定时、后台研究、记忆抽取）在主人同意之前因此暂停（请求被拒、稍后重试或记失败），同意后的下一个请求即恢复。
@@ -375,6 +375,7 @@ func (s *Server) PutAiDataConsent(w http.ResponseWriter, r *http.Request) {
 	if !savedOwner(w, r, n, err) {
 		return
 	}
+	s.aiConsentChanged(r.Context())
 	s.GetAiDataConsent(w, r)
 }
 
@@ -384,5 +385,14 @@ func (s *Server) DeleteAiDataConsent(w http.ResponseWriter, r *http.Request) {
 	if !savedOwner(w, r, n, err) {
 		return
 	}
+	s.aiConsentChanged(r.Context())
 	s.GetAiDataConsent(w, r)
+}
+
+// aiConsentChanged 在同意记录变化之后收回 orb 环境里已不被同意的环境变量降级密钥（orbs.Service.WithdrawEnvKeys：
+// 带着这类密钥的工作 orb 重走 resume、停掉其上的 agent）。没有被扣下的 provider 时不做任何事。
+func (s *Server) aiConsentChanged(ctx context.Context) {
+	if s.Orbs != nil && s.Orbs.Service != nil {
+		s.Orbs.Service.WithdrawEnvKeys(context.WithoutCancel(ctx), "consent")
+	}
 }

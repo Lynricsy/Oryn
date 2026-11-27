@@ -474,6 +474,15 @@ func (s *Service) onHello(l *orbLink) {
 			}
 		}
 	}
+	if pending := s.pendingEnvWithdraw(orb.ID); !l.runner && orb.State == StateReady && len(pending) > 0 {
+		// 有待收回的环境变量降级密钥（AI 数据同意，见 envwithdraw.go）：退回 connecting，由本 link 重走 resume
+		if _, _, err := s.transition(ctx, orb.ID, StateReady, StateConnecting, map[string]any{"reason": envWithdrawReason, "providers": pending}); err != nil {
+			slog.Warn("收回环境变量降级密钥时状态更新失败", "orb", orb.ID, "err", err)
+		}
+		if orb, err = s.Get(ctx, l.orbID); err != nil {
+			return
+		}
+	}
 	if orb.State == StateConnecting {
 		s.runPhase(l)
 	}
@@ -544,6 +553,15 @@ func (s *Service) runPhase(l *orbLink) {
 	if err != nil || !moved {
 		return
 	}
+	// 待收回的环境变量降级密钥（见 envwithdraw.go）在生成参数之前取走：此后的同意变化另行记下，由进入 ready 时的复查接手。
+	// 没能收回（中途失败、link 断开）就放回，由下一次 runPhase 再收。
+	withdraw := s.takeEnvWithdraw(l.orbID)
+	withdrawn := len(withdraw) == 0
+	defer func() {
+		if !withdrawn {
+			s.restoreEnvWithdraw(l.orbID, withdraw)
+		}
+	}()
 	gen := s.policyGeneration() // 读配置之前取代际：期间项目门禁被改时不写回旧策略（由 policyFor 按需重建）
 	var plan SetupPlan
 	if s.setup != nil {
@@ -587,6 +605,8 @@ func (s *Service) runPhase(l *orbLink) {
 		_, _, _ = s.transition(ctx, l.orbID, phase, StateFailed, map[string]any{"reason": err.Error()})
 		return
 	}
+	// orbd 已用这份参数替换 setup 环境（脚本失败也一样，环境在脚本之前写入）
+	s.noteEnvHeld(l.orbID, plan.EnvFallback)
 	if method == apigen.MethodSetupRun && res.Ok && res.SetupRan {
 		// CP-5：只有真正跑过并成功的 setup 才改变环境已应用的配置；resume 与跳过的 setup 不算
 		s.recordAppliedHash(ctx, l.orbID, hash)
@@ -626,6 +646,14 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 		detail["resumeOk"] = rres.Ok
 	}
+	if !withdrawn {
+		// 新环境已生效：停掉还带着旧环境的 agent，进入 ready 后由线程服务重新拉起
+		if !s.stopEnvAgents(ctx, l, withdraw) {
+			linkLost("停止 agent ")
+			return
+		}
+		withdrawn = true
+	}
 	if h := s.desktopHooksFor(l); h != nil {
 		// Profile 必须在 agent 启动（ready）之前定下来。期间 link 断开则 Profile 可能没定好：
 		// 与 setup 期间断开同样退回 connecting，由新 link 重跑本阶段（setup 有完成标记，不会重复执行脚本）。
@@ -638,7 +666,7 @@ func (s *Service) runPhase(l *orbLink) {
 			return
 		}
 	}
-	_, _, _ = s.transitionThen(ctx, l.orbID, phase, StateReady, detail, func(t *txn) error {
+	_, ready, _ := s.transitionThen(ctx, l.orbID, phase, StateReady, detail, func(t *txn) error {
 		var err error
 		switch derefStr(t.orb.PoolState) {
 		case PoolWarming:
@@ -648,6 +676,10 @@ func (s *Service) runPhase(l *orbLink) {
 		}
 		return err
 	})
+	if pending := s.pendingEnvWithdraw(l.orbID); ready && len(pending) > 0 {
+		// 本阶段生成参数之后同意又有变化（参数里可能还带着刚被撤回的密钥）：再走一遍
+		s.reprepareForEnv(ctx, l.orbID, pending)
+	}
 }
 
 func (s *Service) onLinkDown(l *orbLink) {
