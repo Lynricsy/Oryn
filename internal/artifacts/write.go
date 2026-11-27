@@ -625,7 +625,7 @@ func (s *Service) Write(ctx context.Context, p WriteParams) (Artifact, error) {
 }
 
 // UploadVersion 用 r 的内容替换 Office artifact 的入口文件，在 base 上写一个新版本（作者是用户）。
-// 只接受二进制（Office）类型；校验与冲突检查同 Write。
+// 只接受二进制（Office）类型；冲突检查同 Write，文件校验不过回 bad_office（与导入一致）。
 func (s *Service) UploadVersion(ctx context.Context, id string, base int, r io.Reader) (Artifact, error) {
 	a, err := s.Get(ctx, id)
 	if err != nil {
@@ -634,7 +634,11 @@ func (s *Service) UploadVersion(ctx context.Context, id string, base int, r io.R
 	if !IsBinaryType(a.Type) {
 		return Artifact{}, opErr(CodeInvalid, "只有 Office artifact 能上传新版本；artifact %s 不是。", id)
 	}
-	return s.Write(ctx, WriteParams{ID: id, BaseVersion: base, Files: []FileChange{{Path: TypeEntry(a.Type), Data: r}}})
+	out, err := s.Write(ctx, WriteParams{ID: id, BaseVersion: base, Files: []FileChange{{Path: TypeEntry(a.Type), Data: r}}})
+	if oe, ok := AsOpError(err); ok && oe.Code == CodeInvalid {
+		return Artifact{}, &OpError{Code: CodeBadOffice, Message: oe.Message}
+	}
+	return out, err
 }
 
 // RestoreVersion 把旧版本 version 的文件清单、能力声明与格式复制成新的最新版本。冲突检查的路径是两版之间

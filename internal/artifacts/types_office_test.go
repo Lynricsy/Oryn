@@ -206,7 +206,7 @@ func TestOfficeImportAndUpload(t *testing.T) {
 	_, err = e.s.UploadVersion(ctx, a.ID, 1, bytes.NewReader(docxBytes(t)))
 	assert.Equal(t, CodeConflict, code(err))
 	_, err = e.s.UploadVersion(ctx, a.ID, 2, bytes.NewReader(pdfBytes()))
-	assert.Equal(t, CodeInvalid, code(err))
+	assert.Equal(t, CodeBadOffice, code(err))
 	page, err := e.s.Create(ctx, CreateParams{Title: "p", Files: []FileChange{put("index.html", "<p>")}})
 	require.NoError(t, err)
 	_, err = e.s.UploadVersion(ctx, page.ID, 1, bytes.NewReader(docxBytes(t)))

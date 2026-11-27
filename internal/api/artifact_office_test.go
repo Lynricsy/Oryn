@@ -62,6 +62,10 @@ func TestArtifactOfficeREST(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, resp.StatusCode, string(b))
 	resp, b = upload(2, []byte("not a zip"))
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, string(b))
+	assert.Equal(t, "bad_office", decodeAs[map[string]any](t, b)["code"])
+	resp, b = send(t, "GET", srv.URL+"/api/v1/artifacts/"+a.ID, nil, authed)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
+	assert.Equal(t, 2, decodeAs[apigen.ArtifactDetail](t, b).Head, "损坏的文件不产生版本")
 
 	resp, b = send(t, "GET", srv.URL+"/api/v1/artifacts/"+a.ID+"/export?format=original", nil, authed)
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
