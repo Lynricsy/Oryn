@@ -298,9 +298,96 @@ func TestNotesStickyDelivered(t *testing.T) {
 	np, ok, err := ne.s.loadNotes(context.Background(), ne.a.ID)
 	require.NoError(t, err)
 	require.True(t, ok)
-	cs, ss := np.fresh()
+	cs, ss, ps := np.fresh()
 	assert.Empty(t, cs)
 	assert.Empty(t, ss)
+	assert.Empty(t, ps)
+}
+
+// pickDoc 是带一个方案组 home（a：帧 home-a，主题 calm；b：帧 home-b）的设计画布。
+const pickDoc = `{"format":3,"design":{"engine":1,"start":"home-a"},"canvases":[{"id":"c1","name":"首页"}],"pages":[` +
+	`{"id":"home-a","canvas":"c1","name":"首页 A","file":"dist/home.html","source":"src/frames/home.tsx","x":0,"y":0,"width":390,"height":844},` +
+	`{"id":"home-b","canvas":"c1","name":"首页 B","file":"dist/about.html","source":"src/frames/about.tsx","x":500,"y":0,"width":390,"height":844},` +
+	`{"id":"legacy","canvas":"c1","name":"旧页","file":"legacy.html","x":1000,"y":0}],"notes":[],"groups":[` +
+	`{"id":"home","canvas":"c1","name":"首页首屏","variants":[` +
+	`{"id":"a","name":"冷静克制","note":"","theme":"calm","pages":["home-a"]},` +
+	`{"id":"b","name":"暖调杂志","note":"","theme":"","pages":["home-b"]}],"picked":null,"pickedBy":null}]}`
+
+// 用户选定方案组：服务端展开搬移（落选画框进「备选方案」页）、伪造的 pickedBy 改成 null；落版本后去抖投递、
+// 消息带选定计数，ack 后 delivered 记 pick:home:b；design_notes 列出选定与提升步骤；agent 自己选定不投递。
+func TestNotesPickDelivered(t *testing.T) {
+	ne := newNotesEnv(t)
+	ctx := context.Background()
+	ne.a = designCanvas(t, ne.env, put("canvas.json", pickDoc))
+	applyOps(t, ne.env, ne.a.ID, "tab", 1,
+		`{"op":"set","id":"home","key":"picked","value":"b"}`,
+		`{"op":"set","id":"home","key":"pickedBy","value":"thr_x"}`)
+	st, err := ne.s.CanvasState(ctx, ne.a.ID)
+	require.NoError(t, err)
+	require.Len(t, st.Doc.Groups, 1)
+	assert.Equal(t, "b", *st.Doc.Groups[0].Picked)
+	assert.Nil(t, st.Doc.Groups[0].PickedBy, "用户伪造的 pickedBy 被改成 null")
+	pa, _ := st.Doc.PageByID("home-a")
+	assert.Equal(t, canvas.AlternatesID, pa.Canvas, "落选画框由服务端搬到备选方案页")
+	pb, _ := st.Doc.PageByID("home-b")
+	assert.Equal(t, "c1", pb.Canvas)
+
+	assert.Equal(t, 1, ne.live.fire(), "静默后落版本")
+	assert.True(t, ne.dirty(t))
+	ne.timers.fire()
+	require.Equal(t, 1, ne.del.n())
+	assert.Contains(t, ne.del.last(t).text, "在 1 个方案组里选定了方案")
+	assert.NotContains(t, ne.del.last(t).text, "design_resolve_note")
+	ne.del.last(t).ack(nil)
+	row, err := ne.st.Q.GetArtifactDesign(ctx, ne.a.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `["pick:home:b"]`, row.Delivered)
+	assert.Nil(t, row.DirtyAt)
+
+	// design_notes 列出选定（已投递过的 new 为假）与提升步骤
+	res, err := ne.s.agentDesignNotes(ctx, threadCaller("thr_a"), json.RawMessage(`{"id":"`+ne.a.ID+`"}`))
+	require.NoError(t, err)
+	_, body, _ := strings.Cut(res.Text, "\n")
+	var got struct {
+		Picks []struct {
+			Ref   string   `json:"ref"`
+			New   bool     `json:"new"`
+			Text  string   `json:"text"`
+			Steps []string `json:"steps"`
+		} `json:"picks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Picks, 1)
+	assert.Equal(t, "pick:home:b", got.Picks[0].Ref)
+	assert.False(t, got.Picks[0].New)
+	assert.Equal(t, "方案组『首页首屏』用户选定了『暖调杂志』", got.Picks[0].Text)
+	assert.Contains(t, strings.Join(got.Picks[0].Steps, "\n"), "保留 src/variants.json")
+	assert.EqualValues(t, 1, res.Details.(obj)["picks"])
+
+	// 再标脏：已投递过，不再投
+	ne.s.markNotesDirty(ctx, ne.a.ID)
+	ne.timers.fire()
+	assert.Equal(t, 1, ne.del.n())
+
+	// agent 自己改选 a：pickedBy 盖章为调用线程（伪造的值被覆盖），画框搬回，不投递
+	_, err = ne.s.Call(ctx, threadCaller("thr_a"), OpUpdate, json.RawMessage(`{"id":"`+ne.a.ID+`","baseVersion":`+itoa(headVersion(t, ne.env, ne.a.ID))+
+		`,"canvas":[{"op":"set","id":"home","key":"picked","value":"a"},{"op":"set","id":"home","key":"pickedBy","value":"thr_x"}]}`))
+	require.NoError(t, err)
+	doc := headDoc(t, ne.env, ne.a.ID)
+	require.NotNil(t, doc.Groups[0].PickedBy)
+	assert.Equal(t, "thr_a", *doc.Groups[0].PickedBy)
+	pa, _ = doc.PageByID("home-a")
+	assert.Equal(t, "c1", pa.Canvas, "改选回来的画框回到组的画布页")
+	pb, _ = doc.PageByID("home-b")
+	assert.Equal(t, canvas.AlternatesID, pb.Canvas)
+	np, ok, err := ne.s.loadNotes(ctx, ne.a.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, _, ps := np.fresh()
+	assert.Empty(t, ps)
+	ne.s.markNotesDirty(ctx, ne.a.ID)
+	ne.timers.fire()
+	assert.Equal(t, 1, ne.del.n(), "agent 自己选定不投递")
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }

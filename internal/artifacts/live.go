@@ -199,8 +199,8 @@ func (s *Service) CanvasState(ctx context.Context, id string) (CanvasState, erro
 // maxCanvasClientBytes 是 client 标签的长度上限。
 const maxCanvasClientBytes = 64
 
-// ApplyCanvas 应用用户的一批画布操作（整批原子）：校验、seq 加一、广播给观看者、重置静默计时器。
-// 用户画的标注 by 一律为 null。返回新的 seq。
+// ApplyCanvas 应用用户的一批画布操作（整批原子）：盖章作者、展开选定的搬移、校验、seq 加一、广播给观看者、
+// 重置静默计时器。用户画的标注 by 与用户选定的 pickedBy 一律为 null。返回新的 seq。
 func (s *Service) ApplyCanvas(ctx context.Context, id string, raw json.RawMessage, client string, clientSeq int64) (int64, error) {
 	if client == "" || len(client) > maxCanvasClientBytes {
 		return 0, opErr(CodeInvalid, "client 必须是 1–%d 字节的标签页 id。", maxCanvasClientBytes)
@@ -212,7 +212,7 @@ func (s *Service) ApplyCanvas(ctx context.Context, id string, raw json.RawMessag
 	if err != nil {
 		return 0, err
 	}
-	stampNotes(ops, nil)
+	ops = stampAuthors(ops, nil)
 	unlock := s.live.locks.lock(id)
 	defer unlock()
 	l, err := s.ensureLive(ctx, id)
@@ -220,6 +220,7 @@ func (s *Service) ApplyCanvas(ctx context.Context, id string, raw json.RawMessag
 		return 0, err
 	}
 	doc := l.doc
+	ops = canvas.ExpandPicks(doc, ops)
 	if err := canvas.Apply(&doc, ops); err != nil {
 		return 0, canvasOpsErr(err)
 	}
@@ -249,17 +250,34 @@ func canvasOpsErr(err error) *OpError {
 	return opErr(CodeInvalid, "画布操作不合法：%v。整批操作都没有生效；操作的格式见 read_artifact_guide 的 canvas 主题。", err)
 }
 
-// stampNotes 把新增标注的 by 记为 thread（nil = 用户）：作者由服务端决定，不信任提交方。
-func stampNotes(ops []canvas.Op, thread *string) {
+// stampAuthors 由服务端决定作者，不信任提交方（thread 为 nil = 用户）：新增标注的 by 记为 thread；方案组的
+// pickedBy 只由这里写——提交方的 set pickedBy 一律剔掉，add 方案组带 picked 时 pickedBy 记为 thread（否则为 null），
+// 每条选定（set picked 非 null）之后紧跟一条 set pickedBy = thread（用户选定时 Apply 已把它置 null，不再追加）。
+func stampAuthors(ops []canvas.Op, thread *string) []canvas.Op {
+	var by any
+	if thread != nil {
+		by = *thread
+	}
+	out := make([]canvas.Op, 0, len(ops))
 	for _, op := range ops {
-		if op.Op == canvas.OpAdd && op.ObjectType() == canvas.TypeNote {
-			if thread != nil {
-				op.Object["by"] = *thread
+		switch {
+		case op.Op == canvas.OpAdd && op.ObjectType() == canvas.TypeNote:
+			op.Object["by"] = by
+		case op.Op == canvas.OpAdd && op.ObjectType() == canvas.TypeGroup:
+			if op.Object["picked"] != nil {
+				op.Object["pickedBy"] = by
 			} else {
-				op.Object["by"] = nil
+				op.Object["pickedBy"] = nil
 			}
+		case op.Op == canvas.OpSet && op.Key == "pickedBy":
+			continue
+		}
+		out = append(out, op)
+		if op.Op == canvas.OpSet && op.Key == "picked" && op.Value != nil && thread != nil {
+			out = append(out, canvas.Op{Op: canvas.OpSet, ID: op.ID, Key: "pickedBy", Value: *thread})
 		}
 	}
+	return out
 }
 
 // settleAdds 把 add 的对象换成它在应用后文档里的完整形态（补上缺省的位置、文件、所属画布页等），
@@ -283,6 +301,10 @@ func settleAdds(doc canvas.Doc, ops []canvas.Op) []canvas.Op {
 		case canvas.TypeNote:
 			if j := slices.IndexFunc(doc.Notes, func(n canvas.Note) bool { return n.ID == id }); j >= 0 {
 				v = doc.Notes[j]
+			}
+		case canvas.TypeGroup:
+			if j := slices.IndexFunc(doc.Groups, func(g canvas.Group) bool { return g.ID == id }); j >= 0 {
+				v = doc.Groups[j]
 			}
 		}
 		if v == nil {
@@ -562,8 +584,8 @@ func (s *Service) liveFollow(id string, n int) {
 }
 
 // agentCanvas 执行带 canvas 的 update_artifact：先把用户未落版本的操作单独写成一个用户版本，再在最新文档上
-// 应用 agent 的操作，把合并后的 canvas.json 与本次的文件一起写成 agent 的版本。base 是 agent 的 baseVersion：
-// files 里的文件按它做冲突检查；canvas.json 由服务端合并，不按它检查。
+// 应用 agent 的操作（作者盖章为调用线程、展开选定的搬移），把合并后的 canvas.json 与本次的文件一起写成 agent 的版本。
+// base 是 agent 的 baseVersion：files 里的文件按它做冲突检查；canvas.json 由服务端合并，不按它检查。
 func (s *Service) agentCanvas(ctx context.Context, c Caller, id string, base int, raw json.RawMessage, files []FileChange, note string) (Artifact, error) {
 	ops, err := parseCanvasOps(raw)
 	if err != nil {
@@ -573,7 +595,7 @@ func (s *Service) agentCanvas(ctx context.Context, c Caller, id string, base int
 	if c.ThreadID != "" {
 		by = &c.ThreadID
 	}
-	stampNotes(ops, by)
+	ops = stampAuthors(ops, by)
 	unlock := s.live.locks.lock(id)
 	defer unlock()
 	l := s.liveOf(id)
@@ -587,6 +609,7 @@ func (s *Service) agentCanvas(ctx context.Context, c Caller, id string, base int
 		return Artifact{}, err
 	}
 	pre := doc
+	ops = canvas.ExpandPicks(doc, ops)
 	if err := canvas.Apply(&doc, ops); err != nil {
 		return Artifact{}, canvasOpsErr(err)
 	}

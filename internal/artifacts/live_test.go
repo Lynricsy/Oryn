@@ -451,6 +451,57 @@ func TestLiveAgentCanvas(t *testing.T) {
 	assert.Equal(t, CodeInvalid, code(err))
 }
 
+// 方案组的选定：用户提交的 pickedBy（add 带的、单独 set 的）一律为 null；set picked 在服务端展开成搬移操作，
+// 广播的就是展开后的批次；agent 选定时 pickedBy 盖章为调用线程，伪造的值被覆盖。
+func TestLivePickStamped(t *testing.T) {
+	e, hub, _ := newLiveEnv(t)
+	mkThread(t, e.st, "thr_a", "")
+	c := threadCaller("thr_a")
+	a, err := e.s.Create(context.Background(), CreateParams{Title: "画布", ThreadID: "thr_a", Author: c.author(), Files: []FileChange{
+		put("canvas.json", liveDoc), put("a.html", "<p>封面</p>"),
+	}})
+	require.NoError(t, err)
+	hub.watch(a.ID, "c1")
+	applyOps(t, e, a.ID, "tab", 1,
+		`{"op":"add","object":{"type":"page","id":"p2","canvas":"c1","name":"暖调","x":1400,"y":0,"width":1280,"height":800}}`,
+		`{"op":"add","object":{"type":"group","id":"home","name":"首页首屏","variants":[`+
+			`{"id":"a","name":"冷静","note":"","theme":"","pages":["p1"]},{"id":"b","name":"暖调","note":"","theme":"","pages":["p2"]}],`+
+			`"picked":"a","pickedBy":"thr_x"}}`)
+	g := hub.next(t).Ops[1]["object"].(map[string]any)
+	assert.Nil(t, g["pickedBy"], "add 带的 pickedBy 被改成 null")
+	assert.Equal(t, "c1", g["canvas"], "广播的是补全缺省值后的方案组")
+
+	applyOps(t, e, a.ID, "tab", 2,
+		`{"op":"set","id":"home","key":"picked","value":"b"}`,
+		`{"op":"set","id":"home","key":"pickedBy","value":"thr_x"}`)
+	m := hub.next(t)
+	var keys []string
+	for _, op := range m.Ops {
+		if k, ok := op["key"].(string); ok {
+			keys = append(keys, k)
+		}
+	}
+	assert.Equal(t, []string{"picked", "canvas", "x", "y"}, keys, "广播展开后的批次，提交的 pickedBy 被剔掉")
+	assert.Equal(t, canvas.AlternatesID, m.Ops[1]["object"].(map[string]any)["id"], "备选方案页先 add")
+	st, err := e.s.CanvasState(context.Background(), a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "b", *st.Doc.Groups[0].Picked)
+	assert.Nil(t, st.Doc.Groups[0].PickedBy)
+	p1, _ := st.Doc.PageByID("p1")
+	assert.Equal(t, canvas.AlternatesID, p1.Canvas)
+
+	// agent 改选 a：先落用户版本，再写 agent 的版本；pickedBy 是它的线程
+	mustCall(t, e.s, c, OpUpdate, `{"id":"`+a.ID+`","baseVersion":1,"canvas":[`+
+		`{"op":"set","id":"home","key":"picked","value":"a"},{"op":"set","id":"home","key":"pickedBy","value":"thr_x"}]}`)
+	d := headDoc(t, e, a.ID)
+	require.NotNil(t, d.Groups[0].PickedBy)
+	assert.Equal(t, "thr_a", *d.Groups[0].PickedBy)
+	p1, _ = d.PageByID("p1")
+	assert.Equal(t, "c1", p1.Canvas)
+	p2, _ := d.PageByID("p2")
+	assert.Equal(t, canvas.AlternatesID, p2.Canvas)
+}
+
 // 没人在看（没有实时状态）时 agent 的画布操作直接写一个版本，copyOf 复制来源画框的文件。
 func TestLiveAgentCanvasNoViewers(t *testing.T) {
 	e, hub, _ := newLiveEnv(t)
