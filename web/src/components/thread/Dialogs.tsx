@@ -1808,16 +1808,17 @@ export function PlanProposalDialog({
 							</span>
 							<Select
 								size="sm"
-								className="w-auto min-w-0"
+								className="w-64 max-w-full"
 								aria-label={t("plan.continueWith")}
 								value={tier}
 								onChange={setTier}
 								options={tiers.map((x) => ({
 									value: x.role,
-									label: Object.hasOwn(BUILTIN_ROLE_NAMES, x.role)
-										? t(`roles.names.${x.role as BuiltinRole}`)
-										: x.role,
-									hint: shortModelName(x.name, modelBrand(x.model, x.provider)),
+									label: `${
+										Object.hasOwn(BUILTIN_ROLE_NAMES, x.role)
+											? t(`roles.names.${x.role as BuiltinRole}`)
+											: x.role
+									} · ${shortModelName(x.name, modelBrand(x.model, x.provider))}`,
 								}))}
 							/>
 						</div>
