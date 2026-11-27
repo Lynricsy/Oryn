@@ -3665,6 +3665,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/threads/{id}/view-frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 为转录里的一次 render_html 调用申请视图帧（M33）
+         * @description 在该线程主会话的条目里找这次调用（assistant 消息里 `id` 相同、`name` 为 `render_html` 的 toolCall）；找不到 404。
+         *     帧内容按需从条目读取，策略见 docs/protocol.md 的「视图帧」。帧令牌就是访问凭证，orynd 重启后全部失效；
+         *     关帧沿用 `DELETE /api/v1/artifact-frames/{token}`。
+         */
+        post: operations["openViewFrame"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/{id}/open-link": {
         parameters: {
             query?: never;
@@ -6336,6 +6360,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/public/shares/{slug}/view-frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 为公开分享里的一次 render_html 调用申请视图帧（M33，匿名）
+         * @description 内容一律从服务端条目取（访客不提交 HTML）：只在分享范围内、用清洗后的公开条目查找，且只服务范围内已有成功结果的调用。
+         *     帧绑定这个分享，撤销后帧即 404。slug 不存在、已撤销或找不到调用一律 404 `not_found`。
+         */
+        post: operations["openPublicShareViewFrame"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/public/shares/{slug}/ws": {
         parameters: {
             query?: never;
@@ -8411,6 +8458,15 @@ export interface components {
         };
         ArtifactFrame: {
             /** @description 帧根地址（泛域名模式 `a-<令牌>.<portal_domain>`，回退模式 `<public_url>/_af/<令牌>/`） */
+            url: string;
+            token: components["schemas"]["ArtifactFrameToken"];
+        };
+        ViewFrameRequest: {
+            /** @description 转录里 render_html 调用的 toolCall id */
+            toolCallId: string;
+        };
+        ViewFrame: {
+            /** @description 帧根地址（寻址同 artifact 帧：`a-<令牌>.<portal_domain>` 或 `<public_url>/_af/<令牌>/`） */
             url: string;
             token: components["schemas"]["ArtifactFrameToken"];
         };
@@ -19355,6 +19411,33 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    openViewFrame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ViewFrameRequest"];
+            };
+        };
+        responses: {
+            /** @description 帧 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewFrame"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     openArtifactLink: {
         parameters: {
             query?: never;
@@ -23582,6 +23665,33 @@ export interface operations {
                 };
                 content: {
                     "*/*": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    openPublicShareViewFrame: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: components["parameters"]["ShareSlugPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ViewFrameRequest"];
+            };
+        };
+        responses: {
+            /** @description 帧 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewFrame"];
                 };
             };
             default: components["responses"]["Error"];
