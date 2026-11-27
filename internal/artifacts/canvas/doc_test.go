@@ -10,13 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// vector 是 schema/testdata/canvas-ops.json 的一条用例（TS 实现读同一份）。
+// vector 是 schema/testdata/canvas-ops.json 的一条用例（TS 实现读同一份）。Expand 为真时先用 ExpandPicks 展开 ops。
 type vector struct {
-	Name  string          `json:"name"`
-	Doc   json.RawMessage `json:"doc"`
-	Ops   json.RawMessage `json:"ops"`
-	Want  json.RawMessage `json:"want"`
-	Error string          `json:"error"`
+	Name   string          `json:"name"`
+	Doc    json.RawMessage `json:"doc"`
+	Ops    json.RawMessage `json:"ops"`
+	Want   json.RawMessage `json:"want"`
+	Error  string          `json:"error"`
+	Expand bool            `json:"expand"`
 }
 
 func loadVectors(t *testing.T) []vector {
@@ -29,8 +30,8 @@ func loadVectors(t *testing.T) []vector {
 	return vs
 }
 
-// run 解析文档与操作并应用。
-func run(v vector) (Doc, error) {
+// run 解析文档与操作并应用；twice 为真时把展开过的 ops 再展开一次。
+func run(v vector, twice bool) (Doc, error) {
 	d, err := Parse(v.Doc)
 	if err != nil {
 		return Doc{}, err
@@ -38,6 +39,12 @@ func run(v vector) (Doc, error) {
 	ops, err := ParseOps(v.Ops)
 	if err != nil {
 		return Doc{}, err
+	}
+	if v.Expand {
+		ops = ExpandPicks(d, ops)
+		if twice {
+			ops = ExpandPicks(d, ops)
+		}
 	}
 	if err := Apply(&d, ops); err != nil {
 		return Doc{}, err
@@ -56,11 +63,12 @@ func TestVectors(t *testing.T) {
 	for _, v := range loadVectors(t) {
 		t.Run(v.Name, func(t *testing.T) {
 			require.True(t, (v.Error == "") != (v.Want == nil), "用例必须恰好给 want 或 error 之一")
-			d, err := run(v)
+			d, err := run(v, false)
 			if v.Error != "" {
 				require.Error(t, err, "期望报错：%s", v.Error)
 				var ce *Error
 				require.ErrorAs(t, err, &ce)
+				assert.Equal(t, v.Error, ce.Where, "两边实现报同一个位置")
 				return
 			}
 			require.NoError(t, err)
@@ -69,6 +77,12 @@ func TestVectors(t *testing.T) {
 			again, err := Parse(d.JSON())
 			require.NoError(t, err)
 			assert.Equal(t, string(d.JSON()), string(again.JSON()))
+			if v.Expand {
+				// 重复展开结果不变
+				d2, err := run(v, true)
+				require.NoError(t, err)
+				assert.Equal(t, string(d.JSON()), string(d2.JSON()))
+			}
 		})
 	}
 }
@@ -219,4 +233,75 @@ func TestRemoveStartDoesNotAliasInput(t *testing.T) {
 	require.NoError(t, Apply(&d, ops))
 	assert.Nil(t, d.Design.Start)
 	assert.Equal(t, "a", *orig.Design.Start)
+}
+
+func TestArchived(t *testing.T) {
+	d, err := Parse([]byte(`{"pages":[{"id":"a1","name":"a","file":"a.html"},{"id":"b1","name":"b","file":"b.html"},` +
+		`{"id":"b2","name":"b","file":"c.html"},{"id":"c1","name":"c","file":"d.html"}],"groups":[` +
+		`{"id":"home","name":"首页","variants":[{"id":"a","name":"A","pages":["a1"]},{"id":"b","name":"B","pages":["b1","b2"]}],"picked":"a"},` +
+		`{"id":"x","name":"未选","variants":[{"id":"a","name":"A","pages":["c1"]}]}]}`))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"b1": true, "b2": true}, d.Archived())
+	assert.Equal(t, FormatGroups, d.Format)
+	assert.Empty(t, Doc{}.Archived())
+}
+
+func TestApplySealGroups(t *testing.T) {
+	d, err := Parse([]byte(`{"design":{"engine":1,"start":null},"pages":[` +
+		`{"id":"home-a","name":"A","file":"dist/home-a.html","source":"src/frames/home-a.tsx"},` +
+		`{"id":"home-b","name":"B","file":"dist/home-b.html","source":"src/frames/home-b.tsx"}]}`))
+	require.NoError(t, err)
+	add := json.RawMessage(`[{"op":"add","object":{"type":"group","id":"home","name":"首页","variants":[` +
+		`{"id":"a","name":"A","theme":"calm","pages":["home-a"]},{"id":"b","name":"B","pages":["home-b"]}]}}]`)
+	ops, err := ParseOps(add)
+	require.NoError(t, err)
+
+	// 设计画布上普通 Apply 不能加方案组
+	plain := d
+	var ce *Error
+	require.ErrorAs(t, Apply(&plain, ops), &ce)
+	assert.Equal(t, "ops[0].object.type", ce.Where)
+
+	require.NoError(t, ApplySeal(&d, ops))
+	require.Len(t, d.Groups, 1)
+	assert.Equal(t, DefaultCanvasID, d.Groups[0].Canvas)
+	assert.Equal(t, "calm", d.Groups[0].Variants[0].Theme)
+
+	// 用户选定之后，封存改 variants：选中的方案还在就保留 picked 与 pickedBy
+	ops, err = ParseOps(json.RawMessage(`[{"op":"set","id":"home","key":"picked","value":"b"},{"op":"set","id":"home","key":"pickedBy","value":"thr_1"}]`))
+	require.NoError(t, err)
+	require.NoError(t, Apply(&d, ops))
+	ops, err = ParseOps(json.RawMessage(`[{"op":"set","id":"home","key":"name","value":"首屏"},` +
+		`{"op":"set","id":"home","key":"variants","value":[{"id":"b","name":"B","pages":["home-b"]},{"id":"c","name":"C","pages":["home-a"]}]}]`))
+	require.NoError(t, err)
+	require.NoError(t, ApplySeal(&d, ops))
+	assert.Equal(t, "首屏", d.Groups[0].Name)
+	require.NotNil(t, d.Groups[0].Picked)
+	assert.Equal(t, "b", *d.Groups[0].Picked)
+	assert.Equal(t, "thr_1", *d.Groups[0].PickedBy)
+
+	// 普通 Apply 不能删设计画布的方案组，封存可以
+	ops, err = ParseOps(json.RawMessage(`[{"op":"remove","id":"home"}]`))
+	require.NoError(t, err)
+	plain = d
+	require.ErrorAs(t, Apply(&plain, ops), &ce)
+	assert.Equal(t, "ops[0].id", ce.Where)
+	require.NoError(t, ApplySeal(&d, ops))
+	assert.Empty(t, d.Groups)
+	assert.Equal(t, FormatDesign, d.Format)
+}
+
+func TestSetGroupDoesNotAliasInput(t *testing.T) {
+	d, err := Parse([]byte(`{"pages":[{"id":"a1","name":"a","file":"a.html"},{"id":"b1","name":"b","file":"b.html"},{"id":"b2","name":"b","file":"c.html"}],` +
+		`"groups":[{"id":"home","name":"首页","variants":[{"id":"a","name":"A","pages":["a1"]},{"id":"b","name":"B","pages":["b1","b2"]}]}]}`))
+	require.NoError(t, err)
+	before := string(d.JSON())
+	orig := d
+	ops, err := ParseOps(json.RawMessage(`[{"op":"remove","id":"b2"},{"op":"set","id":"home","key":"picked","value":"a"}]`))
+	require.NoError(t, err)
+	require.NoError(t, Apply(&d, ExpandPicks(d, ops)))
+	assert.Equal(t, before, string(orig.JSON()))
+	assert.Equal(t, []string{"b1"}, d.Groups[0].Variants[1].Pages)
+	p, _ := d.PageByID("b1")
+	assert.Equal(t, AlternatesID, p.Canvas)
 }

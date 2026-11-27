@@ -2,7 +2,8 @@
 //
 // 文档里 canvases 的元素在界面上叫「页面」，pages 的元素叫「画框」（每个画框是版本里的一个 HTML 文件），
 // notes 是画在画框之上的标注。带顶层 design 的是设计画布：画框可以带 source（TSX 源码，file 是它的构建产物），
-// design 与 source 只由封存（ApplySeal）维护。web/src/lib/artifacts/canvas-doc.ts 是逐条相同的 TS 实现，
+// design 与 source 只由封存（ApplySeal）维护。groups 是方案组：同一屏的几种方案并排比较、选定其一，
+// 落选画框由 (Doc).Archived 推导。web/src/lib/artifacts/canvas-doc.ts 是逐条相同的 TS 实现，
 // 两边共用 schema/testdata/canvas-ops.json 的测试向量；改规则时两边一起改。
 package canvas
 
@@ -19,10 +20,11 @@ import (
 
 // 格式、上限与缺省值。
 const (
-	// Format 是只有 HTML 画框的画布写出的格式；带 design、source 或 device 任一字段时写出 FormatDesign。
-	// 解析两种都接受，这样 HTML 画布的 canvas.json 逐字节不变，旧版本仍能读。
+	// Format 是只有 HTML 画框的画布写出的格式；带 design、source 或 device 任一字段时写出 FormatDesign，
+	// 带 groups 时写出 FormatGroups。解析三种都接受，这样 HTML 画布的 canvas.json 逐字节不变，旧版本仍能读。
 	Format       = 1
 	FormatDesign = 2
+	FormatGroups = 3
 	DesignEngine = 1 // design.engine 目前唯一的取值
 
 	MaxCanvases   = 50
@@ -31,6 +33,14 @@ const (
 	MaxPenNumbers = 30000   // 单笔的数字个数（每点 x、y、压力三个）
 	MaxJSONBytes  = 5 << 20 // 整个 canvas.json
 	MaxOps        = 2000    // 单次操作条数
+	MaxGroups     = 20      // 方案组个数
+
+	// 每组的方案数：add 与 set variants 时要求 MinVariants–MaxVariants；级联删除后可以只剩一个。
+	MinVariants     = 2
+	MaxVariants     = 4
+	MaxVariantPages = 24 // 每个方案的画框数
+	MaxGroupName    = 60 // 方案组与方案的名字字数
+	MaxVariantNote  = 200
 
 	MaxNameRunes     = 120
 	MaxNoteTextRunes = 4000
@@ -60,6 +70,10 @@ const (
 	// DefaultCanvasID / DefaultCanvasName 是文档没写 canvases 时补上的唯一画布页。
 	DefaultCanvasID   = "canvas-1"
 	DefaultCanvasName = "页面 1"
+
+	// AlternatesID / AlternatesName 是「备选方案」画布页：组选定后落选画框由 ExpandPicks 搬到这里。
+	AlternatesID   = "alternates"
+	AlternatesName = "备选方案"
 )
 
 // 标注种类。
@@ -116,6 +130,26 @@ type Page struct {
 type Design struct {
 	Engine int     `json:"engine"`
 	Start  *string `json:"start"`
+}
+
+// Variant 是方案组里的一个方案：一组画框，可以带一套方案主题（theme 为空表示没有独立主题）。
+type Variant struct {
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Note  string   `json:"note"`
+	Theme string   `json:"theme"`
+	Pages []string `json:"pages"`
+}
+
+// Group 是一个方案组：Canvas 是它所在的画布页（落选画框改选回来时回到这里）；
+// Picked 是选定的方案 id（nil 为未选定），PickedBy 是选定者的线程 id（用户选的为 nil，由服务端盖章）。
+type Group struct {
+	ID       string    `json:"id"`
+	Canvas   string    `json:"canvas"`
+	Name     string    `json:"name"`
+	Variants []Variant `json:"variants"`
+	Picked   *string   `json:"picked"`
+	PickedBy *string   `json:"pickedBy"`
 }
 
 // FrameFile 返回 source 对应的产物文件：src/frames/<名>.tsx → dist/<名>.html。
@@ -209,26 +243,49 @@ func (n Note) MarshalJSON() ([]byte, error) {
 }
 
 // Doc 是解析后的 canvas.json。数组顺序就是绘制顺序（先画的在下面）。
-// Design 非 nil 即设计画布。Format 由内容决定（见 Format 常量），JSON 写出时重新计算。
+// Design 非 nil 即设计画布。Format 由内容决定（见 Format 常量），JSON 写出时重新计算。Groups 为空时不写出。
 type Doc struct {
 	Format   int      `json:"format"`
 	Design   *Design  `json:"design,omitempty"`
 	Canvases []Canvas `json:"canvases"`
 	Pages    []Page   `json:"pages"`
 	Notes    []Note   `json:"notes"`
+	Groups   []Group  `json:"groups,omitempty"`
 }
 
-// format 返回文档该写出的格式：带 design、source 或 device 任一字段时是 FormatDesign。
+// format 返回文档该写出的格式：带 groups 时是 FormatGroups；带 design、source 或 device 任一字段时是 FormatDesign。
 func (d Doc) format() int {
-	if d.Design != nil || slices.ContainsFunc(d.Pages, func(p Page) bool { return p.Source != "" || p.Device != "" }) {
+	switch {
+	case len(d.Groups) > 0:
+		return FormatGroups
+	case d.Design != nil || slices.ContainsFunc(d.Pages, func(p Page) bool { return p.Source != "" || p.Device != "" }):
 		return FormatDesign
 	}
 	return Format
 }
 
+// Archived 返回落选画框：已选定的组里其它方案的画框。只由 groups 推导，与画框当前在哪个画布页无关。
+func (d Doc) Archived() map[string]bool {
+	out := map[string]bool{}
+	for _, g := range d.Groups {
+		if g.Picked == nil {
+			continue
+		}
+		for _, v := range g.Variants {
+			if v.ID == *g.Picked {
+				continue
+			}
+			for _, p := range v.Pages {
+				out[p] = true
+			}
+		}
+	}
+	return out
+}
+
 // JSON 是规范化的 canvas.json：键序固定、两空格缩进、末尾换行，便于逐版本比较。
 func (d Doc) JSON() []byte {
-	out := Doc{Format: d.format(), Design: d.Design, Canvases: d.Canvases, Pages: d.Pages, Notes: d.Notes}
+	out := Doc{Format: d.format(), Design: d.Design, Canvases: d.Canvases, Pages: d.Pages, Notes: d.Notes, Groups: d.Groups}
 	if out.Canvases == nil {
 		out.Canvases = []Canvas{}
 	}
@@ -532,13 +589,15 @@ func (r *reader) list(m map[string]any, key string, max int) []any {
 }
 
 var (
-	docKeys    = []string{"format", "design", "canvases", "pages", "notes"}
-	designKeys = []string{"engine", "start"}
-	canvasKeys = []string{"id", "name"}
-	pageKeys   = []string{"id", "canvas", "name", "file", "x", "y", "width", "height", "locked", "source", "device"}
-	noteCommon = []string{"id", "canvas", "kind", "color", "locked", "by"}
-	shapeKeys  = append(slices.Clone(noteCommon), "x1", "y1", "x2", "y2", "width", "from", "to")
-	noteKeys   = map[string][]string{
+	docKeys     = []string{"format", "design", "canvases", "pages", "notes", "groups"}
+	groupKeys   = []string{"id", "canvas", "name", "variants", "picked", "pickedBy"}
+	variantKeys = []string{"id", "name", "note", "theme", "pages"}
+	designKeys  = []string{"engine", "start"}
+	canvasKeys  = []string{"id", "name"}
+	pageKeys    = []string{"id", "canvas", "name", "file", "x", "y", "width", "height", "locked", "source", "device"}
+	noteCommon  = []string{"id", "canvas", "kind", "color", "locked", "by"}
+	shapeKeys   = append(slices.Clone(noteCommon), "x1", "y1", "x2", "y2", "width", "from", "to")
+	noteKeys    = map[string][]string{
 		KindText:    append(slices.Clone(noteCommon), "x", "y", "text", "size"),
 		KindSticky:  append(slices.Clone(noteCommon), "x", "y", "width", "text", "done"),
 		KindPen:     append(slices.Clone(noteCommon), "points", "width", "marker"),
@@ -556,8 +615,8 @@ func (r *reader) doc(raw any) Doc {
 		return Doc{}
 	}
 	r.only(m, docKeys, "")
-	if f, ok := m["format"]; ok && f != float64(Format) && f != float64(FormatDesign) {
-		r.fail("format", "必须是 %d 或 %d", Format, FormatDesign)
+	if f, ok := m["format"]; ok && f != float64(Format) && f != float64(FormatDesign) && f != float64(FormatGroups) {
+		r.fail("format", "必须是 %d、%d 或 %d", Format, FormatDesign, FormatGroups)
 	}
 	design := opt(r, m, "design", "", nil, r.design)
 	var canvases []Canvas
@@ -582,7 +641,15 @@ func (r *reader) doc(raw any) Doc {
 	if r.err != nil {
 		return Doc{}
 	}
-	d := Doc{Design: design, Canvases: canvases, Pages: place(pages), Notes: notes}
+	placed := place(pages)
+	var groups []Group
+	for i, v := range r.list(m, "groups", MaxGroups) {
+		groups = append(groups, r.group(withCanvas(v, sole), fmt.Sprintf("groups[%d]", i), placed, false))
+	}
+	if r.err != nil {
+		return Doc{}
+	}
+	d := Doc{Design: design, Canvases: canvases, Pages: placed, Notes: notes, Groups: groups}
 	d.Format = d.format()
 	r.links(d)
 	return d
@@ -615,6 +682,112 @@ func (r *reader) canvas(v any, where string) Canvas {
 		ID:   r.id(r.need(m, "id", where), at(where, "id")),
 		Name: r.text(r.need(m, "name", where), at(where, "name"), MaxNameRunes, false),
 	}
+}
+
+// GroupIDPattern 是方案组、方案与方案主题的 id。
+var GroupIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+func (r *reader) groupID(v any, where string) string {
+	s, ok := v.(string)
+	if !ok || !GroupIDPattern.MatchString(s) {
+		r.fail(where, "必须是 1–32 个小写字母、数字或 -，以字母或数字开头")
+		return ""
+	}
+	return s
+}
+
+// theme 读方案主题名：空串表示没有独立主题。
+func (r *reader) theme(v any, where string) string {
+	if s, ok := v.(string); ok && s == "" {
+		return ""
+	}
+	return r.groupID(v, where)
+}
+
+// group 读一个方案组。strict 为真时（add 与 set variants）要求 MinVariants–MaxVariants 个方案，
+// 否则 1–MaxVariants 个（级联删除后可以只剩一个）。省略 canvas 时取第一个方案第一个画框所在的画布页。
+// 画框是否存在、是否只属于一个方案由 links 检查。
+func (r *reader) group(v any, where string, pages []Page, strict bool) Group {
+	m := r.object(v, where)
+	if m == nil {
+		return Group{}
+	}
+	r.only(m, groupKeys, where)
+	g := Group{
+		ID:       r.groupID(r.need(m, "id", where), at(where, "id")),
+		Name:     r.text(r.need(m, "name", where), at(where, "name"), MaxGroupName, false),
+		Picked:   opt(r, m, "picked", where, nil, r.ref),
+		PickedBy: opt(r, m, "pickedBy", where, nil, r.author),
+	}
+	vw := at(where, "variants")
+	a, ok := r.need(m, "variants", where).([]any)
+	lo := 1
+	if strict {
+		lo = MinVariants
+	}
+	switch {
+	case !ok:
+		r.fail(vw, "必须是数组")
+	case len(a) < lo || len(a) > MaxVariants:
+		r.fail(vw, "每组 %d–%d 个方案（现在 %d 个）", lo, MaxVariants, len(a))
+	}
+	if r.err != nil {
+		return Group{}
+	}
+	for i, x := range a {
+		w := fmt.Sprintf("%s[%d]", vw, i)
+		vr := r.variant(x, w)
+		if slices.ContainsFunc(g.Variants, func(o Variant) bool { return o.ID == vr.ID }) {
+			r.fail(at(w, "id"), "方案 id %q 在本组里重复", vr.ID)
+		}
+		g.Variants = append(g.Variants, vr)
+	}
+	if r.err != nil {
+		return Group{}
+	}
+	if g.Picked != nil && !slices.ContainsFunc(g.Variants, func(o Variant) bool { return o.ID == *g.Picked }) {
+		r.fail(at(where, "picked"), "本组没有 id 为 %q 的方案", *g.Picked)
+	}
+	if c, has := m["canvas"]; has {
+		g.Canvas = r.id(c, at(where, "canvas"))
+	} else if i := slices.IndexFunc(pages, func(p Page) bool { return p.ID == g.Variants[0].Pages[0] }); i >= 0 {
+		g.Canvas = pages[i].Canvas
+	} else {
+		r.fail(at(where, "canvas"), "缺少这个字段")
+	}
+	return g
+}
+
+func (r *reader) variant(v any, where string) Variant {
+	m := r.object(v, where)
+	if m == nil {
+		return Variant{}
+	}
+	r.only(m, variantKeys, where)
+	vr := Variant{
+		ID:   r.groupID(r.need(m, "id", where), at(where, "id")),
+		Name: r.text(r.need(m, "name", where), at(where, "name"), MaxGroupName, false),
+		Note: opt(r, m, "note", where, "", func(v any, w string) string {
+			return r.text(v, w, MaxVariantNote, true)
+		}),
+		Theme: opt(r, m, "theme", where, "", r.theme),
+	}
+	pw := at(where, "pages")
+	a, ok := r.need(m, "pages", where).([]any)
+	switch {
+	case !ok:
+		r.fail(pw, "必须是画框 id 的数组")
+	case len(a) < 1 || len(a) > MaxVariantPages:
+		r.fail(pw, "每个方案 1–%d 个画框（现在 %d 个）", MaxVariantPages, len(a))
+	}
+	if r.err != nil {
+		return Variant{}
+	}
+	vr.Pages = make([]string, 0, len(a))
+	for i, x := range a {
+		vr.Pages = append(vr.Pages, r.id(x, fmt.Sprintf("%s[%d]", pw, i)))
+	}
+	return vr
 }
 
 // loosePage 是可能还没有位置的画框。
@@ -754,10 +927,11 @@ func (r *reader) points(v any, where string) []float64 {
 	return out
 }
 
-// links 检查 id 不重复、画框与标注都在存在的画布页上、形状吸附的是同一画布页上存在的画框；
+// links 检查 id 不重复（画布页、画框、标注、方案组共用一套 id）、画框与标注都在存在的画布页上、
+// 形状吸附的是同一画布页上存在的画框、方案组在存在的画布页上且方案里的画框存在并只属于一个方案；
 // 设计画布另查 source 只出现在设计画布里、file 与 source 配套、design.start 指向存在的画框。
 func (r *reader) links(d Doc) {
-	kinds := make(map[string]string, len(d.Canvases)+len(d.Pages)+len(d.Notes))
+	kinds := make(map[string]string, len(d.Canvases)+len(d.Pages)+len(d.Notes)+len(d.Groups))
 	claim := func(id, kind, where string) {
 		if _, dup := kinds[id]; dup {
 			r.fail(where, "id %q 已被另一个对象使用", id)
@@ -775,6 +949,9 @@ func (r *reader) links(d Doc) {
 	}
 	for i, n := range d.Notes {
 		claim(n.ID, "note", fmt.Sprintf("notes[%d].id", i))
+	}
+	for i, g := range d.Groups {
+		claim(g.ID, "group", fmt.Sprintf("groups[%d].id", i))
 	}
 	for i, p := range d.Pages {
 		where := fmt.Sprintf("pages[%d]", i)
@@ -809,6 +986,24 @@ func (r *reader) links(d Doc) {
 	}
 	if d.Design != nil && d.Design.Start != nil && kinds[*d.Design.Start] != "page" {
 		r.fail("design.start", "没有 id 为 %q 的画框", *d.Design.Start)
+	}
+	owner := map[string]string{}
+	for i, g := range d.Groups {
+		where := fmt.Sprintf("groups[%d]", i)
+		if kinds[g.Canvas] != "canvas" {
+			r.fail(where+".canvas", "没有 id 为 %q 的画布页", g.Canvas)
+		}
+		for j, v := range g.Variants {
+			for k, p := range v.Pages {
+				w := fmt.Sprintf("%s.variants[%d].pages[%d]", where, j, k)
+				if kinds[p] != "page" {
+					r.fail(w, "没有 id 为 %q 的画框", p)
+				} else if o, dup := owner[p]; dup {
+					r.fail(w, "画框 %q 已属于方案 %s，一个画框最多属于一个方案", p, o)
+				}
+				owner[p] = g.ID + "/" + v.ID
+			}
+		}
 	}
 }
 

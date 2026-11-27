@@ -3,12 +3,17 @@
 // 与 internal/artifacts/canvas 的 Go 实现逐条相同，两边共用 schema/testdata/canvas-ops.json 的测试向量；
 // 改规则时两边一起改。文档里 canvases 的元素在界面上叫「页面」，pages 的元素叫「画框」，notes 是标注。
 // 带顶层 design 的是设计画布：画框可以带 source（TSX 源码，file 是它的构建产物），design 与 source
-// 只由服务端封存维护，这里的操作不能添加或修改 source。
+// 只由服务端封存维护，这里的操作不能添加或修改 source。groups 是方案组：同一屏的几种方案并排比较、选定其一，
+// 落选画框由 archivedPages 推导；设计画布的方案组由 src/variants.json 经封存维护，这里只能改 picked。
 
 export const CANVAS_FILE = "canvas.json";
-/** 只有 HTML 画框的画布写出的格式；带 design、source 或 device 任一字段时写出 CANVAS_FORMAT_DESIGN。 */
+/**
+ * 只有 HTML 画框的画布写出的格式；带 design、source 或 device 任一字段时写出 CANVAS_FORMAT_DESIGN，
+ * 带 groups 时写出 CANVAS_FORMAT_GROUPS。
+ */
 export const CANVAS_FORMAT = 1;
 export const CANVAS_FORMAT_DESIGN = 2;
+export const CANVAS_FORMAT_GROUPS = 3;
 /** design.engine 目前唯一的取值。 */
 export const DESIGN_ENGINE = 1;
 
@@ -22,7 +27,23 @@ export const CANVAS_LIMITS = {
 	jsonBytes: 5 << 20,
 	/** 单次操作条数。 */
 	ops: 2000,
+	/** 方案组个数。 */
+	groups: 20,
 } as const;
+
+/** 方案组：add 与 set variants 时要求 2–4 个方案（级联删除后可以只剩一个），每个方案 1–24 个画框。 */
+export const GROUP_LIMITS = {
+	variantsMin: 2,
+	variantsMax: 4,
+	variantPages: 24,
+	/** 方案组与方案的名字字数。 */
+	name: 60,
+	note: 200,
+} as const;
+
+/** 「备选方案」画布页：组选定后落选画框由 expandPicks 搬到这里。 */
+export const ALTERNATES_ID = "alternates";
+export const ALTERNATES_NAME = "备选方案";
 
 export const NAME_CHARS = 120;
 export const NOTE_TEXT_CHARS = 4000;
@@ -146,8 +167,32 @@ export interface ShapeNote extends NoteBase {
 
 export type CanvasNote = TextNote | StickyNote | PenNote | ShapeNote;
 
+/** 方案组里的一个方案：一组画框，可以带一套方案主题（theme 为空串表示没有独立主题）。 */
+export interface CanvasVariant {
+	id: string;
+	name: string;
+	note: string;
+	theme: string;
+	pages: string[];
+}
+
+/** 方案组：canvas 是它所在的画布页（落选画框改选回来时回到这里）。 */
+export interface CanvasGroup {
+	id: string;
+	canvas: string;
+	name: string;
+	variants: CanvasVariant[];
+	/** 选定的方案 id；null 为未选定。 */
+	picked: string | null;
+	/** 选定者的线程 id；用户选的为 null（由服务端盖章）。 */
+	pickedBy: string | null;
+}
+
 export interface CanvasDoc {
-	format: typeof CANVAS_FORMAT | typeof CANVAS_FORMAT_DESIGN;
+	format:
+		| typeof CANVAS_FORMAT
+		| typeof CANVAS_FORMAT_DESIGN
+		| typeof CANVAS_FORMAT_GROUPS;
 	/** 有它即设计画布。 */
 	design?: CanvasDesign;
 	canvases: CanvasSheet[];
@@ -155,13 +200,16 @@ export interface CanvasDoc {
 	pages: CanvasPage[];
 	/** 绘制顺序，画在画框之上。 */
 	notes: CanvasNote[];
+	/** 方案组；没有时省略。 */
+	groups?: CanvasGroup[];
 }
 
-export type CanvasObjectType = "canvas" | "page" | "note";
+export type CanvasObjectType = "canvas" | "page" | "note" | "group";
 
 /**
  * 对文档的一次修改。add 一个画框时 file 可省略（取 page-<id>.html）；
  * copyOf 表示新画框的 HTML 从那个画框复制（落版本时由服务端复制文件）。
+ * 方案组的 picked 与 pickedBy 用 set 改；pickedBy 由服务端按提交方盖章，提交方给的值会被覆盖。
  */
 export type CanvasOp =
 	| {
@@ -375,7 +423,9 @@ function list(m: Obj, key: string, max: number): unknown[] {
 	return v;
 }
 
-const DOC_KEYS = ["format", "design", "canvases", "pages", "notes"];
+const DOC_KEYS = ["format", "design", "canvases", "pages", "notes", "groups"];
+const GROUP_KEYS = ["id", "canvas", "name", "variants", "picked", "pickedBy"];
+const VARIANT_KEYS = ["id", "name", "note", "theme", "pages"];
 const DESIGN_KEYS = ["engine", "start"];
 const CANVAS_KEYS = ["id", "name"];
 const PAGE_KEYS = [
@@ -428,6 +478,122 @@ function sheetOf(v: unknown, where: string): CanvasSheet {
 		id: id(need(m, "id", where), at(where, "id")),
 		name: text(need(m, "name", where), at(where, "name"), NAME_CHARS, false),
 	};
+}
+
+/** 方案组、方案与方案主题的 id。 */
+const GROUP_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function groupId(v: unknown, where: string): string {
+	if (typeof v !== "string" || !GROUP_ID.test(v))
+		fail(where, "必须是 1–32 个小写字母、数字或 -，以字母或数字开头");
+	return v;
+}
+
+/** 方案主题名：空串表示没有独立主题。 */
+function theme(v: unknown, where: string): string {
+	return v === "" ? "" : groupId(v, where);
+}
+
+function variantOf(v: unknown, where: string): CanvasVariant {
+	const m = object(v, where);
+	only(m, VARIANT_KEYS, where);
+	const out: CanvasVariant = {
+		id: groupId(need(m, "id", where), at(where, "id")),
+		name: text(
+			need(m, "name", where),
+			at(where, "name"),
+			GROUP_LIMITS.name,
+			false,
+		),
+		note: opt(m, "note", where, "", (x, w) =>
+			text(x, w, GROUP_LIMITS.note, true),
+		),
+		theme: opt(m, "theme", where, "", theme),
+		pages: [],
+	};
+	const pw = at(where, "pages");
+	const pages = need(m, "pages", where);
+	if (!Array.isArray(pages)) fail(pw, "必须是画框 id 的数组");
+	if (pages.length < 1 || pages.length > GROUP_LIMITS.variantPages) {
+		fail(
+			pw,
+			`每个方案 1–${GROUP_LIMITS.variantPages} 个画框（现在 ${pages.length} 个）`,
+		);
+	}
+	out.pages = pages.map((x, i) => id(x, `${pw}[${i}]`));
+	return out;
+}
+
+/**
+ * 读一个方案组。strict 为真时（add 与 set variants）要求 2–4 个方案，否则 1–4 个（级联删除后可以只剩一个）。
+ * 省略 canvas 时取第一个方案第一个画框所在的画布页。画框是否存在、是否只属于一个方案由 checkLinks 检查。
+ */
+function groupOf(
+	v: unknown,
+	where: string,
+	pages: readonly CanvasPage[],
+	strict: boolean,
+): CanvasGroup {
+	const m = object(v, where);
+	only(m, GROUP_KEYS, where);
+	const gid = groupId(need(m, "id", where), at(where, "id"));
+	const name = text(
+		need(m, "name", where),
+		at(where, "name"),
+		GROUP_LIMITS.name,
+		false,
+	);
+	const picked = opt<string | null>(m, "picked", where, null, ref);
+	const pickedBy = opt<string | null>(m, "pickedBy", where, null, author);
+	const vw = at(where, "variants");
+	const raw = need(m, "variants", where);
+	if (!Array.isArray(raw)) fail(vw, "必须是数组");
+	const lo = strict ? GROUP_LIMITS.variantsMin : 1;
+	if (raw.length < lo || raw.length > GROUP_LIMITS.variantsMax) {
+		fail(
+			vw,
+			`每组 ${lo}–${GROUP_LIMITS.variantsMax} 个方案（现在 ${raw.length} 个）`,
+		);
+	}
+	const variants: CanvasVariant[] = [];
+	raw.forEach((x, i) => {
+		const w = `${vw}[${i}]`;
+		const vr = variantOf(x, w);
+		if (variants.some((o) => o.id === vr.id))
+			fail(at(w, "id"), `方案 id ${JSON.stringify(vr.id)} 在本组里重复`);
+		variants.push(vr);
+	});
+	if (picked !== null && !variants.some((o) => o.id === picked))
+		fail(
+			at(where, "picked"),
+			`本组没有 id 为 ${JSON.stringify(picked)} 的方案`,
+		);
+	let canvas: string;
+	if (has(m, "canvas")) canvas = id(m.canvas, at(where, "canvas"));
+	else {
+		const first = variants[0]?.pages[0];
+		const page = pages.find((p) => p.id === first);
+		if (!page) fail(at(where, "canvas"), "缺少这个字段");
+		canvas = page.canvas;
+	}
+	return { id: gid, canvas, name, variants, picked, pickedBy };
+}
+
+/** 文档换上新的方案组列表：列表为空时不写 groups。 */
+function withGroups(doc: CanvasDoc, groups: CanvasGroup[]): CanvasDoc {
+	const { groups: _old, ...rest } = doc;
+	return groups.length > 0 ? { ...rest, groups } : rest;
+}
+
+/** 落选画框：已选定的组里其它方案的画框。只由 groups 推导，与画框当前在哪个画布页无关。 */
+export function archivedPages(doc: CanvasDoc): Set<string> {
+	const out = new Set<string>();
+	for (const g of doc.groups ?? []) {
+		if (g.picked === null) continue;
+		for (const v of g.variants)
+			if (v.id !== g.picked) for (const p of v.pages) out.add(p);
+	}
+	return out;
 }
 
 /** 可能还没有位置的画框。 */
@@ -582,7 +748,8 @@ function withCanvas(v: unknown, sole: string | null): unknown {
 }
 
 /**
- * id 不重复、画框与标注都在存在的画布页上、形状吸附的是同一画布页上存在的画框；
+ * id 不重复（画布页、画框、标注、方案组共用一套 id）、画框与标注都在存在的画布页上、
+ * 形状吸附的是同一画布页上存在的画框、方案组在存在的画布页上且方案里的画框存在并只属于一个方案；
  * 设计画布另查 source 只出现在设计画布里、file 与 source 配套、design.start 指向存在的画框。
  */
 function checkLinks(doc: CanvasDoc): void {
@@ -602,6 +769,10 @@ function checkLinks(doc: CanvasDoc): void {
 	});
 	doc.notes.forEach((n, i) => {
 		claim(n.id, "note", `notes[${i}].id`);
+	});
+	const groups = doc.groups ?? [];
+	groups.forEach((g, i) => {
+		claim(g.id, "group", `groups[${i}].id`);
 	});
 	doc.pages.forEach((p, i) => {
 		if (kinds.get(p.canvas) !== "canvas") {
@@ -643,10 +814,35 @@ function checkLinks(doc: CanvasDoc): void {
 	const start = doc.design?.start ?? null;
 	if (start !== null && kinds.get(start) !== "page")
 		fail("design.start", `没有 id 为 ${JSON.stringify(start)} 的画框`);
+	const owner = new Map<string, string>();
+	groups.forEach((g, i) => {
+		const where = `groups[${i}]`;
+		if (kinds.get(g.canvas) !== "canvas") {
+			fail(
+				`${where}.canvas`,
+				`没有 id 为 ${JSON.stringify(g.canvas)} 的画布页`,
+			);
+		}
+		g.variants.forEach((v, j) => {
+			v.pages.forEach((p, k) => {
+				const w = `${where}.variants[${j}].pages[${k}]`;
+				if (kinds.get(p) !== "page")
+					fail(w, `没有 id 为 ${JSON.stringify(p)} 的画框`);
+				const o = owner.get(p);
+				if (o !== undefined)
+					fail(
+						w,
+						`画框 ${JSON.stringify(p)} 已属于方案 ${o}，一个画框最多属于一个方案`,
+					);
+				owner.set(p, `${g.id}/${v.id}`);
+			});
+		});
+	});
 }
 
-/** 文档该写出的格式：带 design、source 或 device 任一字段时是 CANVAS_FORMAT_DESIGN。 */
+/** 文档该写出的格式：带 groups 时是 CANVAS_FORMAT_GROUPS；带 design、source 或 device 任一字段时是 CANVAS_FORMAT_DESIGN。 */
 function formatOf(doc: CanvasDoc): CanvasDoc["format"] {
+	if ((doc.groups ?? []).length > 0) return CANVAS_FORMAT_GROUPS;
 	return doc.design ||
 		doc.pages.some((p) => p.source !== undefined || p.device !== undefined)
 		? CANVAS_FORMAT_DESIGN
@@ -700,9 +896,13 @@ export function parseCanvasDoc(json: string): CanvasDoc {
 	if (
 		has(raw, "format") &&
 		raw.format !== CANVAS_FORMAT &&
-		raw.format !== CANVAS_FORMAT_DESIGN
+		raw.format !== CANVAS_FORMAT_DESIGN &&
+		raw.format !== CANVAS_FORMAT_GROUPS
 	)
-		fail("format", `必须是 ${CANVAS_FORMAT} 或 ${CANVAS_FORMAT_DESIGN}`);
+		fail(
+			"format",
+			`必须是 ${CANVAS_FORMAT}、${CANVAS_FORMAT_DESIGN} 或 ${CANVAS_FORMAT_GROUPS}`,
+		);
 	const design = has(raw, "design")
 		? designOf(raw.design, "design")
 		: undefined;
@@ -717,12 +917,17 @@ export function parseCanvasDoc(json: string): CanvasDoc {
 	const notes = list(raw, "notes", CANVAS_LIMITS.notes).map((v, i) =>
 		noteOf(withCanvas(v, sole), `notes[${i}]`),
 	);
+	const placed = place(pages);
+	const groups = list(raw, "groups", CANVAS_LIMITS.groups).map((v, i) =>
+		groupOf(withCanvas(v, sole), `groups[${i}]`, placed, false),
+	);
 	const doc: CanvasDoc = {
 		format: CANVAS_FORMAT,
 		...(design ? { design } : {}),
 		canvases,
-		pages: place(pages),
+		pages: placed,
 		notes,
+		...(groups.length > 0 ? { groups } : {}),
 	};
 	doc.format = formatOf(doc);
 	checkLinks(doc);
@@ -759,8 +964,16 @@ export function parseCanvasOps(value: unknown): CanvasOp[] {
 				only(m, ["op", "object", "copyOf"], where);
 				const obj = object(need(m, "object", where), at(where, "object"));
 				const type = obj.type;
-				if (type !== "canvas" && type !== "page" && type !== "note") {
-					fail(at(where, "object.type"), "只能是 canvas、page、note 之一");
+				if (
+					type !== "canvas" &&
+					type !== "page" &&
+					type !== "note" &&
+					type !== "group"
+				) {
+					fail(
+						at(where, "object.type"),
+						"只能是 canvas、page、note、group 之一",
+					);
 				}
 				const op: Extract<CanvasOp, { op: "add" }> = {
 					op: "add",
@@ -810,7 +1023,8 @@ export function parseCanvasOps(value: unknown): CanvasOp[] {
 type Found =
 	| { type: "canvas"; index: number; value: CanvasSheet }
 	| { type: "page"; index: number; value: CanvasPage }
-	| { type: "note"; index: number; value: CanvasNote };
+	| { type: "note"; index: number; value: CanvasNote }
+	| { type: "group"; index: number; value: CanvasGroup };
 
 function find(doc: CanvasDoc, key: string): Found | null {
 	let index = doc.canvases.findIndex((c) => c.id === key);
@@ -822,12 +1036,17 @@ function find(doc: CanvasDoc, key: string): Found | null {
 	index = doc.notes.findIndex((n) => n.id === key);
 	const note = doc.notes[index];
 	if (note) return { type: "note", index, value: note };
+	const groups = doc.groups ?? [];
+	index = groups.findIndex((g) => g.id === key);
+	const group = groups[index];
+	if (group) return { type: "group", index, value: group };
 	return null;
 }
 
 const CANVAS_SETTABLE = ["name"];
 const PAGE_SETTABLE = [
 	"name",
+	"canvas",
 	"file",
 	"x",
 	"y",
@@ -839,19 +1058,29 @@ const PAGE_SETTABLE = [
 /** 带 source 的画框能改的字段：file 跟着 source 走，只由封存改。 */
 const FRAME_PAGE_SETTABLE = PAGE_SETTABLE.filter((k) => k !== "file");
 const NOTE_FIXED = ["id", "canvas", "kind", "by"];
+const GROUP_SETTABLE = ["name", "variants", "picked", "pickedBy"];
+/** 设计画布上方案组能改的字段：其余由 src/variants.json 经封存维护。 */
+const PICK_SETTABLE = ["picked", "pickedBy"];
 const TYPE_LABEL: Record<CanvasObjectType, string> = {
 	canvas: "画布页",
 	page: "画框",
 	note: "标注",
+	group: "方案组",
 };
 
-function settable(found: Found): readonly string[] {
-	if (found.type === "canvas") return CANVAS_SETTABLE;
-	if (found.type === "page")
-		return found.value.source === undefined
-			? PAGE_SETTABLE
-			: FRAME_PAGE_SETTABLE;
-	return NOTE_KEYS[found.value.kind].filter((k) => !NOTE_FIXED.includes(k));
+function settable(doc: CanvasDoc, found: Found): readonly string[] {
+	switch (found.type) {
+		case "canvas":
+			return CANVAS_SETTABLE;
+		case "page":
+			return found.value.source === undefined
+				? PAGE_SETTABLE
+				: FRAME_PAGE_SETTABLE;
+		case "group":
+			return doc.design ? PICK_SETTABLE : GROUP_SETTABLE;
+		case "note":
+			return NOTE_KEYS[found.value.kind].filter((k) => !NOTE_FIXED.includes(k));
+	}
 }
 
 function addTo(
@@ -906,8 +1135,18 @@ function addTo(
 			unused(n.id);
 			return { ...doc, notes: [...doc.notes, n] };
 		}
+		case "group": {
+			if (doc.design)
+				fail(
+					at(ow, "type"),
+					"方案组由 src/variants.json 维护，设计画布上不能用操作添加",
+				);
+			const g = groupOf(obj, ow, doc.pages, true);
+			unused(g.id);
+			return withGroups(doc, [...(doc.groups ?? []), g]);
+		}
 		default:
-			return fail(at(ow, "type"), "只能是 canvas、page、note 之一");
+			return fail(at(ow, "type"), "只能是 canvas、page、note、group 之一");
 	}
 }
 
@@ -918,8 +1157,13 @@ function setIn(
 ): CanvasDoc {
 	const found = find(doc, op.id);
 	if (!found) return doc;
-	const keys = settable(found);
+	const keys = settable(doc, found);
 	if (!keys.includes(op.key)) {
+		if (found.type === "group" && doc.design)
+			fail(
+				at(where, "key"),
+				`设计画布的方案组由 src/variants.json 维护，画布上只能改 ${keys.join("、")}（不能改 ${JSON.stringify(op.key)}）`,
+			);
 		fail(
 			at(where, "key"),
 			`${TYPE_LABEL[found.type]} ${JSON.stringify(op.id)} 不能改 ${JSON.stringify(op.key)}（能改的字段：${keys.join("、")}）`,
@@ -936,14 +1180,11 @@ function setIn(
 					sheetOf({ ...found.value, [op.key]: op.value }, where),
 				),
 			};
-		case "page":
-			return {
-				...doc,
-				pages: replace(
-					doc.pages,
-					pageOf({ ...found.value, [op.key]: op.value }, where).page,
-				),
-			};
+		case "page": {
+			const page = pageOf({ ...found.value, [op.key]: op.value }, where).page;
+			const next = { ...doc, pages: replace(doc.pages, page) };
+			return op.key === "canvas" ? detach(next, op.id, page.canvas) : next;
+		}
 		case "note":
 			return {
 				...doc,
@@ -952,10 +1193,87 @@ function setIn(
 					noteOf({ ...found.value, [op.key]: op.value }, where),
 				),
 			};
+		case "group":
+			return withGroups(
+				doc,
+				replace(doc.groups ?? [], setGroup(doc, found.value, op, where)),
+			);
 	}
 }
 
-/** 删对象：删画布页连带删它的画框与标注；删画框把吸附它的 from / to 与指向它的 design.start 置空。 */
+/**
+ * 改方案组的一个字段：改 picked 时 pickedBy 置 null；改 variants 时要求 2–4 个方案，
+ * picked 指向的方案还在就保留 picked 与 pickedBy，否则两者都置 null。
+ */
+function setGroup(
+	doc: CanvasDoc,
+	old: CanvasGroup,
+	op: Extract<CanvasOp, { op: "set" }>,
+	where: string,
+): CanvasGroup {
+	const m: Obj = { ...old, [op.key]: op.value };
+	if (op.key === "picked") m.pickedBy = null;
+	if (op.key === "variants") {
+		m.picked = null;
+		m.pickedBy = null;
+	}
+	const g = groupOf(m, where, doc.pages, op.key === "variants");
+	return op.key === "variants" &&
+		old.picked !== null &&
+		g.variants.some((v) => v.id === old.picked)
+		? { ...g, picked: old.picked, pickedBy: old.pickedBy }
+		: g;
+}
+
+/** 把其它画布页上吸附画框 key 的形状端点置空（画框换了画布页之后）。 */
+function detach(doc: CanvasDoc, key: string, canvas: string): CanvasDoc {
+	return {
+		...doc,
+		notes: doc.notes.map((n) =>
+			isShape(n) && n.canvas !== canvas && (n.from === key || n.to === key)
+				? {
+						...n,
+						from: n.from === key ? null : n.from,
+						to: n.to === key ? null : n.to,
+					}
+				: n,
+		),
+	};
+}
+
+/**
+ * 把删掉的画框从方案里移除：方案变空就删掉方案，组里一个方案都不剩就删掉组；
+ * picked 指向的方案被删掉时 picked 与 pickedBy 置 null。没受影响的组保持原对象。
+ */
+function prune(
+	groups: readonly CanvasGroup[],
+	gone: ReadonlySet<string>,
+): CanvasGroup[] {
+	const out: CanvasGroup[] = [];
+	for (const g of groups) {
+		if (!g.variants.some((v) => v.pages.some((p) => gone.has(p)))) {
+			out.push(g);
+			continue;
+		}
+		const variants = g.variants
+			.map((v) => ({ ...v, pages: v.pages.filter((p) => !gone.has(p)) }))
+			.filter((v) => v.pages.length > 0);
+		if (variants.length === 0) continue;
+		const keep = g.picked !== null && variants.some((v) => v.id === g.picked);
+		out.push({
+			...g,
+			variants,
+			picked: keep ? g.picked : null,
+			pickedBy: keep ? g.pickedBy : null,
+		});
+	}
+	return out;
+}
+
+/**
+ * 删对象：删画布页连带删它的画框、标注与以它为 canvas 的方案组；删画框把吸附它的 from / to
+ * 与指向它的 design.start 置空，并把它从方案里移除（见 prune）。删方案组不动它的画框。
+ */
 function removeFrom(doc: CanvasDoc, key: string): CanvasDoc {
 	const found = find(doc, key);
 	if (!found) return doc;
@@ -964,12 +1282,15 @@ function removeFrom(doc: CanvasDoc, key: string): CanvasDoc {
 	switch (found.type) {
 		case "canvas":
 			for (const p of doc.pages) if (p.canvas === key) gone.add(p.id);
-			next = {
-				...doc,
-				canvases: doc.canvases.filter((c) => c.id !== key),
-				pages: doc.pages.filter((p) => p.canvas !== key),
-				notes: doc.notes.filter((n) => n.canvas !== key),
-			};
+			next = withGroups(
+				{
+					...doc,
+					canvases: doc.canvases.filter((c) => c.id !== key),
+					pages: doc.pages.filter((p) => p.canvas !== key),
+					notes: doc.notes.filter((n) => n.canvas !== key),
+				},
+				(doc.groups ?? []).filter((g) => g.canvas !== key),
+			);
 			break;
 		case "page":
 			gone.add(key);
@@ -977,24 +1298,32 @@ function removeFrom(doc: CanvasDoc, key: string): CanvasDoc {
 			break;
 		case "note":
 			return { ...doc, notes: doc.notes.filter((n) => n.id !== key) };
+		case "group":
+			return withGroups(
+				doc,
+				(doc.groups ?? []).filter((g) => g.id !== key),
+			);
 	}
 	if (gone.size === 0) return next;
 	if (next.design && next.design.start !== null && gone.has(next.design.start))
 		next = { ...next, design: { ...next.design, start: null } };
-	return {
-		...next,
-		notes: next.notes.map((n) =>
-			isShape(n) &&
-			((n.from !== null && gone.has(n.from)) ||
-				(n.to !== null && gone.has(n.to)))
-				? {
-						...n,
-						from: n.from !== null && gone.has(n.from) ? null : n.from,
-						to: n.to !== null && gone.has(n.to) ? null : n.to,
-					}
-				: n,
-		),
-	};
+	return withGroups(
+		{
+			...next,
+			notes: next.notes.map((n) =>
+				isShape(n) &&
+				((n.from !== null && gone.has(n.from)) ||
+					(n.to !== null && gone.has(n.to)))
+					? {
+							...n,
+							from: n.from !== null && gone.has(n.from) ? null : n.from,
+							to: n.to !== null && gone.has(n.to) ? null : n.to,
+						}
+					: n,
+			),
+		},
+		prune(next.groups ?? [], gone),
+	);
 }
 
 function move<T>(items: readonly T[], from: number, to: number): T[] {
@@ -1014,6 +1343,8 @@ function orderIn(doc: CanvasDoc, key: string, index: number): CanvasDoc {
 			return { ...doc, pages: move(doc.pages, found.index, index) };
 		case "note":
 			return { ...doc, notes: move(doc.notes, found.index, index) };
+		case "group":
+			return withGroups(doc, move(doc.groups ?? [], found.index, index));
 	}
 }
 
@@ -1025,9 +1356,15 @@ function applyOne(doc: CanvasDoc, op: CanvasOp, where: string): CanvasDoc {
 		case "set":
 			return setIn(doc, op, where);
 		case "remove":
-			return removeFrom(doc, op.id);
 		case "order":
-			return orderIn(doc, op.id, op.index);
+			if (doc.design && find(doc, op.id)?.type === "group")
+				fail(
+					at(where, "id"),
+					"设计画布的方案组由 src/variants.json 维护，不能用操作删除或排序",
+				);
+			return op.op === "remove"
+				? removeFrom(doc, op.id)
+				: orderIn(doc, op.id, op.index);
 	}
 }
 
@@ -1052,11 +1389,40 @@ export function applyCanvasOps(
 		fail("pages", `最多 ${CANVAS_LIMITS.pages} 个画框`);
 	if (doc.notes.length > CANVAS_LIMITS.notes)
 		fail("notes", `最多 ${CANVAS_LIMITS.notes} 个标注`);
+	if ((doc.groups ?? []).length > CANVAS_LIMITS.groups)
+		fail("groups", `最多 ${CANVAS_LIMITS.groups} 个方案组`);
 	checkLinks(doc);
 	if (utf8Length(stringifyCanvasDoc(doc)) > CANVAS_LIMITS.jsonBytes) {
 		fail("", `canvas.json 会超过 ${CANVAS_LIMITS.jsonBytes >> 20} MiB`);
 	}
 	return doc;
+}
+
+/**
+ * 撤销删除时被级联改掉的方案组：删掉的组重新 add 回原位，缩小的组改回原来的 variants 与 picked。
+ * 设计画布的方案组由封存维护，不经操作恢复。
+ */
+function restoreGroups(before: CanvasDoc, after: CanvasDoc): CanvasOp[] {
+	if (before.design) return [];
+	const now = new Map((after.groups ?? []).map((g) => [g.id, g]));
+	const out: CanvasOp[] = [];
+	(before.groups ?? []).forEach((g, index) => {
+		const cur = now.get(g.id);
+		if (cur === g) return;
+		if (!cur) {
+			out.push(
+				{ op: "add", object: { type: "group", ...g } },
+				{ op: "order", id: g.id, index },
+			);
+			return;
+		}
+		out.push({ op: "set", id: g.id, key: "variants", value: g.variants });
+		if (g.picked !== null && cur.picked === null)
+			out.push({ op: "set", id: g.id, key: "picked", value: g.picked });
+		if (g.pickedBy !== null && cur.picked === null)
+			out.push({ op: "set", id: g.id, key: "pickedBy", value: g.pickedBy });
+	});
+	return out;
 }
 
 /** 撤销一条操作所需的操作（相对于操作前的文档）。 */
@@ -1075,7 +1441,34 @@ function inverseOne(doc: CanvasDoc, op: CanvasOp): CanvasOp[] {
 				found.type === "page" && op.key === "device"
 					? (current.device ?? "none")
 					: current[op.key];
-			return [{ op: "set", id: op.id, key: op.key, value }];
+			const out: CanvasOp[] = [{ op: "set", id: op.id, key: op.key, value }];
+			if (found.type === "page" && op.key === "canvas") {
+				// 换画布页会把吸附它的形状端点置空：撤销时接回来
+				for (const n of doc.notes) {
+					if (!isShape(n)) continue;
+					if (n.from === op.id)
+						out.push({ op: "set", id: n.id, key: "from", value: op.id });
+					if (n.to === op.id)
+						out.push({ op: "set", id: n.id, key: "to", value: op.id });
+				}
+			}
+			if (found.type === "group") {
+				// 改 variants 可能清掉 picked，改 picked 会清掉 pickedBy：撤销时一并改回
+				const g = found.value;
+				if (op.key === "variants" && g.picked !== null)
+					out.push({ op: "set", id: op.id, key: "picked", value: g.picked });
+				if (
+					(op.key === "variants" || op.key === "picked") &&
+					g.pickedBy !== null
+				)
+					out.push({
+						op: "set",
+						id: op.id,
+						key: "pickedBy",
+						value: g.pickedBy,
+					});
+			}
+			return out;
 		}
 		case "order": {
 			const found = find(doc, op.id);
@@ -1105,6 +1498,7 @@ function inverseOne(doc: CanvasDoc, op: CanvasOp): CanvasOp[] {
 					doc.notes.forEach((n, i) => {
 						if (n.canvas === op.id) restore("note", n, i);
 					});
+					out.push(...restoreGroups(doc, removeFrom(doc, op.id)));
 					break;
 				case "page":
 					restore("page", found.value, found.index);
@@ -1115,9 +1509,11 @@ function inverseOne(doc: CanvasDoc, op: CanvasOp): CanvasOp[] {
 						if (n.to === op.id)
 							out.push({ op: "set", id: n.id, key: "to", value: op.id });
 					}
+					out.push(...restoreGroups(doc, removeFrom(doc, op.id)));
 					break;
 				case "note":
-					restore("note", found.value, found.index);
+				case "group":
+					restore(found.type, found.value, found.index);
 					break;
 			}
 			return out;
@@ -1140,6 +1536,117 @@ export function inverseOps(
 		cur = applyOne(cur, op, `ops[${i}]`);
 	});
 	return steps.reverse().flat();
+}
+
+/**
+ * 在 ops 里每条改方案组 picked 的 set 之后紧跟着插入搬移画框的操作（纯函数）：
+ * - 选定后落选、但不在「备选方案」画布页（ALTERNATES_ID）上的画框，整体平移到该页；该页不存在就先 add；
+ * - 选中方案里位于备选方案页上的画框，整体平移回组的 canvas 页；选中方案里本来就不在备选方案页上的画框不动；
+ * - 落点：左边缘 = 目标页上留下的画框的最右边缘 + PAGE_GAP*4，上边缘 = 它们的最小 y；目标页上没有画框时为 (0, 0)。
+ *
+ * 插入的操作写的是目标值，所以对已展开的 ops 再展开结果不变（已有备选方案页时，ops 里再 add 它的操作被去掉）。
+ * 某条操作模拟应用时出错，后面的操作原样保留、不再展开，由 applyCanvasOps 报错。
+ * 与服务端的 canvas.ExpandPicks 逐条相同：提交前调用，乐观状态与服务端回显一致。
+ */
+export function expandPicks(
+	start: CanvasDoc,
+	ops: readonly CanvasOp[],
+): CanvasOp[] {
+	let doc = start;
+	let ok = true;
+	const out: CanvasOp[] = [];
+	ops.forEach((op, i) => {
+		if (!ok) {
+			out.push(op);
+			return;
+		}
+		if (
+			op.op === "add" &&
+			op.object.type === "canvas" &&
+			op.object.id === ALTERNATES_ID &&
+			doc.canvases.some((c) => c.id === ALTERNATES_ID)
+		)
+			return;
+		out.push(op);
+		const where = `ops[${i}]`;
+		try {
+			doc = applyOne(doc, op, where);
+			if (op.op !== "set" || op.key !== "picked") return;
+			const found = find(doc, op.id);
+			if (found?.type !== "group") return;
+			const moves = pickMoves(doc, found.value);
+			out.push(...moves);
+			for (const m of moves) doc = applyOne(doc, m, where);
+		} catch (e) {
+			if (!(e instanceof CanvasError)) throw e;
+			ok = false;
+		}
+	});
+	return out;
+}
+
+/** 组 g 按当前 picked 该有的搬移操作（见 expandPicks）。 */
+function pickMoves(doc: CanvasDoc, g: CanvasGroup): CanvasOp[] {
+	if (g.picked === null) return [];
+	const away: CanvasPage[] = [];
+	const back: CanvasPage[] = [];
+	for (const v of g.variants) {
+		for (const key of v.pages) {
+			const p = doc.pages.find((x) => x.id === key);
+			if (!p) continue;
+			if (v.id !== g.picked && p.canvas !== ALTERNATES_ID) away.push(p);
+			else if (
+				v.id === g.picked &&
+				p.canvas === ALTERNATES_ID &&
+				g.canvas !== ALTERNATES_ID
+			)
+				back.push(p);
+		}
+	}
+	const moving = new Set([...away, ...back].map((p) => p.id));
+	const ops: CanvasOp[] = [];
+	if (away.length > 0) {
+		if (find(doc, ALTERNATES_ID)?.type !== "canvas")
+			ops.push({
+				op: "add",
+				object: { type: "canvas", id: ALTERNATES_ID, name: ALTERNATES_NAME },
+			});
+		ops.push(...shift(doc.pages, away, ALTERNATES_ID, moving));
+	}
+	ops.push(...shift(doc.pages, back, g.canvas, moving));
+	return ops;
+}
+
+/** 把 block 整体平移到 canvas 页（落点见 expandPicks）；moving 里的画框不算目标页上留下的画框。 */
+function shift(
+	pages: readonly CanvasPage[],
+	block: readonly CanvasPage[],
+	canvas: string,
+	moving: ReadonlySet<string>,
+): CanvasOp[] {
+	const [first] = block;
+	if (!first) return [];
+	let found = false;
+	let right = 0;
+	let top = 0;
+	for (const p of pages) {
+		if (p.canvas !== canvas || moving.has(p.id)) continue;
+		if (!found || p.x + p.width > right) right = p.x + p.width;
+		if (!found || p.y < top) top = p.y;
+		found = true;
+	}
+	const left = found ? right + PAGE_GAP * 4 : 0;
+	let minX = first.x;
+	let minY = first.y;
+	for (const p of block) {
+		minX = Math.min(minX, p.x);
+		minY = Math.min(minY, p.y);
+	}
+	return block.flatMap((p): CanvasOp[] => [
+		{ op: "set", id: p.id, key: "canvas", value: canvas },
+		{ op: "set", id: p.id, key: "x", value: round2(p.x + left - minX) },
+		{ op: "set", id: p.id, key: "y", value: round2(p.y + top - minY) },
+	]);
 }
 
 export interface Box {

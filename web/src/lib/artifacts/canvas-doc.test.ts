@@ -1,10 +1,13 @@
 import vectors from "../../../../schema/testdata/canvas-ops.json";
 import {
+	ALTERNATES_ID,
 	applyCanvasOps,
+	archivedPages,
 	type CanvasDoc,
 	CanvasError,
 	type CanvasOp,
 	canvasId,
+	expandPicks,
 	inverseOps,
 	joinedEnds,
 	missingPageFiles,
@@ -25,11 +28,14 @@ interface Vector {
 	error?: string;
 	/** 逆操作恢复不了原文档的原因（例如删的是封存维护的设计画框）；有它时不检查撤销。 */
 	noUndo?: string;
+	/** 先用 expandPicks 展开 ops。 */
+	expand?: boolean;
 }
 
 function run(v: Vector): { doc: CanvasDoc; ops: CanvasOp[]; out: CanvasDoc } {
 	const doc = parseCanvasDoc(JSON.stringify(v.doc));
-	const ops = parseCanvasOps(v.ops);
+	const parsed = parseCanvasOps(v.ops);
+	const ops = v.expand ? expandPicks(doc, parsed) : parsed;
 	return { doc, ops, out: applyCanvasOps(doc, ops) };
 }
 
@@ -44,16 +50,63 @@ describe("canvas-ops.json 测试向量", () => {
 
 	it.each(all.map((v) => [v.name, v] as const))("%s", (_name, v) => {
 		if (v.error !== undefined) {
-			expect(() => run(v)).toThrow(CanvasError);
+			expect(() => run(v)).toThrow(
+				expect.objectContaining({ name: "CanvasError", where: v.error }),
+			);
 			return;
 		}
 		const { doc, ops, out } = run(v);
 		expect(out).toEqual(v.want);
 		// 规范化输出再解析得到同一份文档
 		expect(parseCanvasDoc(stringifyCanvasDoc(out))).toEqual(out);
+		// 重复展开结果不变
+		if (v.expand)
+			expect(applyCanvasOps(doc, expandPicks(doc, ops))).toEqual(out);
 		// 逆操作把文档恢复原样
 		if (v.noUndo === undefined)
 			expect(applyCanvasOps(out, inverseOps(doc, ops))).toEqual(doc);
+	});
+});
+
+describe("方案组", () => {
+	const doc = parseCanvasDoc(
+		JSON.stringify({
+			pages: [
+				{ id: "a1", name: "a", file: "a.html", x: 0, y: 0 },
+				{ id: "b1", name: "b", file: "b.html", x: 1328, y: 0 },
+			],
+			groups: [
+				{
+					id: "home",
+					name: "首页",
+					variants: [
+						{ id: "a", name: "A", pages: ["a1"] },
+						{ id: "b", name: "B", pages: ["b1"] },
+					],
+				},
+			],
+		}),
+	);
+
+	it("archivedPages 只由 groups 推导，选定后落选画框搬到备选方案页", () => {
+		expect(archivedPages(doc).size).toBe(0);
+		const ops = expandPicks(doc, [
+			{ op: "set", id: "home", key: "picked", value: "b" },
+		]);
+		const picked = applyCanvasOps(doc, ops);
+		expect([...archivedPages(picked)]).toEqual(["a1"]);
+		expect(picked.pages.find((p) => p.id === "a1")?.canvas).toBe(ALTERNATES_ID);
+	});
+
+	it("撤销删画框时恢复方案组与选定者", () => {
+		const picked = applyCanvasOps(doc, [
+			{ op: "set", id: "home", key: "picked", value: "a" },
+			{ op: "set", id: "home", key: "pickedBy", value: "thr_1" },
+		]);
+		const ops: CanvasOp[] = [{ op: "remove", id: "a1" }];
+		const after = applyCanvasOps(picked, ops);
+		expect(after.groups?.[0]?.picked).toBeNull();
+		expect(applyCanvasOps(after, inverseOps(picked, ops))).toEqual(picked);
 	});
 });
 
