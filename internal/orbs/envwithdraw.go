@@ -41,6 +41,12 @@ const envWithdrawReason = "ai consent: env key withdrawn"
 // envAgentStopTimeout 是收回时停一个 agent 的上限（agent.stop 给 5 秒宽限期）。
 const envAgentStopTimeout = 15 * time.Second
 
+// envAgentStopRetry / envAgentStopRetryMax 是收回时 agent 没停下的重试退避（起点与上限；测试里调小）。
+var (
+	envAgentStopRetry    = time.Second
+	envAgentStopRetryMax = time.Minute
+)
+
 // WithdrawEnvKeys 收回 orb 环境里主人已不同意的环境变量降级密钥（见文件头）。trigger 只进日志（"startup" / "consent"）。
 // 没有被扣下的 provider 时（常见情形）什么都不做；否则对机器可能还带着这些密钥的工作 orb：ready 且 link 在的立即退回
 // connecting 重走 resume，其余记下待收回。可重复调用：本进程已按新同意重新下发过的 orb 不再受影响。
@@ -152,9 +158,34 @@ func (s *Service) noteEnvHeld(orbID string, names []string) {
 
 // stopEnvAgents 在新的 setup / resume 替换了 orbd 的环境之后停掉这台 orb 上的 agent：归属它的线程，以及本 link 的
 // hello 报告在跑的线程（没有 agent 的线程 agent.stop 是空操作）。线程服务收到 agent.status exited（不带 restartsLeft）
-// 按有意停止处理，orb 进入 ready 时重新拉起。link 断开时返回 false（调用方退回 connecting，记下的 provider 放回）。
+// 按有意停止处理，orb 进入 ready 时重新拉起。
+//
+// 任何一个线程停止失败（超时、RPC 错误）都不放行：那个 agent 可能还带着旧环境里的密钥直连上游。orb 留在当前阶段
+// （不进 ready，线程不会往这台 orb 派新 agent），按 envAgentStopRetry 起的退避重试，直到全部停下；link 断开时返回 false
+// （调用方退回 connecting，记下的 provider 放回，由新 link 重来）。
 func (s *Service) stopEnvAgents(ctx context.Context, l *orbLink, providers []string) bool {
-	var ids []string
+	delay := envAgentStopRetry
+	for {
+		ids, failed := s.stopEnvAgentsOnce(ctx, l)
+		if l.ctl.Err() != nil {
+			return false
+		}
+		if len(failed) == 0 {
+			slog.Info("orbs: 已按新环境停掉 orb 上的 agent，环境变量降级密钥已收回", "orb", l.orbID, "providers", providers, "threads", ids)
+			return true
+		}
+		slog.Warn("orbs: 收回环境变量降级密钥时有 agent 没停下，暂不进入 ready，稍后重试", "orb", l.orbID, "providers", providers, "failed", failed, "retryIn", delay)
+		select {
+		case <-l.ctl.Done():
+			return false
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, envAgentStopRetryMax)
+	}
+}
+
+// stopEnvAgentsOnce 对 orb 上的线程各发一次 agent.stop，返回涉及的线程与停止失败的线程（均已排序）。
+func (s *Service) stopEnvAgentsOnce(ctx context.Context, l *orbLink) (ids, failed []string) {
 	rows, err := s.st.Q.ListThreadsByOrb(ctx, &l.orbID)
 	if err != nil {
 		slog.Warn("orbs: 收回环境变量降级密钥时读取线程失败（只停 hello 报告在跑的）", "orb", l.orbID, "err", err)
@@ -170,9 +201,8 @@ func (s *Service) stopEnvAgents(ctx context.Context, l *orbLink, providers []str
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
 	var (
-		mu     sync.Mutex
-		failed []string
-		wg     sync.WaitGroup
+		mu sync.Mutex
+		wg sync.WaitGroup
 	)
 	for _, id := range ids {
 		wg.Go(func() {
@@ -187,12 +217,8 @@ func (s *Service) stopEnvAgents(ctx context.Context, l *orbLink, providers []str
 		})
 	}
 	wg.Wait()
-	if l.ctl.Err() != nil {
-		return false
-	}
 	slices.Sort(failed)
-	slog.Info("orbs: 已按新环境停掉 orb 上的 agent，环境变量降级密钥已收回", "orb", l.orbID, "providers", providers, "threads", ids, "failed", failed)
-	return true
+	return ids, failed
 }
 
 // mergeKeys 合并两组 provider 键（排序、去重）。

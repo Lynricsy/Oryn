@@ -50,6 +50,8 @@ type fakeOrbd struct {
 	onCall func(method string)
 	// onSetup 非 nil 时替代 setup.run / resume.run 的固定应答。
 	onSetup func(orbID, method string, p apigen.LinkCtlSetupRunParams) apigen.LinkCtlSetupRunResult
+	// fail 非 nil 时在记下请求之后调用，返回非 nil 就以该错误应答（受 mu 保护）。
+	fail func(method string) error
 
 	mu    sync.Mutex
 	sess  *link.Session
@@ -75,7 +77,13 @@ func (o *fakeOrbd) connect() error {
 	ctl := link.NewCtl(st, link.CtlHandlers{OnRequest: func(_ context.Context, method string, params json.RawMessage) (any, error) {
 		o.mu.Lock()
 		o.calls = append(o.calls, ctlCall{method, params})
+		fail := o.fail
 		o.mu.Unlock()
+		if fail != nil {
+			if err := fail(method); err != nil {
+				return nil, err
+			}
+		}
 		if o.onCall != nil {
 			o.onCall(method)
 		}

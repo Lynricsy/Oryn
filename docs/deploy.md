@@ -415,7 +415,7 @@ orb 内的 git 请求经 orbd 的本机代理（`127.0.0.1:7811`）到达控制�
 - 模型请求（工作 orb、Runner、协调宿主、记忆中转里 Hindsight 调用的模型、artifact 的 `sample` 能力）经出站代理的 `/llm/` 路由，拒绝回 403 JSON，`error.code` 为 `ai_consent_required`，`error.message` 指向「设置 → 隐私与数据」。不带 Oryn 密钥、上游在公网的 provider（`apiKey` 是环境变量名或 `!命令`，或只写了 `baseUrl`）同样改写到出站代理，请求里的凭据原样转发；上游在本机或内网的维持直连。
 - 记忆中转转发嵌入 / 重排之前判定，拒绝回 403 `{"code":"ai_consent_required"}`；助手记忆召回时判断模型被拒则按 RRF 顺序给出、不重排。
 - 全局助手与后台研究的正向代理（CONNECT 与 http 转发）在拨号之前判定 `web:public`，拒绝回 403；`coordinator.web_allow_hosts` 里的内网主机不需要同意。
-- 以环境变量降级的模型密钥（omp 直连上游，出站代理管不到）只在主人同意了 `model:<provider>` 之后才在工作 orb 的 setup 里注入。撤回时控制面立即收回：带着这类密钥在运行的工作 orb 退回 connecting、经现有 link 重走一次 resume（新的 resume 参数里没有被撤回的密钥，orbd 用它整体替换 setup 环境并重写 `models.yml`），随后停掉这台 orb 上的 agent，orb 回到 ready 后会话照常重新拉起（正在进行的回合会被中断）。冻结或 link 不在的 orb 记下待收回，下次恢复或重连时同样处理。同意之后要等 orb 下一次 setup（停机后恢复、重建）才拿到密钥；没有被撤回的降级 provider 时这些都不会发生。受管服务（`services`）不会被重启，它们的进程环境要到下次启动才更新。
+- 以环境变量降级的模型密钥（omp 直连上游，出站代理管不到）只在主人同意了 `model:<provider>` 之后才在工作 orb 的 setup 里注入。撤回时控制面立即收回：带着这类密钥在运行的工作 orb 退回 connecting、经现有 link 重走一次 resume（新的 resume 参数里没有被撤回的密钥，orbd 用它整体替换 setup 环境并重写 `models.yml`），随后停掉这台 orb 上的 agent，orb 回到 ready 后会话照常重新拉起（正在进行的回合会被中断）。任何一个 agent 没能停下（超时或出错），orb 就停在 resuming、不进 ready，按退避（1 秒起、至多 1 分钟）一直重试停止，直到全部停下或 link 断开（断开后由新 link 重来）。冻结或 link 不在的 orb 记下待收回，下次恢复或重连时同样处理。同意之后要等 orb 下一次 setup（停机后恢复、重建）才拿到密钥；没有被撤回的降级 provider 时这些都不会发生。受管服务（`services`）不会被重启，它们的进程环境要到下次启动才更新。
 
 每个被拒的接收方只记一条日志（`AI 数据同意：主人尚未同意…`），同意后再被撤回会重新记。模型目录（`omp models`，只列模型、不带主人数据）不受同意限制。
 

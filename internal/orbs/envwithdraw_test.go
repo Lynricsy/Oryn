@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -229,4 +230,44 @@ func TestWithdrawEnvKeysOnRevoke(t *testing.T) {
 	}
 	assert.Contains(t, reason, envWithdrawReason)
 	assert.Contains(t, reason, `"groq"`)
+}
+
+// TestWithdrawEnvKeysStopFailureHoldsReady：撤回后重走 resume，但 link 一直在线、agent.stop 返回错误（agent 可能还带着
+// 旧密钥在跑）：orb 不进 ready、待收回状态不消费，按退避重试 agent.stop；停下之后才进入 ready。
+func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {
+	retry, retryMax := envAgentStopRetry, envAgentStopRetryMax
+	envAgentStopRetry, envAgentStopRetryMax = 20*time.Millisecond, 40*time.Millisecond
+	t.Cleanup(func() { envAgentStopRetry, envAgentStopRetryMax = retry, retryMax })
+
+	ctx := context.Background()
+	f := newEnvFixture(t, false, true)
+	var stopFails atomic.Bool
+	stopFails.Store(true)
+	f.o.mu.Lock()
+	f.o.fail = func(method string) error {
+		if method == "agent.stop" && stopFails.Load() {
+			return errors.New("agent did not exit")
+		}
+		return nil
+	}
+	f.o.mu.Unlock()
+
+	_, err := f.h.st.Q.ClearOwnerAiConsent(ctx)
+	require.NoError(t, err)
+	f.h.svc.WithdrawEnvKeys(ctx, "consent")
+	require.Eventually(t, func() bool { return len(f.stoppedThreads(t)) >= 3 }, 10*time.Second, 10*time.Millisecond, "agent.stop 失败后重试")
+	assert.True(t, f.h.svc.Connected(f.orb.ID), "link 一直在线")
+	seq := f.h.eventSeq(f.orb.ID)
+	assert.Equal(t, 1, countEvent(seq, "ready>connecting"))
+	assert.Zero(t, countEvent(seq, "resuming>ready"), "agent 没停下之前不进 ready：%v", seq)
+	got, err := f.h.svc.Get(ctx, f.orb.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateResuming, got.State)
+
+	stopFails.Store(false)
+	require.Eventually(t, func() bool { return countEvent(f.h.eventSeq(f.orb.ID), "resuming>ready") == 1 }, 10*time.Second, 10*time.Millisecond,
+		"events: %v", f.h.eventSeq(f.orb.ID))
+	assert.Empty(t, f.h.svc.pendingEnvWithdraw(f.orb.ID))
+	assert.Len(t, f.setupParams(t, "resume.run"), 1, "只重试停止，不重走 resume")
+	assert.NotContains(t, f.setupParams(t, "resume.run")[0].Env, groqEnv)
 }
