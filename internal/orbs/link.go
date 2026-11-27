@@ -160,7 +160,7 @@ func (s *Service) serveLink(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if !orbLinkAcceptable(o) {
+		if !s.linkAdmissible(r.Context(), o) {
 			return fmt.Errorf("orb %s is %s", o.ID, o.State)
 		}
 		orb, token = o, tok
@@ -188,10 +188,19 @@ func (s *Service) recheckToken(ctx context.Context, orbID, token string) error {
 	if o.ID != orbID {
 		return fmt.Errorf("token now belongs to orb %s", o.ID)
 	}
-	if o.DeletedAt != nil || !orbLinkAcceptable(o) {
+	if o.DeletedAt != nil || !s.linkAdmissible(ctx, o) {
 		return fmt.Errorf("orb %s is %s", o.ID, o.State)
 	}
 	return nil
+}
+
+// linkAdmissible 报告是否接下这台 orb 的 link：接受 link 的状态（orbLinkAcceptable），外加可能还带着不被同意降级密钥
+// 的 failed 工作 orb——只为在这条 link 上停掉 agent，onHello 停完即踢（orbd 断线不停 agent，见 envwithdraw.go）。
+func (s *Service) linkAdmissible(ctx context.Context, o db.Orb) bool {
+	if orbLinkAcceptable(o) {
+		return true
+	}
+	return o.State == StateFailed && len(s.envStale(ctx, o)) > 0
 }
 
 // ServeConn 在已建立的字节流上服务协调 orb 的 link（M9 协调宿主分册 H6）：conn 是 orynd 与它拉起的
@@ -450,6 +459,13 @@ func (s *Service) onHello(l *orbLink) {
 		return
 	}
 	if !orbLinkAcceptable(orb) {
+		if orb.State == StateFailed && !l.runner && !l.sandbox {
+			// failed 的 orb 不接受 link，但 orbd 断线时不停 agent：可能还带着不被同意降级密钥的 agent 先在这条 link 上停掉
+			// 再踢（如失败清理时 link 断开、超过连接超时后 orbd 才重连）。
+			if stale := s.envStale(ctx, orb); len(stale) > 0 {
+				s.stopEnvAgents(ctx, l, stale)
+			}
+		}
 		s.Kick(orb.ID, "orb is "+orb.State)
 		return
 	}

@@ -311,6 +311,29 @@ func TestWithdrawEnvKeysFailureStopSurvivesLinkLoss(t *testing.T) {
 	assert.Equal(t, `["groq"]`, *f.held(t))
 }
 
+// TestWithdrawEnvKeysFailedOrbReconnect：orb 带着降级密钥在跑时 link 断开、超时进了 failed，期间同意被撤回。orbd 断线
+// 不停 agent；它之后重连时 failed 的 orb 不接受这条 link，但踢掉之前先在这条 link 上停掉 agent。
+func TestWithdrawEnvKeysFailedOrbReconnect(t *testing.T) {
+	ctx := context.Background()
+	f := newEnvFixture(t, false, true)
+	f.o.disconnect()
+	require.Eventually(t, func() bool { return !f.h.svc.Connected(f.orb.ID) }, 5*time.Second, 20*time.Millisecond)
+	_, moved, err := f.h.svc.transition(ctx, f.orb.ID, StateReady, StateFailed, map[string]any{"reason": "no hello within connect timeout"})
+	require.NoError(t, err)
+	require.True(t, moved)
+	f.revoke(t)
+	f.h.svc.WithdrawEnvKeys(ctx, "consent")
+	assert.Empty(t, f.stoppedThreads(t), "link 不在：停不了")
+
+	_ = f.o.connect()
+	require.Eventually(t, func() bool { return len(f.stoppedThreads(t)) == 1 }, 10*time.Second, 20*time.Millisecond)
+	assert.Equal(t, []string{"T-env"}, f.stoppedThreads(t))
+	require.Eventually(t, func() bool { return !f.h.svc.Connected(f.orb.ID) }, 5*time.Second, 20*time.Millisecond, "停完照样踢掉")
+	got, err := f.h.svc.Get(ctx, f.orb.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateFailed, got.State)
+}
+
 // TestWithdrawEnvKeysStopFailureHoldsReady：撤回后重走 resume，但 link 一直在线、agent.stop 返回错误（agent 可能还带着
 // 旧密钥在跑）：orb 不进 ready、env_fallback 不收窄，按退避重试 agent.stop；停下之后才进入 ready。
 func TestWithdrawEnvKeysStopFailureHoldsReady(t *testing.T) {
