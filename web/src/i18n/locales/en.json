@@ -1091,7 +1091,9 @@
 			"authoring": "Building view",
 			"authoringHint": "A model is writing this job's view rules; showing the last output line and rates meanwhile",
 			"fallback": "Basic view",
-			"fallbackHint": "No view rules; showing the last output line and rates only"
+			"fallbackHint": "No view rules; showing the last output line and rates only",
+			"waiting": "Waiting for data",
+			"more": "+{{n}} more"
 		},
 		"event": {
 			"job": {

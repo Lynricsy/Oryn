@@ -1091,7 +1091,9 @@
 			"authoring": "生成视图中",
 			"authoringHint": "模型正在写这个任务的看板规则，先显示最后一行输出与速率",
 			"fallback": "简化视图",
-			"fallbackHint": "没有看板规则，只显示最后一行输出与速率"
+			"fallbackHint": "没有看板规则，只显示最后一行输出与速率",
+			"waiting": "等待数据",
+			"more": "还有 {{n}} 项"
 		},
 		"event": {
 			"job": {

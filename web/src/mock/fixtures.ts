@@ -4390,7 +4390,7 @@ export function zooJobsSnapshot(running: {
 	return { jobs: tree.map((r) => r.job), tree };
 }
 
-/** 已结束的 `bg_7` 的小组件：主块是各阶段耗时的柱子（列表里只露读数与这一块）。 */
+/** 已结束的 `bg_7` 的小组件：主块是各阶段耗时的分项横条（列表里只露读数与前三项）。 */
 const ZOO_CHECK_WIDGET = {
 	title: "lint · 类型检查",
 	headline: {
@@ -4422,7 +4422,7 @@ const ZOO_CHECK_WIDGET = {
 	updatedAt: NOW - 9 * MIN + 41_300,
 };
 
-/** 运行中的 `bg_9` 的小组件：内存曲线（带上限标记线与逐点提示）+ 各类块，样例覆盖全部块种与色调。 */
+/** 运行中的 `bg_9` 的小组件：内存序列（柱列，带上限参考线与逐点提示）+ 各类块，样例覆盖全部块种与色调。 */
 const ZOO_RACE_MEM = [
 	780, 742, 690, 655, 610, 560, 520, 488, 455, 430, 410, 395, 388, 380,
 ];

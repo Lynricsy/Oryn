@@ -1,7 +1,9 @@
 /**
- * Core 的后台任务小组件（`JobWidgetView`）：标题读数（带涨跌）、阶段与各块。
+ * Core 的后台任务小组件（`JobWidgetView`）：标题读数（带涨跌）、阶段与各块。画法跟 Core 自己的渲染
+ * （`coding-agent/src/ui/tools/jobs/widget.tsx`）一致：`spark` 序列画成柱列（一个值一根柱，按 min/max 定高，
+ * 参考线是虚线、逐点提示挂在柱子上），`bars` 是逐项的横向量表。
  *
- * - `JobWidgetCard`：任务详情对话框里的完整视图，所有块、标记线标签、柱子的逐项标注、视图状态徽标。
+ * - `JobWidgetCard`：任务详情对话框里的完整视图，所有块、柱列右侧的读数与参考线图例、视图状态徽标。
  * - `JobWidgetCompact`：信息面板任务列表里的一行下方，只有读数与第一块（Core 约定第一块是主块，紧凑视图只显示它）。
  *   它放在列表行的按钮里，全部用 span 搭（按钮内只允许短语内容）。
  */
@@ -9,7 +11,6 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { JobWidget } from "../../state/jobs";
 import { Badge, Meter, type Tone } from "../ui/data";
-import { Sparkline } from "../ui/primitives";
 
 type Block = JobWidget["blocks"][number];
 type SparkBlock = Extract<Block, { kind: "spark" }>;
@@ -121,13 +122,54 @@ function BlockHead({
 	);
 }
 
-/** Sparkline 的纵向换算（视图高 24、上下各留 1）：值在区间里的比例 → 距顶部的百分比。 */
-function topPercent(ratio: number): number {
-	const r = Math.min(1, Math.max(0, ratio));
-	return ((24 - r * 22 - 1) / 24) * 100;
+/** 还没有数据的块。 */
+function Waiting(): ReactNode {
+	const { t } = useTranslation();
+	return <span className="text-faint text-xs">{t("jobs.widget.waiting")}</span>;
 }
 
-/** 曲线 + 参考线 + 逐点悬停提示。 */
+/** 序列的柱列：柱高 = (值 − min) / (max − min)，最低也留一条细线；参考线是该值高度上的虚线。 */
+function SparkColumns({
+	block,
+	variant,
+}: {
+	block: SparkBlock;
+	variant: Variant;
+}): ReactNode {
+	const range = block.max - block.min;
+	const frac = (v: number) =>
+		range > 0 ? Math.min(1, Math.max(0, (v - block.min) / range)) : 0;
+	return (
+		<span
+			role="img"
+			aria-label={`${block.label} ${block.last}`}
+			className={`relative flex items-end gap-1 ${variant === "card" ? "h-16" : "h-10"} ${TEXT[block.tone ?? "accent"]}`}
+		>
+			{block.values.map((v, i) => {
+				// 点没有稳定 id，位置即身份
+				const key = i;
+				return (
+					<span
+						key={key}
+						title={block.tips?.[i]}
+						className="min-h-0.5 min-w-0.5 max-w-12 flex-1 rounded-t-[3px] bg-current transition-opacity duration-150 hover:opacity-70"
+						style={{ height: `${frac(v) * 100}%` }}
+					/>
+				);
+			})}
+			{block.marks?.map((m) => (
+				<span
+					key={`${m.label}:${m.value}`}
+					aria-hidden
+					className={`pointer-events-none absolute inset-x-0 border-current border-t border-dashed ${TEXT[m.tone ?? "muted"]}`}
+					style={{ bottom: `${frac(m.value) * 100}%` }}
+				/>
+			))}
+		</span>
+	);
+}
+
+/** `spark` 块：卡片里柱列右侧是最新读数、标签与参考线图例；紧凑版柱列下面一行标签与读数。 */
 function SparkChart({
 	block,
 	variant,
@@ -135,96 +177,83 @@ function SparkChart({
 	block: SparkBlock;
 	variant: Variant;
 }): ReactNode {
-	const span = block.max - block.min;
-	const range = span > 0 ? span : 1;
-	const n = block.values.length;
-	const tips = block.tips?.length === n && n > 1 ? block.tips : undefined;
+	if (block.values.length === 0)
+		return (
+			<span className="flex flex-col gap-1">
+				<BlockHead label={block.label} />
+				<Waiting />
+			</span>
+		);
+	if (variant === "row")
+		return (
+			<span className="flex flex-col gap-1">
+				<SparkColumns block={block} variant="row" />
+				<BlockHead label={block.label} value={block.last} />
+			</span>
+		);
 	return (
-		<span className="flex flex-col gap-1">
-			<BlockHead label={block.label} value={block.last} />
-			<span className={`relative block ${TEXT[block.tone ?? "accent"]}`}>
-				<Sparkline
-					values={block.values.map((v) => v - block.min)}
-					max={range}
-					label={block.label}
-					className={variant === "card" ? "h-16!" : "h-8!"}
-				/>
+		<span className="flex items-end gap-3">
+			<span className="block min-w-0 flex-1">
+				<SparkColumns block={block} variant="card" />
+			</span>
+			<span className="flex max-w-[40%] shrink-0 flex-col items-end text-xs">
+				<span className="font-semibold text-fg text-sm tabular-nums">
+					{block.last}
+				</span>
+				{!block.last.endsWith(block.label) && (
+					<span className="max-w-full truncate text-muted">{block.label}</span>
+				)}
 				{block.marks?.map((m) => (
 					<span
 						key={`${m.label}:${m.value}`}
-						title={m.label}
-						className={`pointer-events-none absolute inset-x-0 border-current border-t border-dashed opacity-60 ${TEXT[m.tone ?? "muted"]}`}
-						style={{ top: `${topPercent((m.value - block.min) / range)}%` }}
+						className="max-w-full truncate text-faint"
 					>
-						{variant === "card" && (
-							<span className="absolute right-0 bottom-0.5 text-2xs leading-none">
-								{m.label}
-							</span>
-						)}
+						<span className={TEXT[m.tone ?? "muted"]}>┄ </span>
+						{m.label}
 					</span>
 				))}
-				{tips?.map((tip, i) => {
-					// 点没有稳定 id，位置即身份
-					const key = i;
-					const left = Math.max(0, (i - 0.5) / (n - 1));
-					const right = Math.min(1, (i + 0.5) / (n - 1));
-					return (
-						<span
-							key={key}
-							title={tip}
-							className="absolute inset-y-0 hover:bg-fg/8"
-							style={{
-								left: `${left * 100}%`,
-								width: `${(right - left) * 100}%`,
-							}}
-						/>
-					);
-				})}
 			</span>
 		</span>
 	);
 }
 
-/** 竖向柱状图：柱高 = 值 / 满格值；卡片里每根柱子下面标名字与读数。 */
-function BarsChart({
+/** 紧凑版的 `bars` 最多列几项（与 Core 的任务磁贴一致），其余折成「还有 N 项」。 */
+const ROW_BARS = 3;
+
+/** `bars` 块：逐项一行，名字 + 横向量表（值 / 满格值）+ 读数。 */
+function BarsList({
 	block,
 	variant,
 }: {
 	block: BarsBlock;
 	variant: Variant;
 }): ReactNode {
+	const { t } = useTranslation();
+	const shown =
+		variant === "row" ? block.items.slice(0, ROW_BARS) : block.items;
+	const rest = block.items.length - shown.length;
 	return (
 		<span className="flex flex-col gap-1">
 			<BlockHead label={block.label} />
-			<span
-				role="img"
-				aria-label={`${block.label}: ${block.items.map((it) => `${it.label} ${it.text}`).join(", ")}`}
-				className={`flex items-end gap-1 ${variant === "card" ? "h-20" : "h-10"}`}
-			>
-				{block.items.map((it) => (
-					<span
-						key={it.label}
-						title={`${it.label} · ${it.text}`}
-						className={`min-h-px min-w-1 max-w-12 flex-1 rounded-t-sm ${FILL[it.tone ?? "accent"]}`}
-						style={{
-							height: `${block.max > 0 ? Math.min(1, Math.max(0, it.value / block.max)) * 100 : 0}%`,
-						}}
+			{shown.length === 0 && <Waiting />}
+			{shown.map((it) => (
+				<span
+					key={it.label}
+					className={`grid items-center gap-2 text-xs ${variant === "card" ? "grid-cols-[minmax(0,8rem)_1fr_auto]" : "grid-cols-[minmax(0,5rem)_1fr_auto]"}`}
+				>
+					<span className="truncate text-muted">{it.label}</span>
+					<Meter
+						value={it.value}
+						max={block.max}
+						label={it.label}
+						tone={METER_TONE[it.tone ?? "accent"]}
 					/>
-				))}
-			</span>
-			{variant === "card" && (
-				<span className="flex gap-1 text-2xs leading-tight">
-					{block.items.map((it) => (
-						<span
-							key={it.label}
-							className="flex min-w-1 max-w-12 flex-1 flex-col overflow-hidden"
-						>
-							<span className="truncate text-faint">{it.label}</span>
-							<span className="truncate text-muted tabular-nums">
-								{it.text}
-							</span>
-						</span>
-					))}
+					<span className="text-faint tabular-nums">{it.text}</span>
+				</span>
+			))}
+			{rest > 0 && (
+				<span className="text-faint text-xs">
+					{t("jobs.widget.more", { n: rest })}
 				</span>
 			)}
 		</span>
@@ -253,7 +282,7 @@ function WidgetBlock({
 		case "spark":
 			return <SparkChart block={block} variant={variant} />;
 		case "bars":
-			return <BarsChart block={block} variant={variant} />;
+			return <BarsList block={block} variant={variant} />;
 		case "stat":
 			return (
 				<span className="flex flex-wrap gap-x-4 gap-y-1.5">
