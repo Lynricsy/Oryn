@@ -142,9 +142,21 @@ web_rail() {
 card_open() { probe data-open | jq -e --argjson o "$1" 'last | (.open // false) == $o'; }
 # act_pressed <true|false>：操作槽里有开合状态的按钮（信息面板的 aria-pressed，或「更多」的 aria-expanded）
 act_pressed() { probe rail | jq -e --argjson p "$1" 'last | .info.pressed == $p'; }
-# tap_at <步骤> <jq 路径>：点网页探针最后一条 rail 里记下的中心点
+# rail_settled <jq 路径>：网页探针最后一条 rail 里的这个中心点稳定了（最后一条已过 1 秒没再变），
+# 并且落在壳最后一条 rail 的竖栏矩形里（两边都是 WebView 坐标，CSS px = pt）。不拿原生矩形顶替探针的值：
+# 网页竖栏真画错了位置时，这一步就一直不成立、红在这里
+rail_settled() {
+  local frame
+  frame=$(ev rail | tail -1 | jq -c '.frame')
+  probe rail | jq -e --arg p "$1" --argjson f "$frame" --argjson now "$(($(date +%s) * 1000))" '
+    last | .info[$p] as $c
+    | $c != null and $f != null and ($now - .ts) >= 1000
+      and $c.x >= $f.x and $c.x <= $f.x + $f.width and $c.y >= $f.y and $c.y <= $f.y + $f.height'
+}
+# tap_at <步骤> <jq 路径>：等探针记下的中心点稳定且落在原生竖栏里，再点它
 tap_at() {
   local xy
+  until_ok "$1" 15 "网页竖栏的 ${2} 中心点稳定且在原生竖栏矩形里" rail_settled "$2"
   xy=$(probe rail | jq -r "last | .info.$2 | \"\\(.x) \\(.y)\"")
   # shellcheck disable=SC2086 # xy 是两个数
   duo tap $xy || fail "$1" "duoctl tap ${xy} 失败"
