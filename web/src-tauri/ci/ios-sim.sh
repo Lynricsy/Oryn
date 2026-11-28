@@ -27,10 +27,9 @@ pick_iphone() {
   echo "$pick"
 }
 
-# sim_setup <Oryn.app> <输出目录> <Step Summary 小标题>：原生演示检查的准备（同一台模拟器已启动、App 已安装时幂等）。
-# 编译逐区域比较工具到 $work/region-diff（工具链问题在启动模拟器之前就暴露）、选模拟器并写进 Step Summary、
-# 启动并安装 App，算出事件日志路径 ${log}（App 数据容器里的 tmp/events.jsonl）。
-sim_setup() {
+# sim_prepare <Oryn.app> <输出目录> <Step Summary 小标题>：不碰模拟器的准备。设置 app / out / bundle / summary / work，
+# 编译逐区域比较工具到 $work/region-diff（工具链问题在启动模拟器之前就暴露），写 Step Summary 小标题。
+sim_prepare() {
   app=$1
   out=$2
   bundle=com.lynricsy.oryn
@@ -40,14 +39,18 @@ sim_setup() {
   trap 'rm -rf "$work"' EXIT
 
   xcrun --sdk macosx swiftc -O "$sim_dir/ios-region-diff.swift" -o "$work/region-diff"
+  echo "### $3" >>"$summary"
+}
 
+# sim_setup <Oryn.app> <输出目录> <Step Summary 小标题>：原生演示检查的准备（同一台模拟器已启动、App 已安装时幂等）。
+# sim_prepare 之后选模拟器并写进 Step Summary、启动并安装 App，算出事件日志路径 ${log}（App 数据容器里的 tmp/events.jsonl）。
+sim_setup() {
+  sim_prepare "$@"
   local pick
   pick=$(pick_iphone)
   udid=$(jq -r .udid <<<"$pick")
-  echo "### $3" >>"$summary"
   echo "模拟器：$(jq -r '"\(.name)（iOS \(.os)）"' <<<"$pick")" | tee -a "$summary"
   echo >>"$summary"
-
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b
   xcrun simctl install "$udid" "$app"
