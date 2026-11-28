@@ -87,9 +87,30 @@ duo_setup() {
   duoctl="$work/duoctl/bin/duoctl"
 }
 
-# duo <duoctl 子命令…>：对当前这台 Duo 执行 duoctl，最多 DUO_TIMEOUT 秒（默认 180，首次调用含编译辅助程序）：
-# duoctl 走模拟器私有接口，卡住时整步挂到 runner 被回收也没有日志；超时由 SIGALRM 结束它，调用方按失败处理
-duo() { perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
+# pg_timeout <秒> <命令…>：在独立进程组里跑命令，超时先 TERM 再 KILL 整个进程组，返回 124；否则返回命令的退出码。
+# 只杀父进程不够：duoctl 是 Python，阻塞点常在它 subprocess.run 起的 xcrun simctl spawn，子进程留下来会继续卡住、
+# 或攥着继承来的输出管道让调用方的 $(…) / 管道一直等。
+pg_timeout() {
+  perl -e '
+    my $secs = shift;
+    my $pid = fork() // die "fork: $!";
+    if ($pid == 0) { setpgrp(0, 0); exec @ARGV or die "exec: $!"; }
+    setpgrp($pid, $pid);
+    $SIG{ALRM} = sub {
+      kill "TERM", -$pid; sleep 2; kill "KILL", -$pid;
+      waitpid($pid, 0);
+      exit 124;
+    };
+    alarm $secs;
+    waitpid($pid, 0);
+    alarm 0;
+    exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+  ' "$@"
+}
+
+# duo <duoctl 子命令…>：对当前这台 Duo 执行 duoctl，最多 DUO_TIMEOUT 秒（默认 180，首次调用含编译辅助程序），
+# 超时连同它派生的 simctl 子进程一起结束，调用方按失败处理（以前没有限时，卡住时整步挂到 runner 被回收也没有日志）
+duo() { pg_timeout "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
 
 # run <名字> <等待的事件> [要传给 App 的 SIMCTL_CHILD_* 赋值…]
 # 冷启动 App，等事件日志里出现该事件后截图到 <输出目录>/<名字>.png，日志存为 <名字>.jsonl。
@@ -116,30 +137,20 @@ run() {
   return 1
 }
 
-# sim_shot <文件> <秒>：限时截图。CI 机器卡顿时 simctl 截图曾阻塞 3 分钟以上；超时就终止并回收子进程、
+# sim_shot <文件> <秒>：限时截图。CI 机器卡顿时 simctl 截图曾阻塞 3 分钟以上；超时就按进程组终止（pg_timeout）、
 # 丢掉没写完的图片，返回 1。截图先写到旁边的临时文件，成功才改名，失败时不会留下半张图或旧图冒充。
 sim_shot() {
-  local f=$1 secs=$2 tmp="${1%.png}.part.png" pid i
+  local f=$1 secs=$2 tmp="${1%.png}.part.png" ok
   rm -f "$tmp"
   if [[ -n $duoctl ]]; then
-    "$duoctl" -d "$udid" screenshot "$tmp" >/dev/null 2>&1 &
+    pg_timeout "$secs" "$duoctl" -d "$udid" screenshot "$tmp" >/dev/null 2>&1 && ok=1
   else
-    xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>&1 &
+    pg_timeout "$secs" xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>&1 && ok=1
   fi
-  pid=$!
-  for ((i = 0; i < secs * 4; i++)); do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      if wait "$pid"; then
-        mv "$tmp" "$f"
-        return 0
-      fi
-      rm -f "$tmp"
-      return 1
-    fi
-    sleep 0.25
-  done
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
+  if [[ -n ${ok:-} ]]; then
+    mv "$tmp" "$f"
+    return 0
+  fi
   rm -f "$tmp"
   return 1
 }
