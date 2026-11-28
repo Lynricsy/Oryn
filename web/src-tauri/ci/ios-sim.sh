@@ -143,9 +143,10 @@ sim_run() {
 # （上一步没关掉的、并行的）里的 Oryn 不会被认到；同一台里有多个时取最新的（pgrep -n）
 app_pid() { pgrep -n -f "/Devices/${udid}/.*/Oryn\.app/Oryn( |$)" || true; }
 
-# app_stop：结束本台模拟器里的 Oryn，确认进程真的没了才返回。CI 上见过 simctl terminate 卡满 60 秒、App 仍在：
+# app_stop：结束本台模拟器里的 Oryn，确认进程真的没了才返回 0。CI 上见过 simctl terminate 卡满 60 秒、App 仍在：
 # 随后的 simctl launch 只是把旧实例拉回前台（还停在上一张图的页面），就绪事件永远等不到。terminate 后仍在就记下
-# 进程状态（ps 的 stat / wchan，分辨卡在退出还是被挂起），再从宿主机直接 SIGKILL
+# 进程状态（ps 的 stat / wchan，分辨卡在退出还是被挂起），再从宿主机直接 SIGKILL；10 秒后还在就报错并返回 1，
+# 调用方不得接着冷启动或发推送（拉起来的会是旧实例，结果没有意义）
 app_stop() {
   local pid
   sim_run 60 xcrun simctl terminate "$udid" "$bundle" >/dev/null || true
@@ -157,7 +158,8 @@ app_stop() {
     kill -0 "$pid" 2>/dev/null || return 0
     sleep 0.5
   done
-  echo "::warning::Oryn（pid ${pid}）SIGKILL 10 秒后仍在：$(ps -o stat=,wchan= -p "$pid" 2>/dev/null)" >&2
+  echo "::error::Oryn（pid ${pid}）SIGKILL 10 秒后仍在：$(ps -o stat=,wchan= -p "$pid" 2>/dev/null)" >&2
+  return 1
 }
 
 # app_sample <文件>：对本台模拟器里正在跑的 Oryn（app_pid）采样 3 秒（macOS sample），存进产物并打印主线程栈的开头；
@@ -188,7 +190,7 @@ app_sample() {
 run() {
   local name=$1 event=$2
   shift 2
-  app_stop
+  app_stop || return 1
   rm -f "$log"
   env SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" "$@" xcrun simctl launch "$udid" "$bundle"
   for _ in $(seq 1 90); do
