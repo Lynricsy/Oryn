@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/store/db"
@@ -15,8 +16,8 @@ import (
 // 按需加载的宿主工具组（只给全局助手）。协调宿主的 omp 没有 bash，Core 的 tool commands（discoverable 工具挂成 bash
 // 命令、提示词里只留一行目录）在这里不生效：宿主工具不论 loadMode 都带着完整 schema 进每一次请求。不常用或占上下文多的
 // 工具因此分组：对话开始时只下发常驻工具与 load_tools，系统提示词里列出各组的目录；模型调用 load_tools 后，控制面把组记进
-// threads.tool_groups，经 HostToolResult.HostTools 让 threads 以 set_host_tools 把该组加进 agent 的工具表，结果里给出
-// 该组的用法。agent 重启（工具定义刷新、设置变化）时已加载的组照样下发、用法进系统提示词；主线每段都从空上下文开始，
+// threads.tool_groups，经 threads.Service.SetHostTools 把该组加进 agent 的工具表、等到应答，再在结果里给出该组的用法。
+// agent 重启（工具定义刷新、设置变化）时已加载的组照样下发、用法进系统提示词；主线每段都从空上下文开始，
 // 每次启动清空已加载的组。受限的一段（M26）与 Space 协调者的工具表本就很小，不拆。
 
 // ToolLoadTools 是加载工具组的宿主工具。
@@ -226,8 +227,9 @@ func (s *Service) assistantToolSet(ctx context.Context, row db.Thread, restricte
 	}
 }
 
-// toolLoadTools 执行 load_tools：把组记进 threads.tool_groups，结果给出新加载组的用法，并经 HostTools 让 threads 先以
-// 新的工具表替换 agent 的宿主工具表。已加载的组再要一次也照样下发整张表：orbd 自重启复用旧的初始化帧时据此补回。
+// toolLoadTools 执行 load_tools：把组记进 threads.tool_groups，以新的工具表替换 agent 的宿主工具表并等到应答，再返回
+// 新加载组的用法。已加载的组再要一次也照样下发整张表：orbd 自重启复用旧的初始化帧时据此补回。同一对话的调用按线程
+// 串行：读取、合并、存库与 set_host_tools 应答整条链路持锁，后一次一定在前一次的结果之上合并、并在它之后下发。
 func (s *Service) toolLoadTools(ctx context.Context, c toolCtx) threads.HostToolResult {
 	if c.Kind != threads.KindAssistant {
 		return failResult(errf("unknown_tool", "no tool named %q", c.Name))
@@ -241,6 +243,9 @@ func (s *Service) toolLoadTools(ctx context.Context, c toolCtx) threads.HostTool
 	if len(a.Groups) == 0 {
 		return failResult(errf(CodeInvalid, "groups is required"))
 	}
+	mu, _ := s.toolGroupLocks.LoadOrStore(c.ThreadID, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
 	row, err := s.st.Q.GetThread(ctx, c.ThreadID)
 	if err != nil {
 		return failResult(err)
@@ -284,9 +289,15 @@ func (s *Service) toolLoadTools(ctx context.Context, c toolCtx) threads.HostTool
 		}
 	}
 	active, _ := splitTools(all, loaded)
+	if s.th == nil {
+		return failResult(errf(CodeCoordinatorUnavailable, "threads are not configured"))
+	}
+	if err := s.th.SetHostTools(ctx, c.ThreadID, active); err != nil {
+		slog.Warn("coord: 替换宿主工具表失败", "thread", c.ThreadID, "err", err)
+		return failResult(errf("tools_unavailable", "the tools could not be loaded: %s", err.Error()))
+	}
 	return threads.HostToolResult{
-		Text:      strings.Join(lines, "\n\n"),
-		Details:   map[string]any{"loaded": fresh},
-		HostTools: active,
+		Text:    strings.Join(lines, "\n\n"),
+		Details: map[string]any{"loaded": fresh},
 	}
 }

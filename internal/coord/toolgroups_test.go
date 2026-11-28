@@ -1,12 +1,16 @@
 package coord
 
 import (
+	"encoding/json"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
 // newConvPrompt 是一组都没加载的全局助手对话的系统提示词开头：基础提示词、写作块指引与按需工具目录。
@@ -18,10 +22,44 @@ func newConvPrompt(t *testing.T, e *env, threadID string, web bool) string {
 	return SystemPrompt(nil, "", threadID, web) + "\n\n" + viewTools().WritingGuide + "\n\n" + toolGroupsPrompt(avail, nil)
 }
 
-// 新的助手对话只下发常驻工具与 load_tools，按需组列在目录里；加载后记进线程、agent 重启也带着，用法进系统提示词。
-func TestLoadToolsGroups(t *testing.T) {
-	e := newEnv(t, true)
+// agentTools 返回对话在跑的 agent 当前的宿主工具名（get_active_tools）。
+func agentTools(t *testing.T, e *env, threadID string) []string {
+	t.Helper()
+	done := make(chan json.RawMessage, 1)
+	require.NoError(t, e.th.Command(e.ctx, threadID, json.RawMessage(`{"type":"get_active_tools"}`), func(r json.RawMessage) { done <- r }))
+	var r struct {
+		Data struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"data"`
+	}
+	select {
+	case raw := <-done:
+		require.NoError(t, json.Unmarshal(raw, &r), string(raw))
+	case <-time.After(30 * time.Second):
+		t.Fatal("get_active_tools 没有应答")
+	}
+	names := make([]string, 0, len(r.Data.Tools))
+	for _, tool := range r.Data.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+// liveConv 新建一个助手对话并等它的 agent（fakeomp）就绪，load_tools 才会真的替换在跑的工具表。
+func liveConv(t *testing.T, e *env) apigen.Thread {
+	t.Helper()
 	conv := e.assistant()
+	require.Eventually(t, func() bool { return e.row(conv.ID).State == threads.StateIdle }, 20*time.Second, 20*time.Millisecond)
+	return conv
+}
+
+// 新的助手对话只下发常驻工具与 load_tools，按需组列在目录里；加载后在跑的 agent 换上新表、记进线程、agent 重启也带着，
+// 用法进系统提示词。
+func TestLoadToolsGroups(t *testing.T) {
+	e := newEnv(t, false)
+	conv := liveConv(t, e)
 
 	p, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
@@ -46,7 +84,7 @@ func TestLoadToolsGroups(t *testing.T) {
 
 	reloaded, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, toolNames(res.HostTools), toolNames(reloaded.Tools), "agent 重启时带着已加载的组")
+	assert.Equal(t, agentTools(t, e, conv.ID), toolNames(reloaded.Tools), "agent 已换上新表；重启时带着已加载的组")
 	assert.Contains(t, toolNames(reloaded.Tools), ToolCreateArtifact)
 	assert.Contains(t, toolNames(reloaded.Tools), ToolSetSchedule)
 	assert.NotContains(t, toolNames(reloaded.Tools), ToolRenderUI)
@@ -58,11 +96,11 @@ func TestLoadToolsGroups(t *testing.T) {
 	again := e.call(conv, ToolLoadTools, `{"groups":["artifacts"]}`, true)
 	require.False(t, again.IsError, again.Text)
 	assert.Contains(t, again.Text, "Already loaded")
-	assert.Equal(t, toolNames(reloaded.Tools), toolNames(again.HostTools))
+	assert.Equal(t, toolNames(reloaded.Tools), agentTools(t, e, conv.ID))
 
 	bad := e.call(conv, ToolLoadTools, `{"groups":["nope"]}`, true)
 	assert.True(t, bad.IsError)
-	assert.Nil(t, bad.HostTools)
+	assert.Equal(t, toolNames(reloaded.Tools), agentTools(t, e, conv.ID), "失败的加载不动工具表")
 
 	sp := e.space("s", "")
 	sprof, err := e.c.AgentProfile(e.ctx, sp.ThreadID)
@@ -73,6 +111,29 @@ func TestLoadToolsGroups(t *testing.T) {
 	assert.True(t, spRes.IsError, "Space 协调者没有 load_tools")
 }
 
+// 同一回合并发两次 load_tools：整条链路按线程串行，后一次在前一次之上合并，两组都在库里与 agent 的工具表里。
+func TestLoadToolsConcurrent(t *testing.T) {
+	e := newEnv(t, false)
+	conv := liveConv(t, e)
+	var wg sync.WaitGroup
+	results := make([]string, 2)
+	failed := make([]bool, 2)
+	for i, g := range []string{"views", "artifacts"} {
+		wg.Go(func() {
+			res := e.call(conv, ToolLoadTools, `{"groups":["`+g+`"]}`, true)
+			results[i], failed[i] = res.Text, res.IsError
+		})
+	}
+	wg.Wait()
+	for i := range results {
+		require.False(t, failed[i], results[i])
+	}
+	assert.Equal(t, map[string]bool{"views": true, "artifacts": true}, loadedGroups(e.row(conv.ID)))
+	tools := agentTools(t, e, conv.ID)
+	assert.Contains(t, tools, ToolRenderUI)
+	assert.Contains(t, tools, ToolCreateArtifact)
+}
+
 // 主线每段从空上下文开始：每次启动清空已加载的组。
 func TestLoadToolsMainResetsPerEpisode(t *testing.T) {
 	e := newEnv(t, true)
@@ -80,7 +141,7 @@ func TestLoadToolsMainResetsPerEpisode(t *testing.T) {
 	require.NoError(t, err)
 	res := e.call(main, ToolLoadTools, `{"groups":["computer"]}`, true)
 	require.False(t, res.IsError, res.Text)
-	assert.Contains(t, toolNames(res.HostTools), ToolComputerStatus)
+	assert.Equal(t, map[string]bool{"computer": true}, loadedGroups(e.row(main.ID)))
 
 	p, err := e.c.AgentProfile(e.ctx, main.ID)
 	require.NoError(t, err)

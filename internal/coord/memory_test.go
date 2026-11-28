@@ -101,7 +101,9 @@ func TestProfileOwnerMemory(t *testing.T) {
 	res := e.call(conv, ToolLoadTools, `{"groups":["memory"]}`, true)
 	require.False(t, res.IsError, res.Text)
 	assert.Contains(t, res.Text, memoryGuide)
-	names := toolNames(res.HostTools)
+	loaded, err := e.c.AgentProfile(e.ctx, conv.ID)
+	require.NoError(t, err)
+	names := toolNames(loaded.Tools)
 	for _, n := range []string{ToolRecallMemory, ToolSearchHistory, ToolRecallEngineering, ToolRemember} {
 		assert.Contains(t, names, n)
 	}
@@ -111,7 +113,7 @@ func TestProfileOwnerMemory(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, spProf.SystemPrompt, "Memory")
 	assert.NotContains(t, toolNames(spProf.Tools), ToolRecallMemory)
-	assert.Equal(t, []string{conv.ID}, mem.calls, "Space 协调线程不生成记忆段")
+	assert.Equal(t, []string{conv.ID, conv.ID}, mem.calls, "Space 协调线程不生成记忆段（助手对话加载前后各启动一次）")
 }
 
 // TestRecallMemoryTool：结果用不可信包裹；Space 与助手记忆关闭时没有这个工具。

@@ -141,6 +141,9 @@ type Service struct {
 	restrict mainRestrict
 	// views 是全局助手视图的在途阻塞作答（M33，views.go）。
 	views viewWaits
+	// toolGroupLocks 是线程 id → *sync.Mutex：串行化同一对话的 load_tools（读、合并、存库与 set_host_tools 应答整条链路，
+	// toolgroups.go）。Core 的宿主工具可并发，同一回合两次 load_tools 各自从旧值算整张表会互相覆盖。
+	toolGroupLocks sync.Map
 
 	ensureMu sync.Mutex
 	// spareMu 串行化备用助手对话的认领与补充（spare.go）；spareKick 让常驻检查在认领后立即补一个新的。

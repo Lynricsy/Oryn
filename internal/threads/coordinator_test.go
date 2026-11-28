@@ -335,45 +335,52 @@ func TestHostToolCallDispatch(t *testing.T) {
 	assert.Empty(t, sent(a), "取消的调用不写回结果")
 }
 
-// 结果带 HostTools（按需加载工具组）：先下发 set_host_tools，等到应答才写回结果；替换失败时结果改为错误。
-func TestHostToolResultReplacesHostTools(t *testing.T) {
+// SetHostTools：给在跑的 agent 下发 set_host_tools，等到应答才返回；失败应答回错误；没有在跑的 agent 时不发、返回 nil；
+// 工作线程拒绝。
+func TestSetHostTools(t *testing.T) {
 	f := newFixture(t, Config{})
-	coord := newFakeCoord()
-	tools := []apigen.OmpFrame{{"name": "create_thread"}, {"name": "render_ui"}}
-	coord.res = HostToolResult{Text: "loaded", HostTools: tools}
-	f.s.SetCoordinator(coord)
+	f.s.SetCoordinator(newFakeCoord())
 	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
 	a := fakeAgent(16)
 	attach(th, a, apigen.AgentStatusReady)
+	tools := []apigen.OmpFrame{{"name": "create_thread"}, {"name": "render_ui"}}
 
-	answer := func(success bool) map[string]any {
+	set := func(success bool) error {
 		t.Helper()
-		set := recvJSON(t, a)
-		require.Equal(t, "set_host_tools", set["type"])
-		assert.Len(t, set["tools"], 2)
-		assert.Empty(t, sent(a), "set_host_tools 应答之前不写回结果")
-		id, _ := set["id"].(string)
+		done := make(chan error, 1)
+		go func() { done <- f.s.SetHostTools(f.ctx, th.id, tools) }()
+		frame := recvJSON(t, a)
+		require.Equal(t, "set_host_tools", frame["type"])
+		assert.Len(t, frame["tools"], 2)
+		select {
+		case <-done:
+			t.Fatal("应答之前就返回了")
+		default:
+		}
+		id, _ := frame["id"].(string)
 		resp := fmt.Sprintf(`{"type":"response","id":%q,"command":"set_host_tools","success":%t,"error":"boom"}`, id, success)
 		env, err := omprpc.ParseEnvelope([]byte(resp))
 		require.NoError(t, err)
 		f.s.onResponse(f.ctx, th, env, json.RawMessage(resp))
-		res := recvJSON(t, a)
-		require.Equal(t, "host_tool_result", res["type"])
-		return res
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("应答之后没有返回")
+			return nil
+		}
 	}
+	require.NoError(t, set(true))
+	err := set(false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
 
-	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"host_tool_call","id":"h-1","toolCallId":"tc-1","toolName":"load_tools","arguments":{"groups":["views"]}}`))
-	<-coord.calls
-	res := answer(true)
-	assert.Equal(t, false, res["isError"])
-	assert.Equal(t, []any{map[string]any{"type": "text", "text": "loaded"}}, res["result"].(map[string]any)["content"])
+	idle := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	assert.NoError(t, f.s.SetHostTools(f.ctx, idle.id, tools), "没有 agent：下次启动按 AgentProfile 取")
+	assert.Empty(t, sent(a))
 
-	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"host_tool_call","id":"h-2","toolCallId":"tc-2","toolName":"load_tools","arguments":{"groups":["views"]}}`))
-	<-coord.calls
-	res = answer(false)
-	assert.Equal(t, true, res["isError"])
-	text := res["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
-	assert.True(t, strings.HasPrefix(text, "tools_unavailable:"), text)
+	w := f.thread(f.orb("ready"), StateIdle)
+	assert.Error(t, f.s.SetHostTools(f.ctx, w.id, tools), "工作线程没有宿主工具")
 }
 
 // M19 2.4：宿主工具的调用上限按工具名取 Coordinator.HostToolTimeout，0 时用缺省的 60 秒。

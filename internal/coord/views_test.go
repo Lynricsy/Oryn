@@ -60,16 +60,14 @@ func TestViewToolsInProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, loaded.SystemPrompt, "# Views (render_ui / render_html)", "已加载组的用法进系统提示词")
 	assert.NotContains(t, loaded.SystemPrompt, "- views (", "已加载的组不再列在目录里")
-	for _, tools := range [][]apigen.OmpFrame{res.HostTools, loaded.Tools} {
-		names := toolNames(tools)
-		assert.Contains(t, names, ToolRenderUI)
-		assert.Contains(t, names, ToolRenderHTML)
-		for _, d := range tools {
-			if n := frameName(d); n == ToolRenderUI || n == ToolRenderHTML {
-				assert.Equal(t, "essential", d["loadMode"], n)
-				assert.NotEmpty(t, d["description"], n)
-				assert.Equal(t, "object", d["parameters"].(obj)["type"], n)
-			}
+	names := toolNames(loaded.Tools)
+	assert.Contains(t, names, ToolRenderUI)
+	assert.Contains(t, names, ToolRenderHTML)
+	for _, d := range loaded.Tools {
+		if n := frameName(d); n == ToolRenderUI || n == ToolRenderHTML {
+			assert.Equal(t, "essential", d["loadMode"], n)
+			assert.NotEmpty(t, d["description"], n)
+			assert.Equal(t, "object", d["parameters"].(obj)["type"], n)
 		}
 	}
 

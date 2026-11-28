@@ -68,16 +68,13 @@ type HostToolCall struct {
 
 // HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details；Images 跟在 text 块之后
 // （M19，出错时不带图）。Raw 非空时原样作为 result（M19：助手的电脑里的工具结果透传），其 isError 决定帧的 isError，
-// 其余字段忽略。HostTools 非 nil 时（按需加载工具组），写回结果之前先以它整体替换 agent 的宿主工具表（set_host_tools）
-// 并等到应答：host_tool_result 走 Core 的旁路、立即生效，set_host_tools 排在串行命令队列里，先等应答才能保证模型的
-// 下一步看得到新工具。替换失败时结果改为错误。
+// 其余字段忽略。
 type HostToolResult struct {
-	Text      string
-	Details   any
-	IsError   bool
-	Images    []HostToolImage
-	Raw       json.RawMessage
-	HostTools []apigen.OmpFrame
+	Text    string
+	Details any
+	IsError bool
+	Images  []HostToolImage
+	Raw     json.RawMessage
 }
 
 // HostToolImage 是宿主工具结果里的一张图片（Data 为 base64）。
@@ -811,9 +808,6 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 		if coord != nil {
 			res = coord.HostToolCall(ctx, call)
 		}
-		if res.HostTools != nil && !res.IsError && len(res.Raw) == 0 {
-			res = s.replaceHostTools(ctx, t, res)
-		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		if _, live := t.hostCalls[f.ID]; !live {
@@ -835,18 +829,31 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 	})
 }
 
-// replaceHostTools 以 res.HostTools 整体替换 agent 的宿主工具表并等到应答（见 HostToolResult）；失败时返回错误结果。
-func (s *Service) replaceHostTools(ctx context.Context, t *thread, res HostToolResult) HostToolResult {
-	frame, err := json.Marshal(apigen.OmpFrame{"type": "set_host_tools", "tools": res.HostTools})
-	if err == nil {
-		_, _, err = s.call(ctx, t, frame)
-	}
+// SetHostTools 以 tools 整体替换协调线程在跑的 agent 的宿主工具表（set_host_tools）并等到应答。在宿主工具调用里用它
+// （按需加载工具组）时，须在写回该调用的结果之前返回：host_tool_result 走 Core 的旁路、立即生效，set_host_tools 排在
+// 串行命令队列里，先等应答才能保证模型的下一步看得到新工具。没有在跑的 agent 时什么都不发、返回 nil。同一线程的并发
+// 替换由调用方串行化。
+func (s *Service) SetHostTools(ctx context.Context, threadID string, tools []apigen.OmpFrame) error {
+	t, err := s.get(ctx, threadID)
 	if err != nil {
-		slog.Warn("threads: 替换宿主工具表失败", "thread", t.id, "err", err)
-		return HostToolResult{Text: "tools_unavailable: the tools could not be loaded: " + err.Error(), IsError: true}
+		return err
 	}
-	res.HostTools = nil
-	return res
+	t.mu.Lock()
+	kind, live := t.kind, t.agentReady() && !t.stopping
+	t.mu.Unlock()
+	if kind == KindWork {
+		return errf(CodeCoordinatorRestricted, "host tools belong to coordinator threads")
+	}
+	if !live {
+		// 没有在跑的 agent：没有工具表可换，下次启动按 AgentProfile 取（调用方已先存库）
+		return nil
+	}
+	frame, err := json.Marshal(apigen.OmpFrame{"type": "set_host_tools", "tools": tools})
+	if err != nil {
+		return err
+	}
+	_, _, err = s.call(ctx, t, frame)
+	return err
 }
 
 // hostToolUpdate 把一次在途宿主工具调用的部分结果写给 omp：调用已结束（结果已写回或已取消）或 agent 不在线时丢弃。
