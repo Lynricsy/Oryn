@@ -50,6 +50,7 @@ export function CoordinatorHeader({
 				<IconButton
 					icon={layout.sidebarToggle ? "menu" : "sidebar"}
 					label={t("nav.sidebar")}
+					data-sidebar-toggle=""
 					onClick={() => uiStore.getState().toggleSidebar()}
 				/>
 			)}

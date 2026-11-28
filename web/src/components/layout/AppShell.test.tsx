@@ -529,11 +529,18 @@ describe("手机下沉式侧栏（compact）", () => {
 		expect(uiStore.getState().sidebarOpen).toBe(false);
 	});
 
-	it("iPhone Duo 竖栏：底栏竖排在卡片与侧栏层之外，侧栏里不再有底栏；页面不重挂载，竖栏撤掉后回到侧栏底部", () => {
+	it("iPhone Duo 竖栏：开关侧栏、页头操作与分区底栏都在竖栏里，不在卡片与侧栏层；页面不重挂载，竖栏撤掉后各回原位", () => {
 		window.innerWidth = 466;
 		pageMounts = 0;
-		setup(<MountProbe />);
+		setup(
+			<>
+				<ThreadHeader threadId="T-1" sidebarToggle={false} />
+				<MountProbe />
+			</>,
+		);
 		const root = document.documentElement;
+		const more = () =>
+			screen.getByRole("button", { name: /^更多(操作|动作)$/ });
 		act(() =>
 			applyRail(root, {
 				side: "right",
@@ -542,13 +549,22 @@ describe("手机下沉式侧栏（compact）", () => {
 			}),
 		);
 		expect(root.dataset.rail).toBe("right");
+		const rail = screen.getByTestId("rail");
 		const bar = screen.getByTestId("section-tabbar");
 		expect(bar.dataset.tone).toBe("rail");
-		expect(screen.getByTestId("sink-sidebar")).not.toContainElement(bar);
-		expect(screen.getByTestId("sink-card")).not.toContainElement(bar);
+		expect(rail).toContainElement(bar);
+		expect(screen.getByTestId("rail-actions")).toContainElement(more());
+		expect(screen.getByTestId("sink-sidebar")).not.toContainElement(rail);
+		expect(screen.getByTestId("sink-card")).not.toContainElement(rail);
+		fireEvent.click(screen.getByTestId("rail-sidebar"));
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		act(() => uiStore.getState().setSidebar(false));
+
 		act(() => applyRail(root, null));
 		expect(root.dataset.rail).toBeUndefined();
 		expect(root.style.getPropertyValue("--rail-safe-right")).toBe("");
+		expect(screen.queryByTestId("rail")).toBeNull();
+		expect(screen.getByTestId("sink-card")).toContainElement(more());
 		const back = screen.getByTestId("section-tabbar");
 		expect(back.dataset.tone).toBe("glass");
 		expect(screen.getByTestId("sink-sidebar")).toContainElement(back);

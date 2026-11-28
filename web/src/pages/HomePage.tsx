@@ -729,6 +729,7 @@ export function HomePage(): ReactNode {
 							aria-hidden={native || undefined}
 							tabIndex={native ? -1 : undefined}
 							className={native ? ROUND_GLASS_HIDDEN : ROUND_GLASS}
+							data-sidebar-toggle=""
 							onClick={() => uiStore.getState().toggleSidebar()}
 						>
 							<Icon name="sidebar" size={19} />
@@ -738,6 +739,7 @@ export function HomePage(): ReactNode {
 							<IconButton
 								icon={bp === "expanded" ? "sidebar" : "menu"}
 								label={t("nav.sidebar")}
+								data-sidebar-toggle=""
 								onClick={() => uiStore.getState().toggleSidebar()}
 							/>
 						)

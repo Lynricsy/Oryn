@@ -48,6 +48,7 @@ import { uiStore, useUi } from "../../state/ui";
 import { boxThreadLabel } from "../boxes/box-model";
 import { useSessionCost } from "../composer/ComposerMeta";
 import { openPull, prIcon, prStatusText } from "../github/PrChip";
+import { InRail } from "../layout/Rail";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { firstGrapheme, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -497,6 +498,7 @@ export function CompactThreadHeader({
 				aria-hidden={native || undefined}
 				tabIndex={native ? -1 : undefined}
 				className={native ? ROUND_GLASS_HIDDEN : ROUND_GLASS}
+				data-sidebar-toggle=""
 				onClick={() => uiStore.getState().toggleSidebar()}
 			>
 				<Icon name="sidebar" size={19} />
@@ -577,7 +579,8 @@ export function CompactThreadHeader({
 					/>
 				)}
 			</div>
-			{viewMenu}
+			{/* iPhone Duo 竖栏在时视图钮进竖栏（Rail.tsx），侧栏钮由竖栏顶上的开关取代 */}
+			<InRail>{viewMenu}</InRail>
 			{chromeRight && <WindowControls side="right" className="ml-1" />}
 			{dialogs}
 		</header>

@@ -651,6 +651,7 @@ export const RightPanel = memo(function RightPanel({
 							<IconButton
 								icon="menu"
 								label={t("nav.sidebar")}
+								data-sidebar-toggle=""
 								onClick={() => uiStore.getState().toggleSidebar()}
 							/>
 						)}

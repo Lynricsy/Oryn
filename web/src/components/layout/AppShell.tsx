@@ -60,7 +60,7 @@ import { ThreadRowDialogs } from "../thread/thread-row-menu";
 import { ActionError } from "../ui/ActionError";
 import { Button, Spinner } from "../ui/primitives";
 import { Toasts } from "../ui/Toasts";
-import { SectionTabBar } from "./SectionTabBar";
+import { Rail } from "./Rail";
 import { Sidebar } from "./Sidebar";
 import { SinkLayout } from "./SinkLayout";
 import { useSectionTracker, useSwitchSection } from "./useSection";
@@ -435,8 +435,8 @@ export function AppShell(): ReactNode {
 			<AiDataConsentGate />
 			{/* macOS 全屏：左上角自绘红绿灯，指针移上去才出现（不在全屏 / 不在桌面壳里时为空） */}
 			<FullscreenLights />
-			{/* iPhone Duo 竖栏：分区底栏竖排在系统给的一侧（各档同一个位置，不进 SinkLayout 的卡片与侧栏层） */}
-			{rail && <SectionTabBar tone="rail" />}
+			{/* iPhone Duo 竖栏：页头按钮与分区底栏竖排在系统给的一侧（各档同一个位置，不进 SinkLayout 的卡片与侧栏层） */}
+			{rail && <Rail />}
 		</>
 	);
 }
