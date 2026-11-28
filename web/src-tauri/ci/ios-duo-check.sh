@@ -13,6 +13,8 @@
 #   open      展开：layout 变成 sink = false（宽 ≥ 600），最后一条 sink.set 是 off
 #   refolded  合上：layout 回到 sink = true，最后一条 sink.set 是 on
 #   全程      main.mount 只有一条：应用壳的 <main> 只挂载过一次（没重挂载，也没整页重新加载）
+#   竖栏      外屏（folded / refolded）壳的最后一条 rail 带 side 与竖栏矩形（RailProbe：系统把工具栏竖排在一侧）；
+#             各姿态的 rail 原文（含 probe 原始量测）写进 Step Summary
 # 三个姿态各截一张，duoctl state（铰链角度、当前屏、尺寸）写进 Step Summary；全部断言通过才写 <输出目录>/.complete。
 # 用法：ios-duo-check.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
 set -euo pipefail
@@ -122,20 +124,29 @@ probe() { jq -sc --arg e "$1" 'map(select(.event == $e)) | sort_by(.nav, .seq)' 
 last_layout() { probe layout | jq -e --argjson s "$1" 'last | .info.sink == $s and ((.info.w < 600) == $s)'; }
 # last_sink <true|false>：壳的最后一条 sink.set
 last_sink() { ev sink.set | tail -1 | jq -e --argjson o "$1" '.on == $o'; }
+# rail_side：壳的最后一条 rail 竖排在某一侧，且竖栏矩形不空
+rail_side() { ev rail | tail -1 | jq -e '(.side == "left" or .side == "right") and .frame.width > 0 and .frame.height > 0'; }
+# rail_note <姿态>：最后一条 rail 原文进 Step Summary
+rail_note() { echo "- ${1} rail：\`$(ev rail | tail -1 | jq -c '{side, frame, safeArea, probe}')\`" | tee -a "$summary"; }
 
 until_ok folded 90 "web.ready（bridge ≥ 8）" web_ready
 until_ok folded 60 "外屏 compact：探针 layout sink = true、宽 < 600" last_layout true
 until_ok folded 30 "原生跟随根滚动：最后一条 sink.set 是 on" last_sink true
+until_ok folded 30 "外屏竖栏：最后一条 rail 带 side 与矩形" rail_side
+rail_note folded
 shot folded
 
 pose open open
 until_ok open 60 "展开后 layout sink = false、宽 ≥ 600" last_layout false
 until_ok open 30 "原生撤掉根滚动跟随：最后一条 sink.set 是 off" last_sink false
+rail_note open
 shot open
 
 pose refolded close
 until_ok refolded 60 "合上后 layout 回到 sink = true" last_layout true
 until_ok refolded 30 "原生重新跟随根滚动：最后一条 sink.set 是 on" last_sink true
+until_ok refolded 30 "合上后竖栏回来：最后一条 rail 带 side 与矩形" rail_side
+rail_note refolded
 shot refolded
 
 mounts=$(probe main.mount | jq length)

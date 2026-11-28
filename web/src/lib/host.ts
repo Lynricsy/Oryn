@@ -20,6 +20,8 @@
  * 卡片左缘，`native-tab-bar.ts`）与原生页头（`native-header.ts`）的位置都由原生自己算，网页只发 spec、遮挡与透明度。
  * 另有 `tabbar` 与 `header` 事件。壳在本页 `host_sink_set(true)` 生效前拒绝非空的底栏 / 页头 spec；
  * bridge ≤ 7 的壳（页头靠跨进程对时跟随）一律用网页页头与网页底栏。
+ * iOS 壳另有 `rail` 事件（iPhone Duo 竖栏，iOS 27.1+）：系统把工具栏竖排在哪一侧、Oryn 竖栏的矩形与竖栏之外内容区的安全区，
+ * 几何变了就发、页面就绪时重发一次（`rail.ts`）；旧壳不发，页面照旧。
  */
 
 import type { Attachment } from "./attachments";
@@ -142,6 +144,13 @@ export interface DeviceGeometry {
 	insets: EdgeInsets;
 	/** 系统栏 + 刘海/挖孔安全区（Android edge-to-edge 时由壳上报；旧壳与 iOS 缺省）。 */
 	safeArea?: EdgeInsets;
+}
+
+/** iPhone Duo 竖栏（壳的 `rail` 事件）：物理边、竖栏矩形（布局视口 CSS px，顶端已让开状态栏与相机）、竖栏之外内容区的安全区。 */
+export interface RailGeometry {
+	side: "left" | "right";
+	frame: { x: number; y: number; width: number; height: number };
+	safeArea: EdgeInsets;
 }
 export interface MobileInfo extends Partial<DeviceGeometry> {
 	version: string;
@@ -410,6 +419,8 @@ export interface Host {
 	onInsets(cb: (g: DeviceGeometry) => void): () => void;
 	/** 用户点了原生底栏的一项（仅 iOS 移动壳；点已选中项同样上报）。 */
 	onTabBar(cb: (id: string) => void): () => void;
+	/** iPhone Duo 竖栏几何变了（折叠、展开、转屏；null = 当前不竖排；仅 iOS 移动壳）。 */
+	onRail(cb: (r: RailGeometry | null) => void): () => void;
 	/** 原生页头上的点击（仅 iOS 移动壳；见 `native-header.ts`）。 */
 	onHeader(cb: (e: NativeHeaderEvent) => void): () => void;
 	desktop: DesktopHost | null;
@@ -484,6 +495,7 @@ function webHost(win: Window): Host {
 		onMobile: () => noop,
 		onInsets: () => noop,
 		onTabBar: () => noop,
+		onRail: () => noop,
 		onHeader: () => noop,
 		desktop: null,
 		mobile: null,
@@ -552,6 +564,33 @@ export function parseGeometry(v: unknown): DeviceGeometry | null {
 		};
 	}
 	return res;
+}
+
+/** 解析 `rail` 事件：边或矩形缺失、矩形为空时为 null（当前不竖排）。 */
+export function parseRail(v: unknown): RailGeometry | null {
+	if (!v || typeof v !== "object") return null;
+	const o = v as { side?: unknown; frame?: unknown; safeArea?: unknown };
+	if (o.side !== "left" && o.side !== "right") return null;
+	const f = (o.frame ?? null) as Record<string, unknown> | null;
+	const s = (o.safeArea ?? null) as Record<string, unknown> | null;
+	if (!f || typeof f !== "object") return null;
+	const frame = {
+		x: num(f.x),
+		y: num(f.y),
+		width: num(f.width),
+		height: num(f.height),
+	};
+	if (frame.width === 0 || frame.height === 0) return null;
+	return {
+		side: o.side,
+		frame,
+		safeArea: {
+			top: num(s?.top),
+			right: num(s?.right),
+			bottom: num(s?.bottom),
+			left: num(s?.left),
+		},
+	};
 }
 
 function menuKind(v: unknown): NativeMenuKind | null {
@@ -804,6 +843,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 	const mobileChanged = listeners<[]>();
 	const insets = listeners<[DeviceGeometry]>();
 	const tabBar = listeners<[string]>();
+	const rail = listeners<[RailGeometry | null]>();
 	const header = listeners<[NativeHeaderEvent]>();
 	const bridge = meta?.bridge ?? 0;
 	const isMobile =
@@ -839,6 +879,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 			if (g) insets.emit(g);
 		} else if (isMobile && d.type === "tabbar" && typeof d.id === "string")
 			tabBar.emit(d.id);
+		else if (isMobile && d.type === "rail") rail.emit(parseRail(d));
 		else if (isMobile && d.type === "header") {
 			const e = parseHeaderEvent(d);
 			if (e) header.emit(e);
@@ -907,6 +948,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		onMobile: (cb) => mobileChanged.add(cb),
 		onInsets: (cb) => insets.add(cb),
 		onTabBar: (cb) => tabBar.add(cb),
+		onRail: (cb) => rail.add(cb),
 		onHeader: (cb) => header.add(cb),
 		mobile: isMobile
 			? mobileHost(

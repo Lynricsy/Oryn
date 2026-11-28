@@ -413,6 +413,44 @@ describe("移动壳（M7）", () => {
 		expect(s2).not.toHaveBeenCalled();
 	});
 
+	it("rail 事件：竖排时给出边、矩形与安全区；不竖排或矩形为空时回调 null，桌面壳忽略", () => {
+		const f = mobileWindow({ platform: "ios", bridge: 12 });
+		const rail = vi.fn();
+		createHost(f.win).onRail(rail);
+		f.emit({
+			type: "rail",
+			side: "right",
+			frame: { x: 402, y: 54, width: 64, height: 624 },
+			safeArea: { top: 0, right: 64, bottom: 21 },
+		});
+		f.emit({
+			type: "rail",
+			safeArea: { top: 24, right: 0, bottom: 21, left: 0 },
+		});
+		f.emit({
+			type: "rail",
+			side: "left",
+			frame: { x: 0, y: 0, width: 0, height: 600 },
+		});
+		expect(rail.mock.calls).toEqual([
+			[
+				{
+					side: "right",
+					frame: { x: 402, y: 54, width: 64, height: 624 },
+					safeArea: { top: 0, right: 64, bottom: 21, left: 0 },
+				},
+			],
+			[null],
+			[null],
+		]);
+
+		const d = fakeWindow({ tauri: true });
+		const r2 = vi.fn();
+		createHost(d.win).onRail(r2);
+		d.emit({ type: "rail", side: "right", frame: { width: 64, height: 9 } });
+		expect(r2).not.toHaveBeenCalled();
+	});
+
 	it("命令参数：info / enablePush / disablePush / shareAck / setChrome / openNotificationSettings / changeServer", async () => {
 		const f = mobileWindow();
 		const m = createHost(f.win).mobile;

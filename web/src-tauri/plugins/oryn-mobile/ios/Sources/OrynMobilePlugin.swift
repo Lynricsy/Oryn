@@ -15,6 +15,7 @@
 // 应答 PushState（未授权也置 enabled）；pushDisable 注销远程通知、清密钥与本地状态；pushMarkSynced 载荷 {endpoint, id, server}。
 // 事件：{type: "push", state}（回到前台复查后权限有变、或系统给了新令牌）与 {type: "pushchallenge", challengeId, nonce}
 // （收到官方推送网关的 challenge，见 NotificationManager）。AppDelegate 的注册回调钩子见 PushRegistrar。
+// iPhone Duo 竖栏（iOS 27.1+，RailProbe）：{type: "rail", side?, frame?, safeArea, probe}，几何变了就发，没有命令。
 import Tauri
 import UIKit
 import UserNotifications
@@ -48,6 +49,8 @@ class OrynMobilePlugin: Plugin {
   private var header: AnyObject?
   /// `SinkFollow`（iOS 26+）；同上按 AnyObject 存，只在主线程读写。
   private var sink: AnyObject?
+  /// `RailProbe`（iOS 27.1+，iPhone Duo 竖栏）；同上按 AnyObject 存，只在主线程读写。
+  private var rail: AnyObject?
   /// 只在 debug 的端到端启动中记录实际触摸；主线程配置。
   private var traceHeaderHits = false
   /// 上次应答 / 通知 Rust 时的通知权限（回到前台复查用）；只在主线程读写。
@@ -69,7 +72,28 @@ class OrynMobilePlugin: Plugin {
         self?.trigger("event", data: ["type": "notificationtap", "id": id, "path": path])
       }
       self?.startPush()
+      self?.attachRail(attempt: 0)
     }
+  }
+
+  /// iPhone Duo 竖栏探针（iOS 27.1+）：装到 WebView 的父视图上，几何变了经 {type: "rail", …} 上报；
+  /// WebView 还没挂进视图层级就稍后再试（每 0.25 秒一次，最多约 5 秒）。
+  private func attachRail(attempt: Int) {
+    guard #available(iOS 27.1, *), rail == nil, let webview else { return }
+    guard let host = webview.superview else {
+      if attempt < 20 {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+          self?.attachRail(attempt: attempt + 1)
+        }
+      }
+      return
+    }
+    let probe = RailProbe(webview: webview) { [weak self] data in
+      self?.trigger("event", data: data)
+    }
+    probe.frame = host.bounds
+    host.insertSubview(probe, belowSubview: webview)
+    rail = probe
   }
 
   /// 命令跑在 Tauri 的后台串行队列上：界面操作转主线程后立即应答，绝不等主线程（Rust 那边可能正阻塞着它）。

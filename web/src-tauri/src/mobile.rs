@@ -84,6 +84,11 @@ async fn deliver_share(app: &AppHandle, d: &Desktop, m: &MobileRt) {
 /// `host_ready` 的移动端部分：清返回栈（返回键不会退回连接页）、配对后自动启用一次推送或强制登记一次订阅、
 /// 重发 / 继续分享。
 pub fn host_ready(app: &AppHandle, d: Arc<Desktop>) {
+    // 页面加载完重发最近一次的竖栏几何：探针只在几何变了时上报，新页面错过了启动时那一次
+    #[cfg(target_os = "ios")]
+    if let Some(rail) = ios::rail() {
+        host::emit(app, rail);
+    }
     let Some(m) = runtime(app) else { return };
     #[cfg(target_os = "android")]
     if let Err(e) = m.core.native().0.clear_history() {
@@ -458,6 +463,7 @@ pub async fn host_app_icon_set(app: AppHandle, id: String) -> Res<()> {
 #[cfg(target_os = "ios")]
 mod ios {
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     use serde_json::json;
     use tauri::{AppHandle, Manager};
@@ -504,6 +510,13 @@ mod ios {
 
     pub fn set_sink_on(on: bool) {
         SINK_ON.store(on, Ordering::Release);
+    }
+
+    /// 最近一次的竖栏几何（页面事件 `{type:"rail", …}`，iPhone Duo）：`host_ready` 时重发给新页面。
+    static RAIL: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+
+    pub fn rail() -> Option<serde_json::Value> {
+        RAIL.lock().ok().and_then(|r| r.clone())
     }
 
     pub fn plugin(app: &AppHandle) -> Option<OrynMobile<tauri::Wry>> {
@@ -569,6 +582,24 @@ mod ios {
                     "sink.trace",
                     json!({"op": op, "x": x, "to": to, "stack": stack}),
                 );
+            }
+            // iPhone Duo 竖栏：几何进事件日志（含原始量测，CI 在 Duo 模拟器上核对），页面事件不带 probe
+            Event::Rail {
+                side,
+                frame,
+                safe_area,
+                probe,
+            } => {
+                eventlog::log(
+                    "rail",
+                    json!({"side": side, "frame": frame, "safeArea": safe_area, "probe": probe}),
+                );
+                let detail =
+                    json!({"type": "rail", "side": side, "frame": frame, "safeArea": safe_area});
+                if let Ok(mut r) = RAIL.lock() {
+                    *r = Some(detail.clone());
+                }
+                host::emit(&handle, detail);
             }
             _ => {}
         });
@@ -877,7 +908,8 @@ mod android {
             | Event::Header { .. }
             | Event::HeaderHit { .. }
             | Event::Sink { .. }
-            | Event::NotificationTap { .. } => {}
+            | Event::NotificationTap { .. }
+            | Event::Rail { .. } => {}
         }
     }
 

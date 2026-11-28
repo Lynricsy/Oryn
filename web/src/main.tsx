@@ -12,6 +12,7 @@ import "./i18n";
 import { installContextMenu } from "./lib/context-menu/dispatch";
 import { installDeviceCorners } from "./lib/device-corners";
 import { host } from "./lib/host";
+import { installRail } from "./lib/rail";
 import { installSquircle } from "./lib/squircle";
 import { installNoFocusZoom, installViewportTracking } from "./lib/viewport";
 import { installTheme } from "./state/theme";
@@ -33,6 +34,8 @@ async function boot() {
 	installContextMenu();
 	// 移动壳：贴边浮层的圆角与屏幕圆角同心（其它宿主无操作）
 	installDeviceCorners(host, document.documentElement);
+	// iPhone Duo：系统竖栏的一侧与竖栏之外的安全区（其它宿主不发事件）
+	installRail(host, document.documentElement);
 	installTheme();
 	// 不支持 corner-shape 的引擎：挂载前启用超椭圆角形降级（原生支持时立即返回）
 	await installSquircle();
