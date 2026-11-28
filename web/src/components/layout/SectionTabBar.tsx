@@ -13,7 +13,9 @@
  * 原生看得见时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，但仍可命中（遮挡探测靠它）；被菜单、弹层盖住时原生让位、
  * 网页胶囊顶上。原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
  * `tone="rail"`：iPhone Duo 竖栏（`Rail.tsx`）里的版本：同样四项竖着排成一根玻璃胶囊，跟在竖栏的页头按钮下面；
- * 此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。
+ * 此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。底栏原本是「换侧栏里的列表」：手机下沉侧栏收着时
+ * 点竖栏的一项 = 先切到该分区（主区照常跳到它上次停留的页面），再展开侧栏露出那个分区的列表；侧栏开着时与侧栏里的底栏
+ * 一样（换分区，再点当前分区收起）。列侧栏常驻（内屏横放）时侧栏本来就看得见，也与侧栏里的底栏一样。
  */
 import {
 	type ReactNode,
@@ -35,10 +37,11 @@ import {
 } from "../../lib/native-tab-bar";
 import { SECTION_ORDER, type SectionId } from "../../lib/sections";
 import { useConnection, useIndex } from "../../state/stores";
+import { uiStore } from "../../state/ui";
 import { StatusDot } from "../ui/data";
 import { AssistantAvatar } from "../ui/IdentityAvatar";
 import { Icon, type IconName } from "../ui/icons";
-import { useSection, useSwitchSection } from "./useSection";
+import { isSinkLayout, useSection, useSwitchSection } from "./useSection";
 
 const ICONS = {
 	threads: "chats",

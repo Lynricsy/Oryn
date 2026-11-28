@@ -570,6 +570,29 @@ describe("手机下沉式侧栏（compact）", () => {
 		expect(screen.getByTestId("sink-sidebar")).toContainElement(back);
 		expect(pageMounts).toBe(1);
 	});
+
+	it("iPhone Duo 竖栏：侧栏收着时点分区 = 切到该分区并展开侧栏露出它的列表，再点当前分区收起", () => {
+		window.innerWidth = 466;
+		setup(<ThreadHeader threadId="T-1" sidebarToggle={false} />);
+		act(() =>
+			applyRail(document.documentElement, {
+				side: "right",
+				frame: { x: 402, y: 54, width: 64, height: 624 },
+				safeArea: { top: 0, right: 64, bottom: 21, left: 0 },
+			}),
+		);
+		const projects = () =>
+			screen
+				.getByTestId("rail")
+				.querySelector<HTMLElement>('[data-tab="projects"]') as HTMLElement;
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		fireEvent.click(projects());
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(projects()).toHaveAttribute("aria-current", "true");
+		fireEvent.click(projects());
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		act(() => applyRail(document.documentElement, null));
+	});
 });
 
 /** 跨断点往返用的路由页：记挂载次数；不受控输入框的内容与焦点只活在 DOM 节点上，页面一重挂载就丢。 */
