@@ -1087,6 +1087,12 @@
 		},
 		"open": "查看任务",
 		"copyOutput": "复制输出",
+		"widget": {
+			"authoring": "生成视图中",
+			"authoringHint": "模型正在写这个任务的看板规则，先显示最后一行输出与速率",
+			"fallback": "简化视图",
+			"fallbackHint": "没有看板规则，只显示最后一行输出与速率"
+		},
 		"event": {
 			"job": {
 				"running": "后台任务 {{id}} 运行中",

@@ -12,18 +12,12 @@
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatDateTime, formatDuration } from "../../lib/format";
-import type { JobEvent, JobView, JobWidget } from "../../state/jobs";
+import type { JobEvent, JobView } from "../../state/jobs";
 import { stripAnsi } from "../../tool-render/util";
 import { CopyButton } from "../ui/CopyButton";
-import { Badge, KeyValue, Meter } from "../ui/data";
+import { Badge, KeyValue } from "../ui/data";
 import { Icon } from "../ui/icons";
-import {
-	Button,
-	Dialog,
-	describeError,
-	EmptyState,
-	Sparkline,
-} from "../ui/primitives";
+import { Button, Dialog, describeError, EmptyState } from "../ui/primitives";
 import {
 	JOB_STATUS_LOOK,
 	JOB_TONE_TEXT,
@@ -31,6 +25,7 @@ import {
 	jobElapsed,
 	jobHeadline,
 } from "./job-parts";
+import { JobWidgetCard } from "./job-widget";
 import { findJob, openJob, useThreadJobs } from "./jobs-hooks";
 import { cancelJob } from "./reports/JobsReport";
 import { ConfirmStrip, formatClock, useTicker } from "./reports/parts";
@@ -97,110 +92,6 @@ function StatusBand({ job, now }: { job: JobView; now: number }): ReactNode {
 				<Badge>{t(`jobs.type.${job.type}`, { defaultValue: job.type })}</Badge>
 				<span className="font-mono text-faint text-xs">{job.id}</span>
 			</div>
-		</div>
-	);
-}
-
-/** Core 的任务小组件（只读视图）：标题读数、阶段与各块。 */
-function WidgetView({ widget }: { widget: JobWidget }): ReactNode {
-	return (
-		<div className="flex flex-col gap-2.5 rounded-lg border border-border p-3">
-			<div className="flex min-w-0 items-baseline gap-2">
-				<span className="min-w-0 truncate font-medium text-sm">
-					{widget.title}
-				</span>
-				{widget.headline && (
-					<span className="ml-auto shrink-0 font-semibold text-fg text-sm tabular-nums">
-						{widget.headline.text}
-						{widget.headline.label && (
-							<span className="ml-1 font-normal text-faint text-xs">
-								{widget.headline.label}
-							</span>
-						)}
-					</span>
-				)}
-			</div>
-			{widget.stage && (
-				<p className="m-0 truncate font-mono text-muted text-xs">
-					{widget.stage}
-				</p>
-			)}
-			{widget.blocks.map((b, i) => {
-				// 块没有稳定 id，顺序即身份
-				const key = i;
-				switch (b.kind) {
-					case "meter":
-						return (
-							<div key={key} className="flex flex-col gap-1">
-								<div className="flex justify-between text-faint text-xs">
-									<span>{b.label}</span>
-									<span className="tabular-nums">{b.text}</span>
-								</div>
-								<Meter value={b.value * 100} label={b.label} />
-							</div>
-						);
-					case "spark":
-						return (
-							<div key={key} className="flex flex-col gap-1">
-								<div className="flex justify-between text-faint text-xs">
-									<span>{b.label}</span>
-									<span className="tabular-nums">{b.last}</span>
-								</div>
-								<div className="text-muted">
-									<Sparkline
-										values={b.values.map((v) => v - b.min)}
-										max={b.max - b.min}
-										label={b.label}
-									/>
-								</div>
-							</div>
-						);
-					case "bars":
-						return (
-							<div key={key} className="flex flex-col gap-1">
-								<span className="text-faint text-xs">{b.label}</span>
-								{b.items.map((it) => (
-									<div
-										key={it.label}
-										className="grid grid-cols-[minmax(0,8rem)_1fr_auto] items-center gap-2 text-xs"
-									>
-										<span className="truncate text-muted">{it.label}</span>
-										<Meter
-											value={b.max > 0 ? (it.value / b.max) * 100 : 0}
-											label={it.label}
-										/>
-										<span className="text-faint tabular-nums">{it.text}</span>
-									</div>
-								))}
-							</div>
-						);
-					case "stat":
-					case "grid":
-						return (
-							<div key={key} className="flex flex-wrap gap-x-4 gap-y-1.5">
-								{b.items.map((it) => (
-									<span key={it.label} className="flex flex-col">
-										<span className="text-faint text-xs">{it.label}</span>
-										<span className="font-medium text-sm tabular-nums">
-											{it.text}
-										</span>
-									</span>
-								))}
-							</div>
-						);
-					case "text":
-						return (
-							<p
-								key={key}
-								className="m-0 whitespace-pre-wrap text-muted text-xs"
-							>
-								{b.text}
-							</p>
-						);
-					default:
-						return null;
-				}
-			})}
 		</div>
 	);
 }
@@ -542,7 +433,7 @@ export function JobDialog({
 		>
 			<div className="flex flex-col gap-5">
 				<StatusBand job={job} now={now} />
-				{job.widget && <WidgetView widget={job.widget} />}
+				{job.widget && <JobWidgetCard widget={job.widget} />}
 				<Section title={t("jobs.dialog.input")}>
 					<InputView job={job} />
 				</Section>

@@ -4367,6 +4367,7 @@ export function zooJobsSnapshot(running: {
 			...(j.status === "failed"
 				? { errorPreview: j.result }
 				: { resultPreview: j.result }),
+			...(j.jobId === "bg_7" ? { widget: ZOO_CHECK_WIDGET } : {}),
 		},
 	}));
 	const live = {
@@ -4382,11 +4383,105 @@ export function zooJobsSnapshot(running: {
 			startTime: running.startTime,
 			...(running.endTime ? { endTime: running.endTime } : {}),
 			caption: "go test：两个包，-race 下约 3 分钟",
+			widget: ZOO_RACE_WIDGET,
 		},
 	};
 	const tree = [live, ...done];
 	return { jobs: tree.map((r) => r.job), tree };
 }
+
+/** 已结束的 `bg_7` 的小组件：主块是各阶段耗时的柱子（列表里只露读数与这一块）。 */
+const ZOO_CHECK_WIDGET = {
+	title: "lint · 类型检查",
+	headline: {
+		text: "41.3 s",
+		label: "总耗时",
+		trend: { text: "▼ 12%", tone: "success" },
+	},
+	blocks: [
+		{
+			kind: "bars",
+			label: "各阶段耗时",
+			max: 30,
+			items: [
+				{ label: "biome", value: 1.8, text: "1.8 s" },
+				{ label: "tsc", value: 27.4, text: "27.4 s" },
+				{ label: "vite", value: 9.6, text: "9.6 s" },
+				{ label: "sandbox", value: 2.5, text: "2.5 s", tone: "muted" },
+			],
+		},
+		{
+			kind: "stat",
+			items: [
+				{ label: "文件", text: "412" },
+				{ label: "诊断", text: "0", tone: "success" },
+			],
+		},
+	],
+	state: "live",
+	updatedAt: NOW - 9 * MIN + 41_300,
+};
+
+/** 运行中的 `bg_9` 的小组件：内存曲线（带上限标记线与逐点提示）+ 各类块，样例覆盖全部块种与色调。 */
+const ZOO_RACE_MEM = [
+	780, 742, 690, 655, 610, 560, 520, 488, 455, 430, 410, 395, 388, 380,
+];
+const ZOO_RACE_WIDGET = {
+	title: "go test -race · 内存 / 用例",
+	headline: {
+		text: "380 MB",
+		label: "常驻内存",
+		trend: { text: "▼ 51%", tone: "success" },
+	},
+	stage: "=== RUN   TestReconnectReplaysAfterSeq",
+	blocks: [
+		{
+			kind: "spark",
+			label: "常驻内存 · MB",
+			values: ZOO_RACE_MEM,
+			min: 0,
+			max: 1024,
+			marks: [{ value: 900, label: "上限 900 MB", tone: "error" }],
+			last: "380 MB",
+			tips: ZOO_RACE_MEM.map((v, i) => `${14 - i} 分钟前 · ${v} MB`),
+			tone: "accent",
+		},
+		{
+			kind: "meter",
+			label: "用例进度",
+			value: 7 / 9,
+			text: "7/9 个用例",
+			tone: "info",
+		},
+		{
+			kind: "stat",
+			items: [
+				{ label: "通过", text: "6", tone: "success" },
+				{
+					label: "失败",
+					text: "1",
+					tone: "error",
+					trend: { text: "▲ 1", tone: "error" },
+				},
+				{ label: "CPU", text: "212%", trend: { text: "▼ 8%", tone: "muted" } },
+			],
+		},
+		{
+			kind: "grid",
+			label: "包",
+			items: [
+				{ label: "realtime", text: "失败", tone: "error" },
+				{ label: "threads", text: "运行中", tone: "pending" },
+			],
+		},
+		{
+			kind: "text",
+			text: "backoff_test.go:57: jitter out of range: 1.42 > 1.25",
+		},
+	],
+	state: "live",
+	updatedAt: NOW,
+};
 
 /** 工具样例线程里仍在运行的工具调用（快照的 `agent.live` 帧与之对应）。 */
 const ZOO_LIVE_CALL = "toolu_zoo_live";

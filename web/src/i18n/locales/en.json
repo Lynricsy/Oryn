@@ -1087,6 +1087,12 @@
 		},
 		"open": "View job",
 		"copyOutput": "Copy output",
+		"widget": {
+			"authoring": "Building view",
+			"authoringHint": "A model is writing this job's view rules; showing the last output line and rates meanwhile",
+			"fallback": "Basic view",
+			"fallbackHint": "No view rules; showing the last output line and rates only"
+		},
 		"event": {
 			"job": {
 				"running": "Background job {{id}} running",

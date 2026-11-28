@@ -1,7 +1,7 @@
 /**
  * 信息面板的「后台任务」分组：与子 agent 分组并列，列出这个线程的后台命令 / 代码任务（子 agent 的任务在子 agent 分组里）。
  * 运行中的在前（新的在上），之后是最近结束的（默认只列几条，可展开全部）；每行是任务字形 + 意图 + 一行读数，
- * 运行中的读数随时间走动并带上最近一行输出。点开是任务详情对话框。
+ * 运行中的读数随时间走动并带上最近一行输出；Core 给了小组件时行下面挂它的紧凑版（读数 + 主块）。点开是任务详情对话框。
  */
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -19,6 +19,7 @@ import {
 	jobHeadline,
 	jobStage,
 } from "./job-parts";
+import { JobWidgetCompact } from "./job-widget";
 import { openJob, useThreadJobs } from "./jobs-hooks";
 import { useTicker } from "./reports/parts";
 
@@ -66,6 +67,7 @@ function JobRow({ job, now }: { job: JobView; now: number }): ReactNode {
 						)}
 					</span>
 				}
+				detail={job.widget && <JobWidgetCompact widget={job.widget} />}
 				onClick={() => openJob(job.id, job.key)}
 			/>
 		</li>

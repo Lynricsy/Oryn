@@ -91,7 +91,7 @@ function clampRatio(value: number, max: number): number {
 	return Math.min(1, Math.max(0, value / max));
 }
 
-/** 水平量表。 */
+/** 水平量表。用 span 搭，放在按钮里（列表行）也合法。 */
 export function Meter({
 	value,
 	max = 100,
@@ -108,19 +108,19 @@ export function Meter({
 	const ratio = clampRatio(value, max);
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: 原生 <meter> 无法跨浏览器统一外观
-		<div
+		<span
 			role="meter"
 			aria-label={label}
 			aria-valuenow={Math.round(Number.isFinite(value) ? value : 0)}
 			aria-valuemin={0}
 			aria-valuemax={max}
-			className={`h-1.5 overflow-hidden rounded-full bg-inset ${className}`}
+			className={`block h-1.5 overflow-hidden rounded-full bg-inset ${className}`}
 		>
-			<div
-				className={`h-full rounded-full transition-[width] duration-300 ease-out ${FILL_TONE[tone]}`}
+			<span
+				className={`block h-full rounded-full transition-[width] duration-300 ease-out ${FILL_TONE[tone]}`}
 				style={{ width: `${ratio * 100}%` }}
 			/>
-		</div>
+		</span>
 	);
 }
 
@@ -317,17 +317,19 @@ export function KeyValue({
 	);
 }
 
-/** 列表行：前置图标/状态 + 标题与元信息 + 尾部操作；有 onClick 时整行是按钮。 */
+/** 列表行：前置图标/状态 + 标题与元信息（下面可再挂一块明细）+ 尾部操作；有 onClick 时整行是按钮，明细只能用短语内容。 */
 export function ListRow({
 	leading,
 	title,
 	meta,
+	detail,
 	trailing,
 	onClick,
 }: {
 	leading?: ReactNode;
 	title: ReactNode;
 	meta?: ReactNode;
+	detail?: ReactNode;
 	trailing?: ReactNode;
 	onClick?: () => void;
 }): ReactNode {
@@ -345,6 +347,7 @@ export function ListRow({
 						{meta}
 					</span>
 				)}
+				{detail}
 			</span>
 			{trailing && (
 				<span className="inline-flex shrink-0 items-center gap-1">
@@ -353,7 +356,8 @@ export function ListRow({
 			)}
 		</>
 	);
-	const cls = "flex min-h-10 items-center gap-3 rounded-md px-2 py-1.5";
+	// 有明细时行变高，前置与尾部贴着标题行而不是整行居中
+	const cls = `flex min-h-10 ${detail ? "items-start" : "items-center"} gap-3 rounded-md px-2 py-1.5`;
 	if (onClick)
 		return (
 			<button
