@@ -169,8 +169,9 @@ run() {
   done
   echo "::error::90 秒内没有 ${event}（${name}）"
   cat "$log" 2>/dev/null || true
-  xcrun simctl spawn "$udid" log show --last 3m --style compact --predicate 'processImagePath CONTAINS "Oryn"' 2>/dev/null |
-    tail -200 || true
+  pg_timeout 60 xcrun simctl spawn "$udid" log show --last 3m --style compact \
+    --predicate 'processImagePath CONTAINS "Oryn"' 2>/dev/null | tail -200 || true
+  app_sample "$out/$name-sample.txt"
   return 1
 }
 
