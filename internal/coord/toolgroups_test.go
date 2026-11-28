@@ -134,6 +134,20 @@ func TestLoadToolsConcurrent(t *testing.T) {
 	assert.Contains(t, tools, ToolCreateArtifact)
 }
 
+// 先存库、换表失败（库里记着组，agent 还是旧表）之后重试：照样换表成功，结果里给出这个会话还没拿到过的用法。
+func TestLoadToolsRetryAfterFailedSwap(t *testing.T) {
+	e := newEnv(t, false)
+	conv := liveConv(t, e)
+	require.NoError(t, e.c.saveLoadedGroups(e.ctx, conv.ID, map[string]bool{"artifacts": true}))
+	require.NotContains(t, agentTools(t, e, conv.ID), ToolCreateArtifact, "模拟首次换表失败：agent 没有换上")
+
+	res := e.call(conv, ToolLoadTools, `{"groups":["artifacts"]}`, true)
+	require.False(t, res.IsError, res.Text)
+	assert.Contains(t, res.Text, "## artifacts\nAlready loaded: create_artifact, ")
+	assert.Contains(t, res.Text, assistantArtifacts, "重试也给出用法")
+	assert.Contains(t, agentTools(t, e, conv.ID), ToolCreateArtifact)
+}
+
 // 主线每段从空上下文开始：每次启动清空已加载的组。
 func TestLoadToolsMainResetsPerEpisode(t *testing.T) {
 	e := newEnv(t, true)

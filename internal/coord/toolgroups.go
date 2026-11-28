@@ -228,8 +228,9 @@ func (s *Service) assistantToolSet(ctx context.Context, row db.Thread, restricte
 }
 
 // toolLoadTools 执行 load_tools：把组记进 threads.tool_groups，以新的工具表替换 agent 的宿主工具表并等到应答，再返回
-// 新加载组的用法。已加载的组再要一次也照样下发整张表：orbd 自重启复用旧的初始化帧时据此补回。同一对话的调用按线程
-// 串行：读取、合并、存库与 set_host_tools 应答整条链路持锁，后一次一定在前一次的结果之上合并、并在它之后下发。
+// 所要各组的用法。已加载的组再要一次也照样下发整张表、给出用法：先存库再换表，换表失败后的重试、orbd 自重启复用旧的
+// 初始化帧时都据此补回。同一对话的调用按线程串行：读取、合并、存库与 set_host_tools 应答整条链路持锁，后一次一定在
+// 前一次的结果之上合并、并在它之后下发。
 func (s *Service) toolLoadTools(ctx context.Context, c toolCtx) threads.HostToolResult {
 	if c.Kind != threads.KindAssistant {
 		return failResult(errf("unknown_tool", "no tool named %q", c.Name))
@@ -271,13 +272,13 @@ func (s *Service) toolLoadTools(ctx context.Context, c toolCtx) threads.HostTool
 		}
 		ag := avail[i]
 		tools := strings.Join(ag.tools, ", ")
-		if loaded[n] {
-			lines = append(lines, "## "+n+"\nAlready loaded: "+tools+".")
-			continue
+		// 已记为加载的组同样给出用法：先存库再换表，换表失败后的重试走到这里，这个会话可能从没拿到过用法
+		line := "## " + n + "\nAlready loaded: " + tools + "."
+		if !loaded[n] {
+			loaded[n] = true
+			fresh = append(fresh, n)
+			line = "## " + n + "\nLoaded: " + tools + "."
 		}
-		loaded[n] = true
-		fresh = append(fresh, n)
-		line := "## " + n + "\nLoaded: " + tools + "."
 		if ag.group.guide != nil {
 			line += "\n\n" + ag.group.guide()
 		}
