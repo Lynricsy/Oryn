@@ -127,7 +127,7 @@ shoot() {
   app_stop || return 1
   rm -f "$log"
   SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" SIMCTL_CHILD_ORYN_E2E_URL="$origin$2" \
-    sim_run 120 xcrun simctl launch "$udid" "$bundle" >/dev/null
+    sim_run 300 xcrun simctl launch "$udid" "$bundle" >/dev/null
   capture_when "$1" "$3"
 }
 
@@ -149,7 +149,8 @@ echo "Duo 模拟器：iPhone Duo（iOS ${duo_os}），duoctl ${duoctl_rev:0:7}" 
 sim_run 300 xcrun simctl boot "$udid"
 sim_run 300 xcrun simctl bootstatus "$udid" -b
 sim_run 300 xcrun simctl install "$udid" "$app"
-data=$(sim_run 60 xcrun simctl get_app_container "$udid" "$bundle" data)
+# 与 boot / install 同一上限：install 返回后 LaunchServices 还在登记，get_app_container 实测卡过 74 秒以上
+data=$(sim_run 300 xcrun simctl get_app_container "$udid" "$bundle" data)
 log="$data/tmp/events.jsonl"
 mkdir -p "$data/tmp"
 pin_status_bar
