@@ -109,3 +109,33 @@ func TestCompleteSetupConsumesRecoveryOnce(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, 1, writes)
 }
+
+// 会话在中间件鉴权之后、写凭据之前被吊销：拿着旧 principal 的请求不能再重设或关闭密码登录。
+func TestCredentialWritesRejectRevokedSession(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	require.NoError(t, svc.st.Q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: "Owner", UserHandle: []byte("h"), CreatedAt: 1}))
+	tok, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, sessionAuth{password: true})
+	require.NoError(t, err)
+	p := Principal{Kind: KindWeb, ID: ids.Hash(tok), VerifiedAt: time.Now().UnixMilli()}
+
+	en, err := svc.BeginSetPassword(ctx, p)
+	require.NoError(t, err)
+	key, err := totpEncoding.DecodeString(en.Secret)
+	require.NoError(t, err)
+	require.NoError(t, svc.st.Q.DeleteWebSession(ctx, p.ID))
+	err = svc.FinishSetPassword(ctx, p, en.ID, "correct horse battery", totpCode(key, time.Now().Unix()/totpPeriod))
+	var ae *Error
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, 401, ae.Status)
+	o, err := svc.st.Q.GetOwner(ctx)
+	require.NoError(t, err)
+	assert.Nil(t, o.PasswordHash, "吊销后的请求没有写入密码")
+
+	setTestPassword(t, svc, "correct horse battery")
+	require.ErrorAs(t, svc.DeletePassword(ctx, p), &ae)
+	assert.Equal(t, 401, ae.Status)
+	o, err = svc.st.Q.GetOwner(ctx)
+	require.NoError(t, err)
+	assert.NotNil(t, o.PasswordHash, "吊销后的请求没有关闭密码登录")
+}

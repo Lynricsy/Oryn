@@ -361,6 +361,9 @@ func (s *Service) FinishSetPassword(ctx context.Context, p Principal, enrollment
 	}
 	var revoked []string
 	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := requireLiveSession(ctx, q, p); err != nil {
+			return err
+		}
 		var err error
 		revoked, err = storePassword(ctx, q, cred, p.ID)
 		return err
@@ -370,6 +373,22 @@ func (s *Service) FinishSetPassword(ctx context.Context, p Principal, enrollment
 	}
 	for _, h := range revoked {
 		s.revocations.publish(KindWeb, h)
+	}
+	return nil
+}
+
+// requireLiveSession 在写凭据的事务里重新确认发起请求的会话仍存在、未过期且是完整会话。
+// 中间件鉴权到这里之间（Argon2 就要几十毫秒）会话可能已被另一端吊销，吊销后的旧请求不能再改主人凭据。
+func requireLiveSession(ctx context.Context, q *db.Queries, p Principal) error {
+	ws, err := q.GetWebSession(ctx, p.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errUnauthorized
+	}
+	if err != nil {
+		return err
+	}
+	if ws.Kind != sessionKindFull || ws.ExpiresAt <= time.Now().UnixMilli() {
+		return errUnauthorized
 	}
 	return nil
 }
@@ -385,6 +404,9 @@ func (s *Service) DeletePassword(ctx context.Context, p Principal) error {
 	}
 	var revoked []string
 	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := requireLiveSession(ctx, q, p); err != nil {
+			return err
+		}
 		o, err := q.GetOwner(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			return newErr(http.StatusConflict, "conflict", "尚未初始化")
