@@ -8,7 +8,14 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { type ReactNode, useEffect } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import {
+	BrowserRouter,
+	MemoryRouter,
+	Navigate,
+	Route,
+	Routes,
+	useLocation,
+} from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
 import { qk, useMe } from "../../api/queries";
@@ -590,6 +597,62 @@ describe("手机下沉式侧栏（compact）", () => {
 		expect(uiStore.getState().sidebarOpen).toBe(true);
 		expect(projects()).toHaveAttribute("aria-current", "true");
 		fireEvent.click(projects());
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		act(() => applyRail(document.documentElement, null));
+	});
+
+	it("iPhone Duo 竖栏（真实历史）：首次点「助手」经 replace 重定向后，收起侧栏再按返回回到原线程，侧栏保持收起", async () => {
+		window.innerWidth = 466;
+		window.history.replaceState(null, "", "/t/T-1");
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+		});
+		qc.setQueryData(qk.me, {
+			displayName: "Ada",
+			createdAt: 1,
+			auth: { kind: "web" },
+		});
+		function Where(): ReactNode {
+			return <output data-testid="where">{useLocation().pathname}</output>;
+		}
+		render(
+			<QueryClientProvider client={qc}>
+				<BrowserRouter>
+					<Where />
+					<Routes>
+						<Route element={<AppShell />}>
+							<Route path="/t/:id" element={null} />
+							{/* 与全局助手页一样：没有记住的对话时 replace 到具体对话 */}
+							<Route
+								path="/assistant"
+								element={<Navigate replace to="/assistant/A-1" />}
+							/>
+							<Route path="*" element={null} />
+						</Route>
+					</Routes>
+				</BrowserRouter>
+			</QueryClientProvider>,
+		);
+		act(() =>
+			applyRail(document.documentElement, {
+				side: "right",
+				frame: { x: 402, y: 54, width: 64, height: 624 },
+				safeArea: { top: 0, right: 64, bottom: 21, left: 0 },
+			}),
+		);
+		const where = () => screen.getByTestId("where").textContent;
+		const assistant = () =>
+			screen
+				.getByTestId("rail")
+				.querySelector<HTMLElement>('[data-tab="assistant"]') as HTMLElement;
+		fireEvent.click(assistant());
+		await waitFor(() => expect(where()).toBe("/assistant/A-1"));
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		// 再点当前分区收起侧栏，然后按返回
+		fireEvent.click(assistant());
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		act(() => window.history.back());
+		await waitFor(() => expect(where()).toBe("/t/T-1"));
 		expect(uiStore.getState().sidebarOpen).toBe(false);
 		act(() => applyRail(document.documentElement, null));
 	});
