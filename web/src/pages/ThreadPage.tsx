@@ -662,6 +662,9 @@ export function ThreadScreen({
 							) : (
 								<ToolsExpandContext.Provider value={rewind.toolsExpand}>
 									<Transcript
+										// 每个线程一份虚拟列表：行键（e<seq>、live-<n>）只在线程内唯一，切到已缓存的线程时
+										// 不能沿用上一线程的测高缓存、入场记录与贴底状态
+										key={threadId}
 										items={transcriptItems}
 										footer={rewind.active ? undefined : transcriptFooter}
 										insetTop={topInset + bleedTop + (rewind.active ? 32 : 0)}

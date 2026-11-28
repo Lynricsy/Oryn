@@ -466,6 +466,8 @@ function ShareView({
 						>
 							{ready ? (
 								<Transcript
+									// 行键只在线程内唯一：换一个分享就换一份虚拟列表
+									key={key}
 									items={model.items}
 									insetTop={HEADER_VEIL}
 									startAtTop={!live}
