@@ -1461,7 +1461,9 @@
 		"reauth_required": "Verify it's you first. The check lasts 5 minutes.",
 		"last_passkey": "This is your last passkey, so it can't be deleted.",
 		"last_login_method": "This is your only sign-in method, so it can't be turned off. Add a passkey first.",
-		"reauth_failed": "Wrong password or code. Try again with the next code; each code works once."
+		"reauth_failed": "Wrong password or code. Try again with the next code; each code works once.",
+		"passkey_reauth_failed": "Passkey verification failed. Try again or use another passkey.",
+		"passkey_cloned": "This passkey's signature counter went backwards, so it may have been copied. Verify with another passkey and consider deleting this one."
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",

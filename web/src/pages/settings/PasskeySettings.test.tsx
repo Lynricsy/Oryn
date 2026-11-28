@@ -46,6 +46,7 @@ const CODES = Array.from({ length: 10 }, (_, i) => `CODE-${i}`);
 
 let items: Schemas["Passkey"][];
 let reauthValidUntil: number | null;
+let passkeyReauthFails: boolean;
 let passwordEnabled: boolean;
 /** 非 GET 请求，按发出顺序：`方法 路径` */
 let calls: string[];
@@ -73,6 +74,12 @@ async function handle(req: Request): Promise<Response> {
 	if (path === "/api/v1/auth/reauth/begin")
 		return Response.json({ ceremonyId: "c1", options: { challenge: "x" } });
 	if (path === "/api/v1/auth/reauth/finish") {
+		// 与真实服务端一致：断言不对是 403 passkey_reauth_failed，不是 401
+		if (passkeyReauthFails)
+			return Response.json(
+				{ code: "passkey_reauth_failed", message: "Passkey 校验失败" },
+				{ status: 403 },
+			);
 		const at = Date.now();
 		reauthValidUntil = at + 300_000;
 		return Response.json({ verifiedAt: at, validUntil: reauthValidUntil });
@@ -151,6 +158,7 @@ const reauthCalls = () => calls.filter((c) => c.includes("/reauth/"));
 beforeEach(() => {
 	items = [passkey("pk-mac", "MacBook", true), passkey("pk-yubi", "YubiKey")];
 	reauthValidUntil = null;
+	passkeyReauthFails = false;
 	passwordEnabled = false;
 	calls = [];
 	bodies = [];
@@ -280,6 +288,30 @@ describe("删除", () => {
 		);
 		expect(calls).toEqual(["POST /api/v1/auth/reauth/begin"]);
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
+	it("Passkey 验证没通过：显示错误、不删除，不当成会话失效", async () => {
+		passkeyReauthFails = true;
+		const lost = vi.fn();
+		window.addEventListener(UNAUTHORIZED_EVENT, lost);
+		try {
+			mount();
+			fireEvent.click(
+				await screen.findByRole("button", { name: "删除「YubiKey」" }),
+			);
+			await answerConfirm(true);
+			await answerConfirm(true);
+			expect(await screen.findByRole("alert")).toHaveTextContent(
+				"Passkey 验证没通过",
+			);
+			expect(calls).toEqual([
+				"POST /api/v1/auth/reauth/begin",
+				"POST /api/v1/auth/reauth/finish",
+			]);
+			expect(lost).not.toHaveBeenCalled();
+		} finally {
+			window.removeEventListener(UNAUTHORIZED_EVENT, lost);
+		}
 	});
 });
 

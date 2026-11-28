@@ -169,6 +169,9 @@ func (s *Service) putCeremony(c *ceremony) (string, error) {
 
 var errCeremony = newErr(http.StatusBadRequest, "invalid_request", "认证仪式不存在或已过期，请重新开始")
 
+// errPasskeyReauthFailed 是已登录会话用 Passkey 复核没通过（会话仍有效）。
+var errPasskeyReauthFailed = newErr(http.StatusForbidden, "passkey_reauth_failed", "Passkey 验证没通过")
+
 // takeCeremony 解封并校验仪式（类型、过期、未被成功使用过）。
 func (s *Service) takeCeremony(id, kind string) (*ceremony, error) {
 	raw, ok := strings.CutPrefix(id, "wac_")
@@ -639,6 +642,8 @@ func (s *Service) BeginReauth(ctx context.Context, p Principal) (Ceremony, error
 }
 
 // FinishReauth 校验断言，把当前会话的验证时间记为此刻并返回它。不改会话的 passkey_id。
+// 断言不对返回 403 passkey_reauth_failed（克隆告警为 passkey_cloned）：会话本身仍有效，
+// 不能用 401，否则客户端会当成登录失效踢回登录页。
 func (s *Service) FinishReauth(ctx context.Context, p Principal, ceremonyID string, credential []byte) (time.Time, error) {
 	if err := requireOwnerSession(p); err != nil {
 		return time.Time{}, err
@@ -648,7 +653,7 @@ func (s *Service) FinishReauth(ctx context.Context, p Principal, ceremonyID stri
 		return time.Time{}, err
 	}
 	if c.WebSession != p.ID {
-		return time.Time{}, errUnauthorized
+		return time.Time{}, errPasskeyReauthFailed
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(credential)
 	if err != nil {
@@ -663,10 +668,10 @@ func (s *Service) FinishReauth(ctx context.Context, p Principal, ceremonyID stri
 	}
 	cred, err := s.wa.ValidateLogin(owner, c.Session, parsed)
 	if err != nil {
-		return time.Time{}, newErr(http.StatusUnauthorized, "unauthorized", webauthnMsg("Passkey 校验失败", err))
+		return time.Time{}, newErr(http.StatusForbidden, errPasskeyReauthFailed.Code, webauthnMsg("Passkey 校验失败", err))
 	}
 	if cred.Authenticator.CloneWarning {
-		return time.Time{}, newErr(http.StatusUnauthorized, "unauthorized", "Passkey 签名计数回退，疑似被克隆")
+		return time.Time{}, newErr(http.StatusForbidden, "passkey_cloned", "Passkey 签名计数回退，疑似被克隆")
 	}
 	if err := s.markUsed(ceremonyID, c); err != nil {
 		return time.Time{}, err

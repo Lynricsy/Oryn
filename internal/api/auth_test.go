@@ -572,10 +572,16 @@ func TestPasskeyManage(t *testing.T) {
 	assert.Equal(t, 400, e.do("PATCH", "/api/v1/auth/passkeys/"+laptopID, s1c, map[string]string{"name": " "}).status)
 	assert.Equal(t, 404, e.do("PATCH", "/api/v1/auth/passkeys/"+b64([]byte("nope")), s1c, map[string]string{"name": "x"}).status)
 
-	// 3. 重新验证
+	// 3. 重新验证；先用未登记的认证器：403 不是 401，会话不受影响，同一仪式还能再用
 	r = e.do("POST", "/api/v1/auth/reauth/begin", s1c, nil)
 	require.Equal(t, 200, r.status, string(r.body))
 	r.json(t, &cer)
+	stranger := newH2Authenticator(t)
+	stranger.handle = laptop.handle
+	r = e.do("POST", "/api/v1/auth/reauth/finish", s1c, map[string]any{"ceremonyId": cer.CeremonyID, "credential": stranger.get(cer.Options)})
+	assert.Equal(t, 403, r.status, string(r.body))
+	assert.Equal(t, "passkey_reauth_failed", r.code(t))
+	assert.Equal(t, 200, e.do("GET", "/api/v1/me", h2Cred{cookie: s1}, nil).status)
 	allow := cer.Options["allowCredentials"].([]any)
 	require.Len(t, allow, 1)
 	assert.Equal(t, laptopID, allow[0].(map[string]any)["id"])

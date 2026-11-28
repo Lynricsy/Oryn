@@ -1461,7 +1461,9 @@
 		"reauth_required": "需要先验证身份，5 分钟内有效",
 		"last_passkey": "这是最后一把 Passkey，不能删除",
 		"last_login_method": "这是唯一的登录方式，不能关闭。请先添加一把 Passkey",
-		"reauth_failed": "密码或验证码错误，请重新输入（验证码只能用一次，等下一个）"
+		"reauth_failed": "密码或验证码错误，请重新输入（验证码只能用一次，等下一个）",
+		"passkey_reauth_failed": "Passkey 验证没通过，请重试或换一把 Passkey",
+		"passkey_cloned": "这把 Passkey 的签名计数回退，疑似被复制。请换一把验证，并考虑删除它"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",

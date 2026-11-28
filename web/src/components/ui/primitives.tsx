@@ -1014,6 +1014,8 @@ const FRIENDLY_CODES = [
 	"last_passkey",
 	"last_login_method",
 	"reauth_failed",
+	"passkey_reauth_failed",
+	"passkey_cloned",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

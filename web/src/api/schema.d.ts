@@ -236,7 +236,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 完成重新验证；此后 5 分钟内可做敏感操作 */
+        /**
+         * 完成重新验证；此后 5 分钟内可做敏感操作
+         * @description 断言不对 -> 403 passkey_reauth_failed；签名计数回退 -> 403 passkey_cloned（都不是 401：会话本身仍有效，客户端不应当成登录失效）。
+         */
         post: operations["reauthFinish"];
         delete?: never;
         options?: never;
