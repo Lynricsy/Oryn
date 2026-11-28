@@ -565,6 +565,21 @@ jobs:
           bash web/src-tauri/ci/ios-duo-check.sh "$APP" web/dist-e2e ios-shot/duo
           [[ -f ios-shot/duo/.complete ]] || { echo "::error::iPhone Duo 折叠往返没有跑完全部断言"; exit 1; }
 
+      # 推送两步之前先传一份页头 / 端到端 / Duo 的产物：推送步骤曾在模拟器上挂到被取消（强制取消后不跑任何收尾），
+      # 前面失败步骤写好的日志、截图与主线程采样就跟着拿不到。最后那份 ios-screenshot 照旧上传全部（含推送）
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        continue-on-error: true
+        with:
+          name: ios-screenshot-early
+          path: |
+            ios-shot/header/
+            ios-shot/e2e/
+            ios-shot/duo/
+          if-no-files-found: ignore
+          # 保留 .complete：从产物里能确认哪一步跑完了全部断言
+          include-hidden-files: true
+
       # 推送探针（M28 Step 0 / 5）：appex 的包名与版本号（P2）；debug 包带 ORYN_PUSH_PROBE=1 冷启动、点掉授权框后，
       # AppDelegate 补上的 APNs 注册回调被调到（P1，apns.registered / apns.register_failed）；前台 simctl push 网关 challenge
       # 不展示并转成事件；退出后 simctl push 加密通知，NSE 用共享钥匙串里的附录 A 密钥解开（P3，nse.decrypted ok=true）。
