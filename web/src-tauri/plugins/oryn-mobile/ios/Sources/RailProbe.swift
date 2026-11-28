@@ -71,8 +71,11 @@ final class RailProbe: UIView {
     default: bar = nil
     }
     let occlusions = reservedRegions(kind: .occlusion).map { toWeb($0.frame) }
-    let statusBar = window?.windowScene?.statusBarManager?.statusBarFrame
-      .map { webview.convert($0, from: nil) }
+    // statusBarFrame 是场景坐标（UIKit 文档）：按场景的坐标空间换到 WebView
+    var statusBar: CGRect?
+    if let scene = window?.windowScene, let manager = scene.statusBarManager {
+      statusBar = webview.convert(manager.statusBarFrame, from: scene.coordinateSpace)
+    }
     let corner = toWeb(cornerSafe.layoutFrame)
 
     // 内容区的安全区：优先取横向收角的安全区指引，没求解出来（空矩形）时退回系统安全区
