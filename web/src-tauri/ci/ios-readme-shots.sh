@@ -59,7 +59,7 @@ curl -fsS -o /dev/null "$origin/" || {
 
 # 状态栏固定成发布图的样子（discharging + 100%：满电且不带充电闪电）
 pin_status_bar() {
-  xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 \
+  sim_run 60 xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 \
     --cellularMode active --cellularBars 4 --batteryState discharging --batteryLevel 100
 }
 pin_status_bar
@@ -93,20 +93,21 @@ capture_when() {
   echo "- ❌ $name" >>"$summary"
   cat "$log" 2>/dev/null || true
   sim_shot "$out/$name-fail.png" 30 || true
+  app_sample "$out/$name-sample.txt"
   return 1
 }
 
 # shoot <文件名> <路径> <就绪谓词>：冷启动 App 打开 <路径>，就绪后截图
 shoot() {
-  xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+  sim_run 60 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
   rm -f "$log"
   SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" SIMCTL_CHILD_ORYN_E2E_URL="$origin$2" \
-    xcrun simctl launch "$udid" "$bundle" >/dev/null
+    sim_run 120 xcrun simctl launch "$udid" "$bundle" >/dev/null
   capture_when "$1" "$3"
 }
 
 for scheme in light dark; do
-  xcrun simctl ui "$udid" appearance "$scheme"
+  sim_run 60 xcrun simctl ui "$udid" appearance "$scheme"
   shoot "ios-sidebar-$scheme" "/t/$thread?readme=sidebar" ready_sidebar
   shoot "ios-thread-$scheme" "/t/$thread" ready_thread
   shoot "ios-home-$scheme" "/" ready_home
@@ -118,15 +119,15 @@ pg_timeout 60 xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
 duo_setup
 duo_udid=$udid
 echo "Duo 模拟器：iPhone Duo（iOS ${duo_os}），duoctl ${duoctl_rev:0:7}" | tee -a "$summary"
-xcrun simctl boot "$udid"
-xcrun simctl bootstatus "$udid" -b
-xcrun simctl install "$udid" "$app"
-data=$(xcrun simctl get_app_container "$udid" "$bundle" data)
+sim_run 300 xcrun simctl boot "$udid"
+sim_run 300 xcrun simctl bootstatus "$udid" -b
+sim_run 300 xcrun simctl install "$udid" "$app"
+data=$(sim_run 60 xcrun simctl get_app_container "$udid" "$bundle" data)
 log="$data/tmp/events.jsonl"
 mkdir -p "$data/tmp"
 pin_status_bar
 for scheme in light dark; do
-  xcrun simctl ui "$udid" appearance "$scheme"
+  sim_run 60 xcrun simctl ui "$udid" appearance "$scheme"
   # 动画折叠：iOS 27.1 运行时上瞬间跳变会让模拟器之后切不了屏
   duo close --duration 1
   shoot "duo-outer-$scheme" "/t/$thread" ready_thread
