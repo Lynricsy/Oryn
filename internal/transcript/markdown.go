@@ -27,9 +27,14 @@ const (
 var summaryKeys = []string{"command", "path", "pattern", "query"}
 
 // attachmentBlockRE 匹配控制面追加在用户消息末尾的附件块；attachmentLineRE 匹配其中的一行（同 web/src/lib/attachments.ts）。
+// draftEditsBlockRE 匹配 orynd 追加在正文之后、附件块之前的写作块改稿块；draftLineRE 匹配其中每份草稿的开头（同 web/src/lib/draft-edits.ts）。
 var (
 	attachmentBlockRE = regexp.MustCompile(`(?:\n\n)?<oryn-attachments>\n([\s\S]*?)</oryn-attachments>\s*$`)
 	attachmentLineRE  = regexp.MustCompile(`^- (.+) \(([^,()]+), (\d+) bytes\)$`)
+	draftEditsBlockRE = regexp.MustCompile(`(?:\n\n)?<oryn-draft-edits>\n([\s\S]*?)</oryn-draft-edits>\s*$`)
+	draftLineRE       = regexp.MustCompile(`<draft kind="(email|message|doc)" title="([^"]*)">`)
+	// draftTitleUnescape 还原改稿块里转义过的标题属性值。
+	draftTitleUnescape = strings.NewReplacer("&quot;", `"`, "&lt;", "<", "&amp;", "&")
 )
 
 // Markdown 把活动分支（通常已经过 Public）写成 Markdown。标签固定为英文：
@@ -130,19 +135,32 @@ func (m *mdWriter) emit(role, block string) {
 	m.content = true
 }
 
-// userBody 渲染用户消息：文本（附件块换成 `*[attachment: 名]*` 行），每张图片一行 `*[image]*`。
+// userBody 渲染用户消息：文本（改稿块换成 `*[edited draft: 标题]*` 行，附件块换成 `*[attachment: 名]*` 行），
+// 每张图片一行 `*[image]*`。
 func userBody(bs []block) string {
 	text := blockText(bs)
-	var lines []string
+	var drafts, attachments []string
 	if m := attachmentBlockRE.FindStringSubmatchIndex(text); m != nil {
 		inner := text[m[2]:m[3]]
 		text = text[:m[0]]
 		for _, l := range strings.Split(inner, "\n") {
 			if a := attachmentLineRE.FindStringSubmatch(l); a != nil {
-				lines = append(lines, "*[attachment: "+a[1][strings.LastIndex(a[1], "/")+1:]+"]*")
+				attachments = append(attachments, "*[attachment: "+a[1][strings.LastIndex(a[1], "/")+1:]+"]*")
 			}
 		}
 	}
+	if m := draftEditsBlockRE.FindStringSubmatchIndex(text); m != nil {
+		inner := text[m[2]:m[3]]
+		text = text[:m[0]]
+		for _, d := range draftLineRE.FindAllStringSubmatch(inner, -1) {
+			title := draftTitleUnescape.Replace(d[2])
+			if title == "" {
+				title = d[1]
+			}
+			drafts = append(drafts, "*[edited draft: "+title+"]*")
+		}
+	}
+	lines := append(drafts, attachments...)
 	for _, b := range bs {
 		if b.Type == "image" {
 			lines = append(lines, "*[image]*")

@@ -234,6 +234,21 @@ func TestMarkdownGolden(t *testing.T) {
 	assert.Equal(t, "# Untitled\n\n> Shared from Oryn · live · 1970-01-01T00:00:00Z\n", buf.String())
 }
 
+// TestUserBodyDraftEdits：改稿块（在附件块之前）被剥掉，每份草稿一行 `*[edited draft: 标题]*`，放在附件行之前；空标题用 kind。
+func TestUserBodyDraftEdits(t *testing.T) {
+	in := "再正式一点" +
+		"\n\n<oryn-draft-edits>\nThe user edited these drafts from your earlier replies in place. The text below is the current version of each; build on it rather than on your original wording.\n" +
+		"<draft kind=\"email\" title=\"周五 &quot;会议&quot; &lt;改期> &amp; 其它\">\nHi Sam,\n<\\/draft> 不算结束\n</draft>\n" +
+		"<draft kind=\"doc\" title=\"\">\n# 文档\n</draft>\n</oryn-draft-edits>" +
+		"\n\n<oryn-attachments>\nThe user attached these files.\n- /home/user/.oryn/attachments/T-x/att_1/report.pdf (application/pdf, 1234 bytes)\n</oryn-attachments>"
+	assert.Equal(t,
+		"再正式一点\n\n*[edited draft: 周五 \"会议\" <改期> & 其它]*\n*[edited draft: doc]*\n*[attachment: report.pdf]*",
+		userBody([]block{{Type: "text", Text: in}}))
+	// 没有附件块时同样剥掉改稿块
+	assert.Equal(t, "hi\n\n*[edited draft: x]*",
+		userBody([]block{{Type: "text", Text: "hi\n\n<oryn-draft-edits>\nhead\n<draft kind=\"message\" title=\"x\">\nbody\n</draft>\n</oryn-draft-edits>"}}))
+}
+
 // TestIsAutomatedUserText：控制面代发的头行（允许前导空白）算自动消息，其余（含正文中间出现前缀）不算。
 func TestIsAutomatedUserText(t *testing.T) {
 	for _, s := range []string{
