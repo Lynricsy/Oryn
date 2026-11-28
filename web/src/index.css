@@ -361,6 +361,14 @@
 	--device-r-br: 0px;
 }
 
+/* iPhone Duo 竖栏（lib/rail.ts）：壳给的安全区已含竖栏那一列，并按横向收角让开状态栏（不再占整条顶边） */
+:root[data-rail] {
+	--safe-top: var(--rail-safe-top);
+	--safe-right: var(--rail-safe-right);
+	--safe-bottom: var(--rail-safe-bottom);
+	--safe-left: var(--rail-safe-left);
+}
+
 html,
 body,
 #root {

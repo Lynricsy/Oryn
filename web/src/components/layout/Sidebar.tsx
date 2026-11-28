@@ -5,13 +5,14 @@
  * 以前品牌行的放大镜与线程分区的「搜索线程」过滤框功能重复，且放大镜挤掉了字标，两者合并成这一个。
  * `floating`：手机上的悬浮抽屉（双段视口）自己按安全区留了外边距，栏内就不再加 safe-area 内边距（否则刘海下空两次）。
  * `sink`：手机下沉侧栏，底栏用玻璃胶囊（`tone="glass"`）；列侧栏与抽屉用 `inset`。底栏悬浮在分区内容之上，
- * 外壳按它的高度设 `--tabbar-h`，各分区滚动区据此在底部留白。
+ * 外壳按它的高度设 `--tabbar-h`，各分区滚动区据此在底部留白。iPhone Duo 竖栏在时（`useRail`）底栏挪进竖栏（AppShell），侧栏里不放。
  * 桌面 App 无系统标题栏：macOS 红绿灯与品牌行合为一行（品牌在红绿灯右侧，见 `SidebarBrandRow`）；Linux 左侧布局的
  * 三个自绘按钮在顶部单独一行（与品牌行、三个小按钮排不进 256px）。标题行与品牌行的空白处都可拖动窗口，底栏不可。
  */
 import { type CSSProperties, memo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
+import { useRail } from "../../lib/rail";
 import { uiStore } from "../../state/ui";
 import { NotificationBell } from "../notify/NotificationBell";
 import { openPalette } from "../palette/palette-state";
@@ -36,10 +37,15 @@ export const Sidebar = memo(function Sidebar({
 	const navigate = useNavigate();
 	const tone = sink ? "glass" : "inset";
 	const safeBottom = !floating;
+	const rail = useRail() !== null;
 	return (
 		<nav
 			className={`relative flex h-full w-full flex-col ${floating ? "" : "pt-safe pl-safe"}`}
-			style={{ "--tabbar-h": tabBarHeight(tone, safeBottom) } as CSSProperties}
+			style={
+				{
+					"--tabbar-h": rail ? "0px" : tabBarHeight(tone, safeBottom),
+				} as CSSProperties
+			}
 			aria-label={t("nav.sidebar")}
 		>
 			{!floating && <SidebarChromeRow />}
@@ -67,7 +73,7 @@ export const Sidebar = memo(function Sidebar({
 			</SidebarBrandRow>
 			<SidebarSearch />
 			<SectionPanes />
-			<SectionTabBar tone={tone} safeBottom={safeBottom} />
+			{!rail && <SectionTabBar tone={tone} safeBottom={safeBottom} />}
 		</nav>
 	);
 });

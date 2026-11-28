@@ -166,6 +166,14 @@ pub struct TabBarFrame {
     pub height: f64,
 }
 
+/// iPhone Duo 竖栏所在的物理边（`RailProbe` 按竖栏矩形在屏幕中线哪一侧判定，不随书写方向翻转）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RailSide {
+    Left,
+    Right,
+}
+
 /// 原生底栏的整份状态（`tabBarSet` 的 `spec`）。底栏浮在 WebView 之上，右缘随根滚动裁到卡片左缘（bridge ≥ 8）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TabBarSpec {
@@ -519,6 +527,19 @@ pub enum Event {
         #[serde(default)]
         id: String,
         path: String,
+    },
+    /// iPhone Duo 的系统竖栏（iOS 27.1+，`RailProbe`）：`side` / `frame` 是 Oryn 自绘竖栏的物理边与矩形（UIKit 的 bar 布局指引，
+    /// 顶端让开状态栏与相机；WebView 坐标，pt = CSS px），当前不竖排时两者都缺省；`safe_area` 是竖栏之外内容区的安全区。
+    /// `probe` 是原始量测（系统安全区、各布局指引、遮挡区），只进事件日志。
+    Rail {
+        #[serde(default)]
+        side: Option<RailSide>,
+        #[serde(default)]
+        frame: Option<TabBarFrame>,
+        #[serde(default)]
+        safe_area: Insets,
+        #[serde(default)]
+        probe: Option<serde_json::Value>,
     },
 }
 

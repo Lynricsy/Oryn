@@ -12,6 +12,8 @@
  * 头像与角标整份交给控制器（`setSpec`，内容变了才真正发）；原生浮在 WebView 之上（玻璃折射下面的侧栏列表），
  * 原生看得见时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，但仍可命中（遮挡探测靠它）；被菜单、弹层盖住时原生让位、
  * 网页胶囊顶上。原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
+ * `tone="rail"`：iPhone Duo 竖栏（`lib/rail.ts`，壳报告系统把工具栏竖排在一侧时）：同样四项竖着排成一根玻璃胶囊，
+ * 固定在壳给的竖栏矩形里、不随侧栏开合移动；此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。
  */
 import {
 	type ReactNode,
@@ -74,7 +76,7 @@ export function SectionTabBar({
 	tone,
 	safeBottom = false,
 }: {
-	tone: "glass" | "inset";
+	tone: "glass" | "inset" | "rail";
 	safeBottom?: boolean;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -240,6 +242,7 @@ export function SectionTabBar({
 		[sink, switchSection],
 	);
 
+	const rail = tone === "rail";
 	const outer = sink
 		? "px-3 pt-1.5 pb-[max(var(--safe-bottom),0.5rem)]"
 		: `px-2 pt-1.5 ${safeBottom ? "pb-[calc(0.5rem+var(--safe-bottom))]" : "pb-2"}`;
@@ -248,21 +251,31 @@ export function SectionTabBar({
 			aria-label={t("tabBar.label")}
 			data-testid="section-tabbar"
 			data-tone={tone}
-			className={`pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`}
+			className={
+				rail
+					? "pointer-events-none fixed top-[var(--rail-y)] left-[var(--rail-x)] z-40 flex h-[var(--rail-h)] w-[var(--rail-w)] justify-center pt-1"
+					: `pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`
+			}
 		>
 			{sink && <span ref={inkRef} hidden className="text-accent-ink" />}
 			<div
 				ref={slotRef}
 				data-tabbar-slot
 				aria-hidden={hidden || undefined}
-				className={`${hidden ? "opacity-0" : "glass"} pointer-events-auto h-[52px] rounded-full p-1`}
+				className={`${hidden ? "opacity-0" : "glass"} pointer-events-auto rounded-full p-1 ${rail ? "h-[232px] w-[52px]" : "h-[52px]"}`}
 			>
-				<div className="relative grid h-full grid-cols-4">
+				<div
+					className={`relative grid h-full ${rail ? "grid-rows-4" : "grid-cols-4"}`}
+				>
 					<span
 						aria-hidden
 						data-testid="section-tabbar-plate"
-						className="absolute inset-y-0 rounded-full bg-[var(--sb-sel)] transition-[left] duration-200 ease-[var(--ease)]"
-						style={{ left: `${index * 25}%`, width: "25%" }}
+						className={`absolute rounded-full bg-[var(--sb-sel)] duration-200 ease-[var(--ease)] ${rail ? "inset-x-0 transition-[top]" : "inset-y-0 transition-[left]"}`}
+						style={
+							rail
+								? { top: `${index * 25}%`, height: "25%" }
+								: { left: `${index * 25}%`, width: "25%" }
+						}
 					/>
 					{SECTION_ORDER.map((key, i) => {
 						const on = key === section;

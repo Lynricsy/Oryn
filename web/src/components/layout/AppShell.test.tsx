@@ -18,6 +18,7 @@ import {
 	type MobileHost,
 	type ShareIntake,
 } from "../../lib/host";
+import { applyRail } from "../../lib/rail";
 import { realtime } from "../../realtime/socket";
 import { shareIntakeStore } from "../../state/share-intake";
 import { connectionStore, indexStore } from "../../state/stores";
@@ -526,6 +527,32 @@ describe("手机下沉式侧栏（compact）", () => {
 		expect(more).toHaveAttribute("aria-current", "true");
 		fireEvent.click(more as HTMLElement);
 		expect(uiStore.getState().sidebarOpen).toBe(false);
+	});
+
+	it("iPhone Duo 竖栏：底栏竖排在卡片与侧栏层之外，侧栏里不再有底栏；页面不重挂载，竖栏撤掉后回到侧栏底部", () => {
+		window.innerWidth = 466;
+		pageMounts = 0;
+		setup(<MountProbe />);
+		const root = document.documentElement;
+		act(() =>
+			applyRail(root, {
+				side: "right",
+				frame: { x: 402, y: 54, width: 64, height: 624 },
+				safeArea: { top: 0, right: 64, bottom: 21, left: 0 },
+			}),
+		);
+		expect(root.dataset.rail).toBe("right");
+		const bar = screen.getByTestId("section-tabbar");
+		expect(bar.dataset.tone).toBe("rail");
+		expect(screen.getByTestId("sink-sidebar")).not.toContainElement(bar);
+		expect(screen.getByTestId("sink-card")).not.toContainElement(bar);
+		act(() => applyRail(root, null));
+		expect(root.dataset.rail).toBeUndefined();
+		expect(root.style.getPropertyValue("--rail-safe-right")).toBe("");
+		const back = screen.getByTestId("section-tabbar");
+		expect(back.dataset.tone).toBe("glass");
+		expect(screen.getByTestId("sink-sidebar")).toContainElement(back);
+		expect(pageMounts).toBe(1);
 	});
 });
 
