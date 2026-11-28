@@ -23,11 +23,6 @@ const orbDiskSampleTimeout = 30 * time.Second
 // orbDiskMaxEntries 限制随心跳上报的 orbDiskByOrb 明细上限（总计 orbDiskBytes 始终完整）。
 const orbDiskMaxEntries = 500
 
-// orbDiskQueryMax 是单次 `docker ps --size` 的硬上限。dockerd 不会因客户端断开而停止计算 SizeRw
-// （overlay2 走 NaiveDiff 全量遍历每个容器可写层），过早杀掉 CLI 只会让下一次采样在服务端再叠加一份遍历；
-// 曾因 5s 超时 + 每分钟重采，在 dockerd 内堆积 70+ 份并发遍历、吃掉 70G+ 内存。
-const orbDiskQueryMax = 10 * time.Minute
-
 // orbDiskQuery 是一次在途的 `docker ps --size` 查询；done 关闭后结果字段只读。
 type orbDiskQuery struct {
 	done  chan struct{}
@@ -39,8 +34,11 @@ type orbDiskQuery struct {
 // OrbDiskUsage 实现 OrbDiskSizer：统计所有带 label oryn-orb=1 的容器可写层大小（Docker SizeRw）。
 // 注意：Moby overlay2 的 SizeRw 按 FileInfo.Size() 统计逻辑字节数（稀疏文件按逻辑大小计），
 // 故仅作独立参考读数，不得用于与宿主机 statfs 物理磁盘做堆叠扣减；结果按 orbDiskCacheTTL 缓存。
-// 同一时刻最多一份在途查询：查询不受调用方 ctx 约束（仅受 orbDiskQueryMax 限制），ctx 结束时调用方先返回失败，
-// 后续调用复用同一份在途查询；查询失败后至少退避 orbDiskCacheTTL 且不短于本次耗时。
+// dockerd 不会因客户端断开而停止计算 SizeRw（overlay2 走 NaiveDiff 全量遍历每个容器可写层），杀掉 CLI 只会让
+// 下一次查询在服务端再叠加一份遍历（曾因 5s 超时 + 每分钟重采，在 dockerd 内堆积 70+ 份遍历、吃掉 70G+ 内存）。
+// 因此本进程同一时刻最多一份查询，且从不主动结束 CLI：CLI 只在 dockerd 返回（或 dockerd 退出）时结束，
+// 新查询必然晚于上一份服务端计算。调用方 ctx 结束时先返回失败，后续调用复用同一份在途查询；
+// 查询失败后至少退避 orbDiskCacheTTL 且不短于本次耗时。
 func (d *Docker) OrbDiskUsage(ctx context.Context) (int64, map[string]int64, bool) {
 	t := d.orbDiskNow()
 
@@ -82,10 +80,8 @@ func (d *Docker) orbDiskNow() time.Time {
 
 // runOrbDiskQuery 执行一次查询并写回缓存，结束后清空在途标记。
 func (d *Docker) runOrbDiskQuery(q *orbDiskQuery, start time.Time) {
-	qctx, cancel := context.WithTimeout(context.Background(), orbDiskQueryMax)
-	defer cancel()
 	var stdout bytes.Buffer
-	err := d.exec(qctx, &stdout, io.Discard, nil,
+	err := d.exec(context.Background(), &stdout, io.Discard, nil,
 		"ps", "-a", "--filter", "label=oryn-orb=1", "--size", "--format", "{{.Names}}\t{{.Size}}",
 	)
 
