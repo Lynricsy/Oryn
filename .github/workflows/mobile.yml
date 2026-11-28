@@ -411,7 +411,8 @@ jobs:
   # iOS：PR / 手动 / 发布都跑的不签名编译 + 模拟器截图断言（签名构建见下方 ios-release）
   ios-check:
     needs: prepare
-    # macos-latest 仍是 Xcode 26.x（iOS 26.x SDK），App Store 自 2027-04 起只收 iOS 27 SDK 构建的包（ITMS-90725）
+    # macos-latest 仍是 Xcode 26.x（iOS 26.x SDK），App Store 自 2027-04 起只收 iOS 27 SDK 构建的包（ITMS-90725）；
+    # iPhone Duo 要 27.1 SDK 才铺满整块屏，并且要 27.1 的模拟器运行时跑下面的折叠往返
     runs-on: xcode-27
     permissions:
       contents: read
@@ -422,13 +423,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 确认 Xcode ≥ 27（iOS 27 SDK：App Store 上传要求，ITMS-90725）
-        shell: bash
-        run: |
-          set -euo pipefail
-          v=$(xcodebuild -version | awk 'NR==1{print $2}')
-          echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [[ ${v%%.*} -lt 27 ]]; then echo "::error::需要 Xcode 27+，当前 $v"; exit 1; fi
+      - name: 确认 iOS SDK ≥ 27.1（27：App Store 要求，ITMS-90725；27.1：iPhone Duo 铺满整块屏）
+        run: bash web/src-tauri/ci/require-ios-sdk.sh 27.1
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -552,6 +548,19 @@ jobs:
           bash web/src-tauri/ci/ios-e2e-check.sh "$APP" web/dist-e2e ios-shot/e2e
           [[ -f ios-shot/e2e/.complete ]] || { echo "::error::端到端检查没有跑完全部断言"; exit 1; }
 
+      # 硬门禁：iPhone Duo 折叠往返。同一会话里「外屏 → 展开 → 合上」跨 600px 断点来回一趟：应用壳的 <main> 只挂载一次、
+      # 下沉侧栏与列侧栏随之切换、原生根滚动跟随随之撤掉与重建（sink.set off / on）。折叠由固定提交的 duoctl 驱动，见脚本文件头
+      - name: 模拟器：iPhone Duo 折叠往返（跨 600px 不重挂载页面）
+        if: ${{ !cancelled() && steps.app.outcome == 'success' }}
+        timeout-minutes: 30
+        shell: bash
+        env:
+          APP: ${{ steps.app.outputs.path }}
+        run: |
+          rm -f ios-shot/duo/.complete
+          bash web/src-tauri/ci/ios-duo-check.sh "$APP" web/dist-e2e ios-shot/duo
+          [[ -f ios-shot/duo/.complete ]] || { echo "::error::iPhone Duo 折叠往返没有跑完全部断言"; exit 1; }
+
       # 推送探针（M28 Step 0 / 5）：appex 的包名与版本号（P2）；debug 包带 ORYN_PUSH_PROBE=1 冷启动、点掉授权框后，
       # AppDelegate 补上的 APNs 注册回调被调到（P1，apns.registered / apns.register_failed）；前台 simctl push 网关 challenge
       # 不展示并转成事件；退出后 simctl push 加密通知，NSE 用共享钥匙串里的附录 A 密钥解开（P3，nse.decrypted ok=true）。
@@ -591,7 +600,7 @@ jobs:
           name: ios-screenshot
           path: ios-shot/
           if-no-files-found: ignore
-          # 保留 header/.complete、e2e/.complete 与 push/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
+          # 保留 header/.complete、e2e/.complete、duo/.complete 与 push/.complete：验收要能从产物里确认脚本跑完了全部断言（upload-artifact 默认跳过隐藏文件）
           include-hidden-files: true
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -613,7 +622,7 @@ jobs:
     needs: [prepare, ios-check]
     if: needs.prepare.outputs.is_release == 'true'
     environment: mobile-release
-    # 与 ios-check 同一镜像：上传的 IPA 必须由 iOS 27 SDK 构建（ITMS-90725）
+    # 与 ios-check 同一镜像：上传的 IPA 必须由 iOS 27 SDK 构建（ITMS-90725），且与 ios-check 同为 27.1+（iPhone Duo 铺满整块屏）
     runs-on: xcode-27
     permissions:
       contents: read
@@ -624,13 +633,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 确认 Xcode ≥ 27（iOS 27 SDK：App Store 上传要求，ITMS-90725）
-        shell: bash
-        run: |
-          set -euo pipefail
-          v=$(xcodebuild -version | awk 'NR==1{print $2}')
-          echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [[ ${v%%.*} -lt 27 ]]; then echo "::error::需要 Xcode 27+，当前 $v"; exit 1; fi
+      - name: 确认 iOS SDK ≥ 27.1（27：App Store 要求，ITMS-90725；27.1：iPhone Duo 铺满整块屏）
+        run: bash web/src-tauri/ci/require-ios-sdk.sh 27.1
 
       # 只取「有没有」的布尔，不接触 secret 的值
       - name: 检查签名与上传凭据

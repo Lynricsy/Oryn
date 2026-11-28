@@ -1,6 +1,6 @@
 # 移动 App（Android；iOS 预留）
 
-Oryn 的 Android 客户端与桌面 App 是同一个 Tauri 2 工程（`web/src-tauri`）。App 本身只带一个很小的「连接页」，配对完成后加载**所连服务器自己的 Web UI**，所以界面总是和服务器同一版本。窄屏下线程页是单栏，对话与各面板（`Agent | Changes | Files | Terminal …`）是同级视图，手机宽度（<600dp）由页头右上角的视图菜单切换、不常驻标签条，600–839dp 双栏，≥840dp 三栏；旋转、改窗口大小、折叠 / 展开都不会重建页面，WebView 138 及以上在折叠屏半开时左右分屏。手机线程页头是悬浮的「侧栏钮 / 标题胶囊 / 视图钮」三件，线程操作都在点标题打开的菜单里；往上翻历史时输入坞收成一条信息胶囊，往下翻回来或点它即恢复。
+Oryn 的 Android 客户端与桌面 App 是同一个 Tauri 2 工程（`web/src-tauri`）。App 本身只带一个很小的「连接页」，配对完成后加载**所连服务器自己的 Web UI**，所以界面总是和服务器同一版本。窄屏下线程页是单栏，对话与各面板（`Agent | Changes | Files | Terminal …`）是同级视图，手机宽度（<600dp）由页头右上角的视图菜单切换、不常驻标签条，600–839dp 双栏，≥840dp 三栏；旋转、改窗口大小、折叠 / 展开都不会重建页面：Activity 不重建，网页也不重挂载（三档共用应用壳同一棵组件树，跨 600dp 时只换外框，焦点、滚动位置与页内状态都留着）。WebView 138 及以上在折叠屏半开时左右分屏。手机线程页头是悬浮的「侧栏钮 / 标题胶囊 / 视图钮」三件，线程操作都在点标题打开的菜单里；往上翻历史时输入坞收成一条信息胶囊，往下翻回来或点它即恢复。
 
 - 应用标识 `com.lynricsy.oryn`，最低 Android 13（API 33），目标 API 37；深链接协议 `oryn://`（不启用 App Links）。
 - 设备令牌只存在于 App 的 Rust 进程和 Android Keystore 加密的私有存储里，网页代码拿不到它；App 用令牌换一个「属于该设备」的网页会话再打开 Web UI（与桌面相同，见 [protocol.md](protocol.md)「M6：App 会话」）。
@@ -220,7 +220,9 @@ iOS 26+ 的手机布局（下沉侧栏）用原生的底栏与页头（线程页
 - **页头**（侧栏钮 / 标题胶囊 / 视图钮）在 `SinkFollow` 的同一次 KVO 回调里随 `contentOffset` 平移，与卡片同进程同帧，不需要对时；卡片离开关闭位时只显示不接触摸。网页的 `host_header_show` 只剩透明度（`{alpha, ms}`）：只有网页内容（对话框、弹层）盖住静止关闭的页头时原生才让位（`alpha 0`），侧栏被要求打开的过程中不做遮挡判定。**视图菜单**是系统菜单（`HeaderSystemMenu.swift`）：视图钮是 UIKit 玻璃钮（`UIButton.Configuration.glass`），点开的 `UIMenu` 本身就是 Liquid Glass，形变、行距、按压、长按滑选都由系统负责，提醒点画进图标（静态）；开合经 `UIContextMenuInteraction` 的回调上报网页。系统菜单没有公开的程序化打开，`host_header_menu` 对它只能收起。**标题菜单**是自绘面板（`HeaderMenuView.swift`），与胶囊同在一个 `GlassEffectContainer`，出现时从胶囊里形变长出来（`glassEffectID` + `matchedGeometry`）；玻璃上只铺一层薄底色（`HEADER_TUNE.tint` = 0.1），背后不压暗。面板高度贴合内容，上限 `min(480, 屏高 − 128)` pt，超出上限才在面板内滚动；限高用 `CapHeight` 布局（只封顶不撑开），不能用 `.frame(maxHeight:)`，否则父级提议整屏高度时面板会撑到上限、内容居中留白。
 - `host_sink_set` 生效前，非空的 `host_tab_bar_set` / `host_header_set` 一律返回 `unsupported`。bridge ≤ 7 的壳（页头靠跨进程对时跟随卡片）网页一律用网页页头与网页底栏，卡片用网页手势。
 
-CI 的 `ios-check` 在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，首页原生侧栏钮的接管，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。底栏的裁切是否跟上卡片要和真实网页一起看，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+CI 的 `ios-check` 先用 `ci/require-ios-sdk.sh 27.1` 确认 iOS SDK ≥ 27.1（27 是 App Store 的上传要求；27.1 起 iPhone Duo 上铺满整块屏，27.0 SDK 构建的包在内屏右侧给状态栏留一条空白；`ios-release` 与 `readme-ios-shots.yml` 同一断言），然后在 iOS 26+ 模拟器里跑 `ci/ios-header-check.sh`（原生页头演示：插件直接摆出页头与菜单，比像素并探测触摸归属）与 `ci/ios-e2e-check.sh`（端到端：mock Web UI + 远程能力 + XCUITest 真实触摸，底栏的开合、按住拖动、原生点选与横滑，首页原生侧栏钮的接管，页头的接管、菜单、对话框让位与随卡片开合；事件日志断言、无障碍树断言与逐区域像素比较，见脚本文件头）。底栏的裁切是否跟上卡片要和真实网页一起看，所以只在端到端里检查。网页侧的行为在浏览器里由 `bun run accept:m20`（本机 Chromium 模拟 iOS 壳）验收。
+
+iPhone Duo 由 `ci/ios-duo-check.sh` 单独检查：新建一台 Duo 模拟器，打开 mock 的线程页，同一会话里「外屏 → 展开 → 合上」跨 600pt 来回一趟，断言下沉侧栏与列侧栏随之切换、原生根滚动跟随随之撤掉与重建（`sink.set` off / on），并且应用壳的 `<main>` 全程只挂载一次（网页探针 `ios-e2e-preview.mjs` 的 `main.mount` / `layout`）。`simctl` 没有铰链命令，折叠由 [duoctl](https://github.com/skarol/duoctl) 驱动：固定到 v0.2.1 的提交、从源码运行；它用模拟器的私有 HID 接口，Xcode 更新后可能失效，失效时这一步红在 duoctl 的报错上。三个姿态的截图与 `duoctl state` 在产物 `ios-screenshot/duo/`。同一回归在 `AppShell.test.tsx`「跨 compact 断点」里由 jsdom 覆盖（390 → 700 → 390，路由页不重挂载、输入内容与焦点保留）。
 
 按住拖动期间不能出现 `sink.show`（网页发起的程序化开合）。程序化开合到位后的观测窗口内，从别处重新发起原生 `jump` / `start`，或从终点位置离开超过 1pt 的 `move`，均判为回弹；后者覆盖网页直接 `scrollTo` 拉回、未再次调用原生的情况。`sink.trace` 是 debug 包记下的根滚动轨迹：程序化开合的 `start` / `jump` / `noop` / `busy` / `done` / `cancel`，以及外来位移 `move`（带调用栈，不含手指拖动与惯性）。
 
@@ -274,4 +276,4 @@ Apple 门户（一次性）：
 
 没做 1–3 时：`ios-check` 照常通过（模拟器包不签名），但 `ios-release` 在「检查签名与上传凭据」失败、整次 Release 不发布；只做了 3 没做 1 时，签名导出会因描述文件缺 `aps-environment` 失败。
 
-尚未完成：APNs 推送与 NSE 的真机验收（TestFlight：锁屏收到带真实标题与头像的通知、前台不重复弹、关闭后不再收到）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iOS 通信通知头像的真机验收；iPhone / iPad 真机验收。
+尚未完成：APNs 推送与 NSE 的真机验收（TestFlight：锁屏收到带真实标题与头像的通知、前台不重复弹、关闭后不再收到）；Share Extension（App Group 容器 + 同一条上传预填流程）；Universal Links（`/.well-known/apple-app-site-association`）；Keychain 令牌存储的真机验证；iOS 通信通知头像的真机验收；iPhone / iPad / iPhone Duo 真机验收（Duo 目前只有模拟器上的折叠往返，原生底栏与页头在 Duo 外屏上的几何没有单独比像素）。

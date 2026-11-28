@@ -104,6 +104,22 @@ function watchSink() {
 			if (event.target.matches('[data-testid="sink-card"]')) line("data-open");
 		}
 	}).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["data-open"] });
+	// 折叠屏往返（ios-duo-check.sh）：应用壳的 <main> 每出现一个新元素记一次 main.mount（不重挂载时全程只有一条）；
+	// 下沉卡片出现 / 消失（跨 600px 换布局）时记 layout，带当时的视口宽
+	const mains = new WeakSet();
+	let mounts = 0;
+	let sink;
+	new MutationObserver(() => {
+		for (const main of document.querySelectorAll("main")) {
+			if (mains.has(main)) continue;
+			mains.add(main);
+			line("main.mount", { n: ++mounts });
+		}
+		const now = card() !== null;
+		if (now === sink) return;
+		sink = now;
+		line("layout", { sink: now, w: window.innerWidth });
+	}).observe(document.documentElement, { subtree: true, childList: true });
 	line("ready");
 }
 
