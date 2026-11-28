@@ -123,15 +123,25 @@ function watchSink() {
 		railSample();
 	}).observe(document.documentElement, { subtree: true, childList: true });
 	// iPhone Duo 竖栏（ios-duo-check.sh）：竖栏一侧、竖栏里的侧栏开关（中心点，CSS px = 屏幕 pt，供 duoctl tap）、
-	// 操作槽里的按钮数、竖排底栏在不在、页头里还看得见几个侧栏开关（竖栏在时应为 0）。与上一条相同不重复发
+	// 操作槽里的按钮数、操作槽里一个有开合状态的按钮（优先 aria-pressed 的信息面板，没有时取 aria-expanded 的「更多」菜单）
+	// 的中心点与状态、竖排底栏在不在、
+	// 页头里还看得见几个侧栏开关（竖栏在时应为 0）。与上一条相同不重复发
 	let lastRail;
+	const center = (el) => {
+		const r = el?.getBoundingClientRect();
+		return r ? { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) } : null;
+	};
 	const railSample = () => {
 		const q = (s) => document.querySelector(s);
-		const toggle = q('[data-testid="rail-sidebar"]')?.getBoundingClientRect();
+		const act =
+			q('[data-testid="rail-actions"] button[aria-pressed]') ??
+			q('[data-testid="rail-actions"] button[aria-expanded]');
 		const info = {
 			side: document.documentElement.dataset.rail ?? null,
-			tap: toggle ? { x: Math.round(toggle.x + toggle.width / 2), y: Math.round(toggle.y + toggle.height / 2) } : null,
+			tap: center(q('[data-testid="rail-sidebar"]')),
 			actions: document.querySelectorAll('[data-testid="rail-actions"] button').length,
+			act: center(act),
+			pressed: act ? (act.getAttribute("aria-pressed") ?? act.getAttribute("aria-expanded")) === "true" : null,
 			tabs: q('[data-testid="rail"] [data-tone="rail"]') !== null,
 			headerToggles: [...document.querySelectorAll("[data-sidebar-toggle]")].filter((e) => e.getClientRects().length > 0).length,
 			w: window.innerWidth,
@@ -141,7 +151,9 @@ function watchSink() {
 		lastRail = key;
 		line("rail", info);
 	};
-	new MutationObserver(railSample).observe(document.documentElement, { attributes: true, attributeFilter: ["data-rail"] });
+	new MutationObserver(railSample).observe(document.documentElement, {
+		subtree: true, attributes: true, attributeFilter: ["data-rail", "aria-pressed", "aria-expanded"],
+	});
 	window.addEventListener("resize", railSample, { passive: true });
 	line("ready");
 }

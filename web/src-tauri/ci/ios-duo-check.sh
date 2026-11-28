@@ -133,24 +133,42 @@ rail_note() {
   echo "- ${1} rail：\`$(ev rail | tail -1 | jq -c '{side, frame, safeArea, probe}')\`" | tee -a "$summary"
   echo "- ${1} 网页竖栏：\`$(probe rail | jq -c 'last | .info')\`" | tee -a "$summary"
 }
-# web_rail：网页探针的最后一条 rail 竖排着、开关与底栏都在竖栏里、页头里的侧栏开关全藏了
-web_rail() { probe rail | jq -e 'last | .info | .side != null and .tap != null and .tabs and .headerToggles == 0'; }
+# web_rail <最少操作数>：网页探针的最后一条 rail 竖排着、开关与底栏都在竖栏里、页头里的侧栏开关全藏了，
+# 操作槽里至少有这么多个页头操作（外屏线程页：视图钮 1 个；内屏横放：会话树与更多，非双段时还有信息面板）
+web_rail() {
+  probe rail | jq -e --argjson n "$1" \
+    'last | .info | .side != null and .tap != null and .tabs and .headerToggles == 0 and .actions >= $n'
+}
 # card_open <true|false>：网页探针最后一条 data-open 的卡片开合
 card_open() { probe data-open | jq -e --argjson o "$1" 'last | (.open // false) == $o'; }
-# rail_tap <姿态> <true|false>：点竖栏的侧栏开关，等卡片开合到位
-rail_tap() {
+# act_pressed <true|false>：操作槽里有开合状态的按钮（信息面板的 aria-pressed，或「更多」的 aria-expanded）
+act_pressed() { probe rail | jq -e --argjson p "$1" 'last | .info.pressed == $p'; }
+# tap_at <步骤> <jq 路径>：点网页探针最后一条 rail 里记下的中心点
+tap_at() {
   local xy
-  xy=$(probe rail | jq -r 'last | .info.tap | "\(.x) \(.y)"')
+  xy=$(probe rail | jq -r "last | .info.$2 | \"\\(.x) \\(.y)\"")
   # shellcheck disable=SC2086 # xy 是两个数
   duo tap $xy || fail "$1" "duoctl tap ${xy} 失败"
+}
+# rail_tap <姿态> <true|false>：点竖栏的侧栏开关，等卡片开合到位
+rail_tap() {
+  tap_at "$1" tap
   until_ok "$1" 30 "点竖栏的侧栏开关后卡片 data-open = $2" card_open "$2"
+}
+# act_tap <姿态>：点竖栏操作槽里有开合状态的那个页头操作，等状态翻转
+act_tap() {
+  local was
+  was=$(probe rail | jq -c 'last | .info.pressed')
+  [[ $was == true || $was == false ]] || fail "$1" "竖栏操作槽里没有带开合状态的页头操作：${was}"
+  tap_at "$1" act
+  until_ok "$1" 30 "点竖栏里的页头操作后开合状态从 ${was} 翻转" act_pressed "$([[ $was == true ]] && echo false || echo true)"
 }
 
 until_ok folded 90 "web.ready（bridge ≥ 8）" web_ready
 until_ok folded 60 "外屏 compact：探针 layout sink = true、宽 < 600" last_layout true
 until_ok folded 30 "原生跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok folded 30 "外屏竖栏：最后一条 rail 带 side 与矩形" rail_side
-until_ok folded 30 "网页竖栏：开关与底栏在竖栏里、页头侧栏开关已隐藏" web_rail
+until_ok folded 30 "网页竖栏：开关、底栏与视图钮在竖栏里、页头侧栏开关已隐藏" web_rail 1
 rail_note folded
 rail_tap folded true
 rail_tap folded false
@@ -162,11 +180,22 @@ until_ok open 30 "原生撤掉根滚动跟随：最后一条 sink.set 是 off" l
 rail_note open
 shot open
 
+# 内屏横放：系统把工具栏竖排在一侧，展开态页头的操作（会话树、信息面板、更多）进竖栏；点一次有开合状态的那个再点回来
+duo rotate landscape || fail landscape "duoctl rotate landscape 失败"
+echo "- landscape：\`$(duo state | jq -c '{hingeAngle, activeScreen, orientation, sizePoints}')\`" | tee -a "$summary"
+until_ok landscape 30 "内屏横放竖栏：最后一条 rail 带 side 与矩形" rail_side
+until_ok landscape 30 "内屏横放网页竖栏：页头操作 ≥ 2 个进了竖栏" web_rail 2
+rail_note landscape
+act_tap landscape
+act_tap landscape
+shot landscape
+duo rotate portrait || fail landscape "duoctl rotate portrait 失败"
+
 pose refolded close
 until_ok refolded 60 "合上后 layout 回到 sink = true" last_layout true
 until_ok refolded 30 "原生重新跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok refolded 30 "合上后竖栏回来：最后一条 rail 带 side 与矩形" rail_side
-until_ok refolded 30 "合上后网页竖栏回来" web_rail
+until_ok refolded 30 "合上后网页竖栏回来（视图钮在竖栏里）" web_rail 1
 rail_note refolded
 shot refolded
 
