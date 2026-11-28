@@ -38,7 +38,8 @@ final class RailProbe: UIView {
     autoresizingMask = [.flexibleWidth, .flexibleHeight]
     // 布局指引先建好：第一轮布局就能求解出它们的 layoutFrame
     _ = (leadingBar, trailingBar, cornerSafe)
-    registerForTraitChanges(UITraitCollection.systemTraitsAffectingSizeAndLayout) {
+    // 折叠 / 展开 / 转屏都会改边界（layoutSubviews 重算）；尺寸类变化另外再排一次布局（竖栏的一侧随之变）
+    registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) {
       (probe: RailProbe, _: UITraitCollection) in
       probe.setNeedsLayout()
     }
