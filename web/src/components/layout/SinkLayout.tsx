@@ -425,6 +425,12 @@ export function SinkLayout({
 			card.removeEventListener("touchmove", onMove);
 			card.removeEventListener("touchend", end);
 			card.removeEventListener("touchcancel", end);
+			// 手势没等到 touchend / touchcancel 就被打断（折叠屏展开退出下沉模式、转入原生滚动）：卡片元素留着，
+			// 清掉拖动标记与进度，否则回来时 .sink-card 读到旧进度卡在半开；不走 end()，打断不提交开合
+			if (dragging) {
+				card.removeAttribute("data-dragging");
+				card.style.removeProperty("--sink-p");
+			}
 		};
 	}, [native, sink]);
 

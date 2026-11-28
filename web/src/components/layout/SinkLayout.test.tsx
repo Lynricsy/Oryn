@@ -296,6 +296,26 @@ describe("触摸手势", () => {
 		expect(uiStore.getState().sidebarOpen).toBe(true);
 	});
 
+	it("拖到一半就展开（sink=false）再合上：卡片不留拖动进度，也不提交开合", () => {
+		const view = (sink: boolean) => (
+			<SinkLayout sink={sink} sidebar={<button type="button">线程甲</button>}>
+				<p>正文</p>
+			</SinkLayout>
+		);
+		const { rerender } = render(view(true));
+		const el = card();
+		touch(el, "touchStart", 4, 300, 1000);
+		touch(el, "touchMove", 200, 302, 1400);
+		expect(el).toHaveAttribute("data-dragging");
+		// 折叠屏展开：没有 touchend / touchcancel，手势直接被换布局打断
+		rerender(view(false));
+		rerender(view(true));
+		expect(card()).toBe(el);
+		expect(el).not.toHaveAttribute("data-dragging");
+		expect(el.style.getPropertyValue("--sink-p")).toBe("");
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+	});
+
 	it("竖向为主交给滚动；打开时在卡片上快速左甩关闭", () => {
 		mount();
 		touch(card(), "touchStart", 4, 300, 0);
