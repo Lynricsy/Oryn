@@ -38,6 +38,31 @@ func TestParseDockerPSSizes(t *testing.T) {
 	assert.Equal(t, int64(128_000_000+1_500_000_000+34_500+2*1024*1024*1024), total)
 }
 
+// dockerd 不会因客户端放弃而停止计算 SizeRw：调用方超时不得杀掉在途查询，也不得在其结束前再发起新的 `docker ps --size`。
+func TestDockerOrbDiskUsageSingleFlightAcrossCallerTimeouts(t *testing.T) {
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	bin := filepath.Join(dir, "docker")
+	script := "#!/bin/sh\necho x >> " + count + "\nsleep 0.5\nprintf 'orb-a\\t128MB (virtual 2GB)\\n'\n"
+	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+	d := &Docker{Bin: bin}
+
+	for range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		_, _, ok := d.OrbDiskUsage(ctx)
+		cancel()
+		assert.False(t, ok)
+	}
+
+	total, byOrb, ok := d.OrbDiskUsage(context.Background())
+	require.True(t, ok)
+	assert.Equal(t, int64(128_000_000), total)
+	assert.Equal(t, map[string]int64{"orb-a": 128_000_000}, byOrb)
+	raw, err := os.ReadFile(count)
+	require.NoError(t, err)
+	assert.Equal(t, "x\n", string(raw), "在途查询期间不得重复调用 docker ps --size")
+}
+
 func TestFirecrackerOrbDiskUsageSparse(t *testing.T) {
 	dir := t.TempDir()
 	d := NewFirecracker(config.Firecracker{StateDir: dir}, "http://127.0.0.1:8080")

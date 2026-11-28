@@ -49,6 +49,9 @@ type Docker struct {
 	orbDiskTotal int64
 	orbDiskByOrb map[string]int64
 	orbDiskValid bool
+	// orbDiskQuery 是在途的 `docker ps --size`（nil = 无）；orbDiskRetryAt 之前不发起新查询（失败退避）。
+	orbDiskQuery   *orbDiskQuery
+	orbDiskRetryAt time.Time
 	// offline 缓存停机 orb 的文件索引（只读预览，见 offlinefs_docker.go）。
 	offline indexCache
 	// relays 是各沙箱的 link 中继（M30）：<socket_dir>/<orbId>/link.sock → ORYN_URL 的 host:port。
