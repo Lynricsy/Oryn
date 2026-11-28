@@ -51,6 +51,10 @@ class OrynMobilePlugin: Plugin {
   private var sink: AnyObject?
   /// `RailProbe`（iOS 27.1+，iPhone Duo 竖栏）；同上按 AnyObject 存，只在主线程读写。
   private var rail: AnyObject?
+  /// `RailOverlay`（原生竖栏）；同上。
+  private var railOverlay: AnyObject?
+  /// RailProbe 最近一次给的竖栏矩形（WebView 坐标）；新建的原生竖栏立刻用上。只在主线程读写。
+  private var railFrame: CGRect?
   /// 只在 debug 的端到端启动中记录实际触摸；主线程配置。
   private var traceHeaderHits = false
   /// 上次应答 / 通知 Rust 时的通知权限（回到前台复查用）；只在主线程读写。
@@ -65,6 +69,10 @@ class OrynMobilePlugin: Plugin {
 
   @objc public override func load(webview: WKWebView) {
     self.webview = webview
+    // 页面都是 viewport-fit=cover：WebKit 要等网页进程提交了视口参数（模拟器上约 1 秒）才把根滚动视图的内边距调整改成 never，
+    // 在那之前按安全区内缩排版，开屏画面先挤在安全区里（Duo 外屏：382×644 落在左上角）再跳满。一开始就设成稳态值；
+    // 显式设过之后 WebKit 不再改它。env(safe-area-inset-*) 取自视图的安全区，不受影响。
+    webview.scrollView.contentInsetAdjustmentBehavior = .never
     NotificationManager.shared.installDelegate()
     // Rust 的 listen_ios 在主线程同步完成 registerListener 后，主队列下一轮再绑定点击回调并补发冷启动点击
     DispatchQueue.main.async { [weak self] in
@@ -90,10 +98,57 @@ class OrynMobilePlugin: Plugin {
     }
     let probe = RailProbe(webview: webview) { [weak self] data in
       self?.trigger("event", data: data)
+    } onFrame: { [weak self] rect in
+      self?.railFrame = rect
+      (self?.railOverlay as? RailOverlay)?.place(rect)
     }
     probe.frame = host.bounds
     host.insertSubview(probe, belowSubview: webview)
     rail = probe
+  }
+
+  /// 原生竖栏的内容。撤掉任何系统版本都成功；系统 < 27.1 以 `unsupported` 拒绝。
+  /// 同 headerSet：画上了（宿主视图在窗口里）才应答，网页收到应答才撤掉自己画的竖栏；应答在主线程块里发出。
+  @objc public func railSet(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(RailSetArgs.self)
+    guard let spec = args.spec else {
+      DispatchQueue.main.async { self.removeRail() }
+      invoke.resolve()
+      return
+    }
+    guard #available(iOS 27.1, *) else {
+      invoke.reject("unsupported")
+      return
+    }
+    DispatchQueue.main.async {
+      if self.applyRail(spec) { invoke.resolve() } else { invoke.reject("unsupported") }
+    }
+  }
+
+  private func applyRail(_ spec: RailSpec) -> Bool {
+    guard #available(iOS 27.1, *), let webview = self.webview else { return false }
+    let bar: RailOverlay
+    if let existing = railOverlay as? RailOverlay {
+      bar = existing
+    } else {
+      bar = RailOverlay(webview: webview, controller: manager.viewController) {
+        [weak self] key, part, id, item in
+        var data: JSObject = ["type": "railtap", "key": key, "part": part]
+        if let id { data["id"] = id }
+        if let item { data["item"] = item }
+        self?.trigger("event", data: data)
+      }
+      railOverlay = bar
+      bar.place(railFrame)
+    }
+    return bar.apply(spec)
+  }
+
+  private func removeRail() {
+    if #available(iOS 26.0, *), let bar = railOverlay as? RailOverlay {
+      bar.remove()
+    }
+    railOverlay = nil
   }
 
   /// 命令跑在 Tauri 的后台串行队列上：界面操作转主线程后立即应答，绝不等主线程（Rust 那边可能正阻塞着它）。

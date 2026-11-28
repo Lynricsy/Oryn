@@ -1,5 +1,5 @@
 //! Oryn 移动端原生能力的 Rust 侧：Android 上是 Keystore 保险库、系统通知、UnifiedPush / FCM、分享接收、系统栏颜色；
-//! iOS 上是 APNs 推送、下沉侧栏的原生底栏与线程页的原生页头（iOS 26+）以及可替换图标（Swift 实现在 `ios/`）。
+//! iOS 上是 APNs 推送、下沉侧栏的原生底栏与线程页的原生页头（iOS 26+）、iPhone Duo 的原生竖栏（iOS 27.1+）以及可替换图标（Swift 实现在 `ios/`）。
 //!
 //! 命令表为空（见 `build.rs`）：远程页面拿不到任何原生命令；这里的方法只给壳的 Rust 代码调用。
 //! 数据形状在 [`models`]，不依赖平台；插件句柄与注册只在 Android / iOS 上存在。
@@ -143,7 +143,6 @@ mod native {
             self.call("syncAssistantAvatar", args)
         }
 
-
         pub fn open_notification_settings(&self) -> Result<()> {
             self.call("openNotificationSettings", ())
         }
@@ -220,8 +219,8 @@ mod native {
         }
     }
 
-    /// 下沉侧栏的根滚动跟随、原生底栏与原生页头（Swift 在 iOS 26+ 才真正实现）。除 `header_set` / `header_probe` 外，
-    /// Swift 只把界面操作派到主线程就应答，不等它画完。
+    /// 下沉侧栏的根滚动跟随、原生底栏与原生页头（Swift 在 iOS 26+ 才真正实现）、原生竖栏（iOS 27.1+）。
+    /// 除 `header_set` / `header_probe` / `rail_set` 外，Swift 只把界面操作派到主线程就应答，不等它画完。
     #[cfg(target_os = "ios")]
     impl<R: Runtime> OrynMobile<R> {
         /// 整份状态；`None` = 撤掉原生底栏（任何系统版本都成功）。iOS < 26 且 `spec` 非空时 Swift 以 `unsupported` 拒绝。
@@ -268,6 +267,15 @@ mod native {
         /// 调试（CI 演示）：屏幕中心与三件控件中心的触摸是否被原生层截住。Swift 在主线程上取样后应答。
         pub async fn header_probe(&self) -> Result<HeaderProbe> {
             Ok(self.0.run_mobile_plugin_async("headerProbe", ()).await?)
+        }
+
+        /// 整份原生竖栏；`spec` 为 `None` 撤掉（任何系统版本都成功）。Swift 在主线程应用、宿主视图在窗口里才应答
+        /// （iOS < 27.1 以 `unsupported` 拒绝），所以异步等待、不占线程。只能在异步任务里调用。
+        pub async fn rail_set(&self, args: &RailSetArgs) -> Result<()> {
+            self.0
+                .run_mobile_plugin_async::<IgnoredAny>("railSet", args)
+                .await?;
+            Ok(())
         }
 
         /// 可替换图标：是否支持、当前资源名。Swift 在主线程读取后应答。

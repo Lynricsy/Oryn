@@ -3,12 +3,16 @@
  * 竖排在一侧（HIG「Designing for iPhone Duo → Vertical controls」）。壳算好 Oryn 竖栏的矩形与竖栏之外内容区的安全区，这里：
  * - 写到 `<html>`：`data-rail="left|right"`，`--rail-x/y/w/h`（竖栏矩形），`--rail-safe-*`（index.css 的 `:root[data-rail]`
  *   用它们取代 env() 的安全区：竖排的状态栏只占竖栏那一列，不再算成整条顶边）；
- * - 供组件订阅（`useRail`）：AppShell 渲染竖栏（`Rail`：开关侧栏 + 页头操作槽 + 竖排的分区底栏），页头把操作按钮经
- *   `InRail` 送进操作槽（`useRailSlot`）；页面里的侧栏开关带 `data-sidebar-toggle`，竖栏在时由 index.css 隐藏（竖栏顶上有同一个开关）。
+ * - 供组件订阅（`useRail`）：AppShell 渲染竖栏（`Rail`：开关侧栏 + 页头操作 + 竖排的分区；壳 bridge ≥ 13 时由原生画，
+ *   见 `native-rail.ts`）；页头把自己的操作登记进来（`useRailActions`，竖栏在时页头里不再画这几个钮）；页面里的侧栏开关
+ *   带 `data-sidebar-toggle`，竖栏在时由 index.css 隐藏（竖栏顶上有同一个开关）。
  * null = 当前不竖排（内屏竖放、普通 iPhone、浏览器、旧壳）：属性与变量全部撤掉，页面照旧。
  */
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import type { IconName } from "../components/ui/icons";
+import type { MenuItem } from "../components/ui/primitives";
 import type { Host, RailGeometry } from "./host";
+import { nativeItems } from "./native-header";
 import { notifySafeAreaChange } from "./viewport";
 
 const VARS = [
@@ -74,28 +78,88 @@ export function useRail(): RailGeometry | null {
 	);
 }
 
-let slot: HTMLElement | null = null;
-const slotSubs = new Set<() => void>();
-
-/** 竖栏的页头操作槽（`Rail` 的 ref 回调）；卸载时传 null。 */
-export function setRailSlot(el: HTMLElement | null): void {
-	if (slot === el) return;
-	slot = el;
-	for (const cb of [...slotSubs]) cb();
+/** 页头登记进竖栏的一个操作：有 `menu` 的点开是菜单，否则点了调 `onClick`。 */
+export interface RailAction {
+	id: string;
+	icon: IconName;
+	label: string;
+	/** 开着（如信息面板开着）：强调色。 */
+	active?: boolean;
+	dot?: "accent" | "warn";
+	onClick?: () => void;
+	menu?: readonly MenuItem[];
 }
 
-function subscribeSlot(cb: () => void): () => void {
-	slotSubs.add(cb);
+const owners = new Map<symbol, readonly RailAction[]>();
+/** 各页头登记的操作合在一起（按登记先后）；只在「形状」变了时换新数组（订阅者据此重渲染）。 */
+let actions: readonly RailAction[] = [];
+/** 最新一份（回调每次渲染都换）：点按时从这里取。 */
+let latestActions: readonly RailAction[] = [];
+let shape = "[]";
+const actionSubs = new Set<() => void>();
+
+/** 操作的可比较形状：菜单的 label 可能是 JSX，按原生菜单项（纯文本）比。 */
+function shapeOf(list: readonly RailAction[]): string {
+	return JSON.stringify(
+		list.map((a) => [
+			a.id,
+			a.icon,
+			a.label,
+			a.active ?? false,
+			a.dot ?? null,
+			a.menu ? nativeItems(a.menu) : null,
+		]),
+	);
+}
+
+function publish(): void {
+	latestActions = [...owners.values()].flat();
+	const next = shapeOf(latestActions);
+	if (next === shape) return;
+	shape = next;
+	actions = latestActions;
+	for (const cb of [...actionSubs]) cb();
+}
+
+/**
+ * 页头把自己的操作登记进竖栏（每次渲染后交一次，回调总是最新的；内容没变不通知）；`null` = 不登记（竖栏不在时也可以照登，
+ * 只是没人显示）。卸载时撤掉。
+ */
+export function useRailActions(list: readonly RailAction[] | null): void {
+	const id = useRef<symbol | null>(null);
+	id.current ??= Symbol("rail");
+	const key = id.current;
+	useEffect(() => {
+		if (list) owners.set(key, list);
+		else owners.delete(key);
+		publish();
+	});
+	useEffect(
+		() => () => {
+			owners.delete(key);
+			publish();
+		},
+		[key],
+	);
+}
+
+function subscribeActions(cb: () => void): () => void {
+	actionSubs.add(cb);
 	return () => {
-		slotSubs.delete(cb);
+		actionSubs.delete(cb);
 	};
 }
 
-/** 竖栏的页头操作槽；不竖排或竖栏还没挂上时为 null。 */
-export function useRailSlot(): HTMLElement | null {
+/** 当前登记的全部操作（形状变了才是新数组）。 */
+export function useRailActionList(): readonly RailAction[] {
 	return useSyncExternalStore(
-		subscribeSlot,
-		() => slot,
-		() => null,
+		subscribeActions,
+		() => actions,
+		() => actions,
 	);
+}
+
+/** 按 id 取最新登记的操作（点按回调用）。 */
+export function railAction(id: string): RailAction | undefined {
+	return latestActions.find((a) => a.id === id);
 }

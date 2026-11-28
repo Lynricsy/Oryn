@@ -448,6 +448,70 @@ pub struct HeaderProbe {
     pub trail: bool,
 }
 
+/// 原生竖栏的侧栏开关（iPhone Duo，iOS 27.1+）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RailLead {
+    pub label: String,
+    /// 侧栏开着。
+    pub active: bool,
+}
+
+/// 原生竖栏的一个页头操作：有 `menu` 的是系统菜单钮（点开 UIMenu），没有的是普通钮。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RailAction {
+    pub id: String,
+    pub symbol: String,
+    pub label: String,
+    /// 缺省 false。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dot: Option<HeaderDot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu: Option<HeaderMenu>,
+}
+
+/// 竖排的分区（与原生底栏同一组项）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RailTabs {
+    /// 读屏名。
+    pub label: String,
+    pub items: Vec<TabBarItem>,
+    /// 选中项 id（必须是某一项的 id；原生点击不自己改它）。
+    pub selected: String,
+}
+
+/// 原生竖栏的整份状态（`railSet` 的 `spec`，bridge ≥ 13）。几何由原生 `RailProbe` 自己算，网页只发内容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RailSpec {
+    /// 页面键：变了原生收起开着的菜单；事件原样带回。
+    pub key: String,
+    pub dark: bool,
+    pub palette: HeaderPalette,
+    /// 网页内容（对话框、遮罩）压在竖栏上：原生隐藏且不接触摸。
+    pub covered: bool,
+    pub lead: RailLead,
+    /// 从上到下。
+    pub actions: Vec<RailAction>,
+    pub tabs: RailTabs,
+}
+
+/// `railSet` 的载荷：`spec` 为 null = 撤掉原生竖栏（不省略）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RailSetArgs {
+    pub spec: Option<RailSpec>,
+}
+
+/// 原生竖栏被点的部位：`lead` 侧栏开关、`action` 普通操作钮、`item` 菜单钮里选了一项、`tab` 分区。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RailPart {
+    Lead,
+    Action,
+    Item,
+    Tab,
+}
+
 /// `appIconGet` 的返回：系统是否支持可替换图标，当前用的资源名（`None` = 默认图标）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppIconState {
@@ -527,6 +591,16 @@ pub enum Event {
         #[serde(default)]
         id: String,
         path: String,
+    },
+    /// 原生竖栏的点击（iOS 27.1+，bridge ≥ 13）：`id` 是操作钮 / 分区的 id（`lead` 没有）；
+    /// `item` 是菜单钮里选中的菜单项路径 id（只有 `part` 为 `item` 时有）。
+    RailTap {
+        key: String,
+        part: RailPart,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
     },
     /// iPhone Duo 的系统竖栏（iOS 27.1+，`RailProbe`）：`side` / `frame` 是 Oryn 自绘竖栏的物理边与矩形（UIKit 的 bar 布局指引，
     /// 顶端让开状态栏与相机；WebView 坐标，pt = CSS px），当前不竖排时两者都缺省；`safe_area` 是竖栏之外内容区的安全区。
@@ -616,6 +690,8 @@ mod tests {
     const HEADER_SHOW: &str = include_str!("../fixtures/header-show.json");
     const HEADER_MENU: &str = include_str!("../fixtures/header-menu.json");
     const HEADER_LEAD: &str = include_str!("../fixtures/header-lead.json");
+    const RAIL_SET: &str = include_str!("../fixtures/rail-set.json");
+    const RAIL_TAP: &str = include_str!("../fixtures/rail-tap.json");
 
     /// JSON 里整数与浮点不相等（`12` ≠ `12.0`），比较前统一成浮点。
     fn norm(v: Value) -> Value {
@@ -809,6 +885,62 @@ mod tests {
                 trail: false
             }
         );
+    }
+
+    #[test]
+    fn rail_set_fixture_round_trips() {
+        let raw: Value = serde_json::from_str(RAIL_SET).unwrap();
+        let args: RailSetArgs = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&args).unwrap(), raw);
+        let spec = args.spec.as_ref().unwrap();
+        assert_eq!(spec.actions.len(), 2);
+        let tree = &spec.actions[0];
+        assert_eq!(
+            (tree.active, tree.dot, tree.menu.is_none()),
+            (Some(true), Some(HeaderDot::Accent), true)
+        );
+        let more = &spec.actions[1];
+        assert_eq!(more.active, None);
+        assert_eq!(more.menu.as_ref().unwrap().groups[0].len(), 2);
+        assert_eq!(spec.tabs.items.len(), 4);
+        assert_eq!(spec.tabs.items[1].icon, TabBarIcon::Glyph("🦊".into()));
+        assert_eq!(spec.tabs.selected, "threads");
+        // 撤掉：`{"spec": null}`（不省略）
+        assert_eq!(
+            serde_json::to_value(RailSetArgs { spec: None }).unwrap(),
+            json!({ "spec": null })
+        );
+    }
+
+    #[test]
+    fn rail_tap_events_round_trip() {
+        let raw: Vec<Value> = serde_json::from_str(RAIL_TAP).unwrap();
+        let events: Vec<Event> = raw
+            .iter()
+            .map(|v| serde_json::from_value(v.clone()).unwrap())
+            .collect();
+        let tap = |part, id: Option<&str>, item: Option<&str>| Event::RailTap {
+            key: "t/T-1".into(),
+            part,
+            id: id.map(Into::into),
+            item: item.map(Into::into),
+        };
+        assert_eq!(
+            events,
+            [
+                tap(RailPart::Lead, None, None),
+                tap(RailPart::Action, Some("tree"), None),
+                tap(RailPart::Item, Some("more"), Some("archive")),
+                tap(RailPart::Tab, Some("projects"), None),
+            ]
+        );
+        // 缺省的 id / item 不输出
+        for (event, raw) in events.iter().zip(&raw) {
+            assert_eq!(&serde_json::to_value(event).unwrap(), raw);
+        }
+        // 与竖栏几何事件并存
+        let rail: Event = serde_json::from_value(json!({"type": "rail"})).unwrap();
+        assert!(matches!(rail, Event::Rail { side: None, .. }));
     }
 
     #[test]

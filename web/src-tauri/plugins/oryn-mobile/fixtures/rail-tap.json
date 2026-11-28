@@ -1,0 +1,6 @@
+[
+	{ "type": "railtap", "key": "t/T-1", "part": "lead" },
+	{ "type": "railtap", "key": "t/T-1", "part": "action", "id": "tree" },
+	{ "type": "railtap", "key": "t/T-1", "part": "item", "id": "more", "item": "archive" },
+	{ "type": "railtap", "key": "t/T-1", "part": "tab", "id": "projects" }
+]

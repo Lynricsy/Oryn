@@ -42,9 +42,11 @@ export interface TabBarSpecInput {
 	conn: "warn" | "err" | null;
 }
 
-/** 按 SECTION_ORDER 四项生成 spec；没有角标的项不带 `badge` 键。 */
-export function buildTabBarSpec(i: TabBarSpecInput): NativeTabBarSpec {
-	const items = SECTION_ORDER.map((id): NativeTabBarSpec["items"][number] => {
+/** 按 SECTION_ORDER 生成四项（原生底栏与原生竖栏共用）；没有角标的项不带 `badge` 键。 */
+export function buildTabItems(
+	i: Pick<TabBarSpecInput, "labels" | "assistant" | "conn">,
+): NativeTabBarSpec["items"] {
+	return SECTION_ORDER.map((id): NativeTabBarSpec["items"][number] => {
 		let icon: NativeTabBarSpec["items"][number]["icon"] = {
 			symbol: SF_SYMBOLS[id],
 		};
@@ -57,8 +59,12 @@ export function buildTabBarSpec(i: TabBarSpecInput): NativeTabBarSpec {
 		const item = { id, label: i.labels[id], icon };
 		return badge ? { ...item, badge } : item;
 	});
+}
+
+/** 原生底栏的整份 spec：四项见 `buildTabItems`。 */
+export function buildTabBarSpec(i: TabBarSpecInput): NativeTabBarSpec {
 	return {
-		items,
+		items: buildTabItems(i),
 		selected: i.selected,
 		frame: { ...i.frame },
 		dark: i.dark,

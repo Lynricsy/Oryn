@@ -556,6 +556,7 @@ describe("NotificationsSettings 此设备（移动壳，M7）", () => {
 			sink: null,
 			tabBar: null,
 			header: null,
+			rail: null,
 			appIcon: null,
 		};
 		mount();

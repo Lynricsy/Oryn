@@ -1,0 +1,69 @@
+{
+	"spec": {
+		"key": "t/T-1",
+		"dark": false,
+		"palette": {
+			"accent": "#2f6fed",
+			"brand": "#3b82f6",
+			"err": "#c8372d",
+			"warn": "#b7791f",
+			"good": "#2f9e5b",
+			"frost": "#5b93c9"
+		},
+		"covered": false,
+		"lead": { "label": "侧栏", "active": false },
+		"actions": [
+			{
+				"id": "tree",
+				"symbol": "point.3.connected.trianglepath.dotted",
+				"label": "树",
+				"active": true,
+				"dot": "accent"
+			},
+			{
+				"id": "more",
+				"symbol": "ellipsis.circle",
+				"label": "更多",
+				"menu": {
+					"label": "更多",
+					"dim": false,
+					"quick": [],
+					"status": [],
+					"groups": [
+						[
+							{
+								"id": "archive",
+								"label": "归档",
+								"icon": { "symbol": "archivebox" }
+							},
+							{
+								"id": "rename",
+								"label": "重命名",
+								"icon": { "symbol": "pencil" }
+							}
+						]
+					]
+				}
+			}
+		],
+		"tabs": {
+			"label": "分区",
+			"items": [
+				{
+					"id": "threads",
+					"label": "线程",
+					"icon": { "symbol": "bubble.left.and.bubble.right" }
+				},
+				{
+					"id": "assistant",
+					"label": "小助手",
+					"icon": { "glyph": "🦊" },
+					"badge": "accent"
+				},
+				{ "id": "projects", "label": "项目", "icon": { "symbol": "folder" } },
+				{ "id": "more", "label": "更多", "icon": { "symbol": "ellipsis" } }
+			],
+			"selected": "threads"
+		}
+	}
+}

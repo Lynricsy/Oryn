@@ -1,5 +1,5 @@
 //! 移动端的纯逻辑：导航判定、推送状态归并与订阅同步（含官方推送网关的登记编排）、分享接收流程、`MobileInfo`、
-//! 原生底栏入参校验。
+//! 原生底栏 / 页头 / 竖栏入参校验。
 //!
 //! 不带平台 `cfg`、不依赖 Tauri：原生能力经 [`Native`]、网络经 [`Api`]，在主机上即可单测。
 //! 桌面不调用这里（只在单测里覆盖），故整体允许未使用。
@@ -15,8 +15,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri_plugin_oryn_mobile::{
     CornerRadii, HeaderIcon, HeaderItem, HeaderMenu, HeaderMenuCmd, HeaderMenuKind, HeaderOp,
-    HeaderSeg, HeaderShow, HeaderSpec, Insets, Permission, PushChannel, PushState, ShareIntake,
-    TabBarFrame, TabBarIcon, TabBarSpec,
+    HeaderPalette, HeaderSeg, HeaderShow, HeaderSpec, Insets, Permission, PushChannel, PushState,
+    RailPart, RailSpec, ShareIntake, TabBarFrame, TabBarIcon, TabBarItem, TabBarSpec,
 };
 
 pub use tauri_plugin_oryn_mobile::PushTransport as Transport;
@@ -521,18 +521,21 @@ fn valid_frame(f: &TabBarFrame) -> bool {
 /// selected ≤ 32 字节；frame 四项有限，x、y ∈ [-100, 5000]，width ∈ [1, 2000]，height ∈ [1, 400]；
 /// accent 为 None 或 `valid_color`。
 pub fn valid_tab_bar(spec: &TabBarSpec) -> bool {
-    let items = &spec.items;
-    let items_ok = (1..=6).contains(&items.len())
+    valid_tab_items(&spec.items)
+        && spec.selected.len() <= 32
+        && valid_frame(&spec.frame)
+        && spec.accent.as_deref().is_none_or(valid_color)
+}
+
+/// 底栏 / 竖栏分区的项：1..=6 项、id 互不相同且 `valid_tab_id`；label 1..=64 个字符；icon 见 `valid_tab_icon`。
+fn valid_tab_items(items: &[TabBarItem]) -> bool {
+    (1..=6).contains(&items.len())
         && items.iter().enumerate().all(|(i, item)| {
             valid_tab_id(&item.id)
                 && items[..i].iter().all(|prev| prev.id != item.id)
                 && (1..=64).contains(&item.label.chars().count())
                 && valid_tab_icon(&item.icon)
-        });
-    items_ok
-        && spec.selected.len() <= 32
-        && valid_frame(&spec.frame)
-        && spec.accent.as_deref().is_none_or(valid_color)
+        })
 }
 
 /// 原生底栏 / 页头的 set 是否放行（bridge 8）：撤掉（`!has_spec`）总是放行；非空 spec 要本页已 `host_sink_set(true)`。
@@ -679,11 +682,8 @@ fn valid_menu(m: &HeaderMenu) -> bool {
 /// 全菜单 ≤ 160 项且 id 互不相同；项：label 1..=200、hint 1..=32、说明行 1..=120 个字符、copy 1..=2048 字节；
 /// 图标五选一，`bg` / `fg` 只配 `glyph` 与 `mask`。
 pub fn valid_header(spec: &HeaderSpec) -> bool {
-    let p = &spec.palette;
     valid_header_key(&spec.key)
-        && [&p.accent, &p.brand, &p.err, &p.warn, &p.good, &p.frost]
-            .iter()
-            .all(|c| valid_color(c))
+        && valid_palette(&spec.palette)
         && within(spec.tune.scrim, 0.0, 1.0)
         && within(spec.tune.tint, 0.0, 1.0)
         && chars_in(&spec.text.back, 1, 32)
@@ -709,6 +709,13 @@ pub fn valid_header(spec: &HeaderSpec) -> bool {
                 && chars_in(&r.label, 1, 64)
                 && valid_menu(&r.menu)
         })
+}
+
+/// 六个调色板颜色都 `valid_color`。
+fn valid_palette(p: &HeaderPalette) -> bool {
+    [&p.accent, &p.brand, &p.err, &p.warn, &p.good, &p.frost]
+        .iter()
+        .all(|c| valid_color(c))
 }
 
 /// alpha ∈ [0, 1]；ms ≤ 2000。
@@ -771,6 +778,75 @@ pub fn demo_header(width: f64, safe_top: f64) -> HeaderSpec {
         trail.frame = round(width - 56.0);
     }
     spec
+}
+
+// ---------------------------------------------------------------- 原生竖栏（iPhone Duo）
+
+/// 竖栏的页面键：1..=200 个字符。
+fn valid_rail_key(key: &str) -> bool {
+    chars_in(key, 1, 200)
+}
+
+/// 竖栏操作钮 id：1..=64 个字符。
+fn valid_rail_action_id(id: &str) -> bool {
+    chars_in(id, 1, 64)
+}
+
+/// `host_rail_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
+/// key 1..=200 个字符；调色板同页头（`valid_palette`）；lead.label 1..=64 个字符；
+/// actions ≤ 4 个、id 1..=64 个字符且互不相同、symbol `valid_symbol`、label 1..=64 个字符、menu 同页头菜单（`valid_menu`）；
+/// tabs：label 1..=64 个字符，items 同底栏（`valid_tab_items`），selected 必须是某一项的 id。
+/// `dot` 只有 accent / warn 由类型保证。
+pub fn valid_rail(spec: &RailSpec) -> bool {
+    let actions = &spec.actions;
+    let tabs = &spec.tabs;
+    valid_rail_key(&spec.key)
+        && valid_palette(&spec.palette)
+        && chars_in(&spec.lead.label, 1, 64)
+        && actions.len() <= 4
+        && actions.iter().enumerate().all(|(i, a)| {
+            valid_rail_action_id(&a.id)
+                && actions[..i].iter().all(|prev| prev.id != a.id)
+                && valid_symbol(&a.symbol)
+                && chars_in(&a.label, 1, 64)
+                && a.menu.as_ref().is_none_or(valid_menu)
+        })
+        && chars_in(&tabs.label, 1, 64)
+        && valid_tab_items(&tabs.items)
+        && tabs.items.iter().any(|t| t.id == tabs.selected)
+}
+
+/// 插件事件 → 页面事件 `{type:"railtap", key, part, id?, item?}`（缺省的 id / item 不输出）；形状不对或越界的丢弃：
+/// `lead` 不带 id 与 item；`action` 只带操作钮 id；`item` 带操作钮 id 与菜单项路径 id（`valid_item_id`）；
+/// `tab` 只带分区 id（`valid_tab_id`）。
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub fn rail_tap_event(
+    key: &str,
+    part: RailPart,
+    id: Option<&str>,
+    item: Option<&str>,
+) -> Option<Value> {
+    let ok = valid_rail_key(key)
+        && match (part, id, item) {
+            (RailPart::Lead, None, None) => true,
+            (RailPart::Action, Some(id), None) => valid_rail_action_id(id),
+            (RailPart::Item, Some(id), Some(item)) => {
+                valid_rail_action_id(id) && valid_item_id(item)
+            }
+            (RailPart::Tab, Some(id), None) => valid_tab_id(id),
+            _ => false,
+        };
+    if !ok {
+        return None;
+    }
+    let mut detail = json!({"type": "railtap", "key": key, "part": part});
+    if let Some(id) = id {
+        detail["id"] = json!(id);
+    }
+    if let Some(item) = item {
+        detail["item"] = json!(item);
+    }
+    Some(detail)
 }
 
 // ---------------------------------------------------------------- 分享
@@ -2437,6 +2513,181 @@ mod tests {
         );
         assert_eq!(spec.lead.frame.y, 29.0);
         assert_eq!(spec.trail.unwrap().frame.x, 264.0);
+    }
+
+    const RAIL_SET: &str = include_str!("../plugins/oryn-mobile/fixtures/rail-set.json");
+    const RAIL_TAP: &str = include_str!("../plugins/oryn-mobile/fixtures/rail-tap.json");
+
+    fn fixture_rail() -> RailSpec {
+        serde_json::from_str::<tauri_plugin_oryn_mobile::RailSetArgs>(RAIL_SET)
+            .unwrap()
+            .spec
+            .unwrap()
+    }
+
+    fn rail_action(id: &str) -> tauri_plugin_oryn_mobile::RailAction {
+        serde_json::from_value(json!({"id": id, "symbol": "star", "label": id})).unwrap()
+    }
+
+    /// 竖栏的两个夹具同样是 TS、Rust、Swift 三方的共同契约。
+    #[test]
+    fn rail_fixtures_round_trip() {
+        let raw: Value = serde_json::from_str(RAIL_SET).unwrap();
+        let back = tauri_plugin_oryn_mobile::RailSetArgs {
+            spec: Some(fixture_rail()),
+        };
+        assert_eq!(norm(serde_json::to_value(back).unwrap()), norm(raw));
+        assert!(valid_rail(&fixture_rail()));
+    }
+
+    /// 在夹具上改一处后应被 `valid_rail` 拒绝。
+    fn rejects_rail(name: &str, mutate: impl FnOnce(&mut RailSpec)) {
+        let mut s = fixture_rail();
+        mutate(&mut s);
+        assert!(!valid_rail(&s), "{name}");
+    }
+
+    #[test]
+    fn rail_limits() {
+        rejects_rail("key 为空", |s| s.key.clear());
+        rejects_rail("key 201 字符", |s| s.key = "字".repeat(201));
+        rejects_rail("palette.warn red", |s| s.palette.warn = "red".into());
+        rejects_rail("lead.label 为空", |s| s.lead.label.clear());
+        rejects_rail("lead.label 65 字符", |s| s.lead.label = "字".repeat(65));
+        rejects_rail("5 个 action", |s| {
+            s.actions = (0..5).map(|i| rail_action(&format!("a{i}"))).collect()
+        });
+        rejects_rail("action id 重复", |s| s.actions[1].id = "tree".into());
+        rejects_rail("action id 为空", |s| s.actions[0].id.clear());
+        rejects_rail("action id 65 字符", |s| s.actions[0].id = "a".repeat(65));
+        rejects_rail("action symbol 为空", |s| s.actions[0].symbol.clear());
+        rejects_rail("action symbol 含大写", |s| {
+            s.actions[0].symbol = "Star".into()
+        });
+        rejects_rail("action symbol 65 字节", |s| {
+            s.actions[0].symbol = "a".repeat(65)
+        });
+        rejects_rail("action label 为空", |s| s.actions[0].label.clear());
+        rejects_rail("action label 65 字符", |s| {
+            s.actions[0].label = "字".repeat(65)
+        });
+        rejects_rail("menu label 为空", |s| {
+            s.actions[1].menu.as_mut().unwrap().label.clear()
+        });
+        rejects_rail("menu 空组", |s| {
+            s.actions[1].menu.as_mut().unwrap().groups.push(vec![])
+        });
+        rejects_rail("menu 项 id 重复", |s| {
+            let g = &mut s.actions[1].menu.as_mut().unwrap().groups[0];
+            g[1].id = g[0].id.clone();
+        });
+        rejects_rail("menu 项 id 含空格", |s| {
+            s.actions[1].menu.as_mut().unwrap().groups[0][0].id = "a b".into()
+        });
+        rejects_rail("tabs.label 为空", |s| s.tabs.label.clear());
+        rejects_rail("tabs.label 65 字符", |s| s.tabs.label = "字".repeat(65));
+        rejects_rail("tabs 没有项", |s| s.tabs.items.clear());
+        rejects_rail("tabs 7 项", |s| {
+            s.tabs.items = (0..7).map(|i| tab_item(&format!("t{i}"))).collect()
+        });
+        rejects_rail("tabs id 重复", |s| s.tabs.items[1].id = "threads".into());
+        rejects_rail("tabs id 含大写", |s| {
+            s.tabs.items[0].id = "Threads".into()
+        });
+        rejects_rail("tabs glyph 33 字节", |s| {
+            s.tabs.items[0].icon = TabBarIcon::Glyph("a".repeat(33))
+        });
+        rejects_rail("selected 不是任何一项", |s| {
+            s.tabs.selected = "inbox".into()
+        });
+        rejects_rail("selected 为空", |s| s.tabs.selected.clear());
+        // dot 只有 accent / warn
+        assert!(
+            serde_json::from_value::<tauri_plugin_oryn_mobile::RailAction>(
+                json!({"id": "a", "symbol": "star", "label": "a", "dot": "err"})
+            )
+            .is_err()
+        );
+        // 边界上的合法值
+        let mut s = fixture_rail();
+        s.key = "字".repeat(200);
+        s.lead.label = "字".repeat(64);
+        s.actions = (0..4).map(|i| rail_action(&format!("a{i}"))).collect();
+        s.actions[0].id = "字".repeat(64);
+        s.actions[1].label = "字".repeat(64);
+        s.actions[2].symbol = "a".repeat(64);
+        s.tabs.label = "字".repeat(64);
+        s.tabs.items = (0..6).map(|i| tab_item(&format!("t{i}"))).collect();
+        s.tabs.selected = "t5".into();
+        assert!(valid_rail(&s));
+        s.actions.clear();
+        assert!(valid_rail(&s), "没有 action");
+    }
+
+    #[test]
+    fn rail_tap() {
+        use tauri_plugin_oryn_mobile::Event;
+        // 夹具里的四种 part：解析进 Event::RailTap 后原样发给网页（缺省的 id / item 不输出）
+        let raw: Vec<Value> = serde_json::from_str(RAIL_TAP).unwrap();
+        for v in raw {
+            let Ok(Event::RailTap {
+                key,
+                part,
+                id,
+                item,
+            }) = serde_json::from_value(v.clone())
+            else {
+                panic!("{v}");
+            };
+            assert_eq!(
+                rail_tap_event(&key, part, id.as_deref(), item.as_deref()),
+                Some(v)
+            );
+        }
+        use RailPart::{Action, Item, Lead, Tab};
+        for (name, e) in [
+            ("lead 带 id", rail_tap_event("k", Lead, Some("x"), None)),
+            ("action 没有 id", rail_tap_event("k", Action, None, None)),
+            (
+                "action 带 item",
+                rail_tap_event("k", Action, Some("tree"), Some("x")),
+            ),
+            (
+                "action id 65 字符",
+                rail_tap_event("k", Action, Some(&"a".repeat(65)), None),
+            ),
+            (
+                "item 没有 item",
+                rail_tap_event("k", Item, Some("more"), None),
+            ),
+            (
+                "item 没有 id",
+                rail_tap_event("k", Item, None, Some("archive")),
+            ),
+            (
+                "item 的菜单项 id 含空格",
+                rail_tap_event("k", Item, Some("more"), Some("a b")),
+            ),
+            ("tab 没有 id", rail_tap_event("k", Tab, None, None)),
+            (
+                "tab id 含大写",
+                rail_tap_event("k", Tab, Some("Projects"), None),
+            ),
+            ("key 为空", rail_tap_event("", Lead, None, None)),
+            (
+                "key 201 字符",
+                rail_tap_event(&"字".repeat(201), Lead, None, None),
+            ),
+        ] {
+            assert_eq!(e, None, "{name}");
+        }
+        // 菜单项路径可含 `/`
+        assert_eq!(
+            rail_tap_event("k", Item, Some("more"), Some("move/p-1")),
+            Some(
+                json!({"type": "railtap", "key": "k", "part": "item", "id": "more", "item": "move/p-1"})
+            )
+        );
     }
 
     const GW: &str = "https://push.oryn.best";

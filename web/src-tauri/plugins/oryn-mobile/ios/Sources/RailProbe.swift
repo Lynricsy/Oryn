@@ -2,8 +2,9 @@
 // （HIG「Designing for iPhone Duo → Vertical controls」）。Oryn 的页头与底栏是自己画的，系统不会替它们竖排，只把那一条当安全区
 // 空着；内屏横放时还把竖排的状态栏算成整条顶边的安全区，内容顶上空出一大条、右上角又被状态栏压住。
 // 这里读系统给的竖栏一侧（traitCollection.verticalBarEdge）与该侧的 bar 布局指引（layoutGuide(for: .bar(onEdge:extent:))），
-// 算出 Oryn 竖栏的矩形（顶端让开状态栏与相机）与竖栏之外内容区的安全区（横向收角：状态栏那一角从侧面让开，不再占整条顶边），
-// 经 trigger("event", {type: "rail", side?, frame?, safeArea, probe}) 交给 Rust → 网页（lib/rail.ts：页头按钮与底栏放进竖栏）。
+// 算出 Oryn 竖栏的矩形（以相机为中线、顶端让开状态栏与相机）与竖栏之外内容区的安全区（横向收角：状态栏那一角从侧面让开，
+// 不再占整条顶边）。矩形直接交给原生竖栏（onFrame → RailOverlay）；矩形与安全区另经
+// trigger("event", {type: "rail", side?, frame?, safeArea, probe}) 交给 Rust → 网页（lib/rail.ts：内容让出竖栏那一列）。
 // 装在 WebView 的父视图上、与之同大、透明且不接触摸：折叠 / 展开 / 转屏会改它的边界、安全区或 trait，任一变化重算，结果变了才上报。
 // 重算只在几何真的变了时排（边界尺寸、安全区、竖栏一侧、是否在窗口里，见 Key），而且不在布局回调里同步做：读 bar 指引、
 // reservedRegions 可能让 UIKit 再排布局，在 layoutSubviews 里每次都重算（同步，或每次排一个主队列任务）就可能自己喂自己；
@@ -28,6 +29,8 @@ final class RailProbe: UIView {
 
   private weak var webview: WKWebView?
   private let onChange: (JSObject) -> Void
+  /// 竖栏矩形（WebView 坐标，不竖排时为 nil）直接交给原生竖栏（RailOverlay），不绕网页。
+  private let onFrame: (CGRect?) -> Void
   private lazy var leadingBar = layoutGuide(for: .bar(onEdge: .leading, extent: Self.extent))
   private lazy var trailingBar = layoutGuide(for: .bar(onEdge: .trailing, extent: Self.extent))
   private lazy var cornerSafe = layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))
@@ -41,9 +44,13 @@ final class RailProbe: UIView {
   }
   private var lastKey: Key?
 
-  init(webview: WKWebView, onChange: @escaping (JSObject) -> Void) {
+  init(
+    webview: WKWebView, onChange: @escaping (JSObject) -> Void,
+    onFrame: @escaping (CGRect?) -> Void
+  ) {
     self.webview = webview
     self.onChange = onChange
+    self.onFrame = onFrame
     super.init(frame: .zero)
     isUserInteractionEnabled = false
     backgroundColor = .clear
@@ -117,17 +124,22 @@ final class RailProbe: UIView {
     var side: String?
     var rail: CGRect?
     if let bar, bar.width > 0, bar.height > 0 {
-      // 竖栏顶端让开同一列里的状态栏与遮挡区（相机、灵动岛）
+      // 竖栏以相机为中线（系统竖排的状态栏也以它为轴；bar 指引的中线与相机差几 pt），没有相机时取指引的中线；
+      // 顶端让开同一列里的状态栏与遮挡区（相机、灵动岛）
       let column = CGRect(x: bar.minX, y: web.minY, width: bar.width, height: web.height)
-      let blockers = occlusions + [statusBar].compactMap { $0 }
-      let top = blockers.filter { $0.intersects(column) }.map(\.maxY).reduce(bar.minY) { max($0, $1) }
-      rail = CGRect(x: bar.minX, y: top, width: bar.width, height: max(0, bar.maxY - top))
+      let camera = occlusions.filter { $0.intersects(column) }
+      let mid = camera.first?.midX ?? bar.midX
+      let x = min(max(mid - bar.width / 2, web.minX), web.maxX - bar.width)
+      let blockers = camera + [statusBar].compactMap { $0 }.filter { $0.intersects(column) }
+      let top = blockers.map(\.maxY).reduce(bar.minY) { max($0, $1) }
+      rail = CGRect(x: x, y: top, width: bar.width, height: max(0, bar.maxY - top))
+      // 内容区让到竖栏与指引两者靠里的那条边
       if bar.midX > web.midX {
         side = "right"
-        safe.right = max(safe.right, web.maxX - bar.minX)
+        safe.right = max(safe.right, web.maxX - min(bar.minX, x))
       } else {
         side = "left"
-        safe.left = max(safe.left, bar.maxX - web.minX)
+        safe.left = max(safe.left, max(bar.maxX, x + bar.width) - web.minX)
       }
     }
     safe = UIEdgeInsets(
@@ -136,6 +148,7 @@ final class RailProbe: UIView {
 
     let state = State(bounds: web, side: side, rail: rail, safe: safe)
     guard state != last else { return }
+    if state.rail != last?.rail { onFrame(rail) }
     last = state
 
     var probe: JSObject = [

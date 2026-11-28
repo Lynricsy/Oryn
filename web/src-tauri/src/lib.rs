@@ -225,6 +225,8 @@ pub fn run() {
             #[cfg(mobile)]
             mobile::host_header_menu,
             #[cfg(mobile)]
+            mobile::host_rail_set,
+            #[cfg(mobile)]
             mobile::host_app_icon_get,
             #[cfg(mobile)]
             mobile::host_app_icon_set,

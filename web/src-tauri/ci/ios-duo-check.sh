@@ -14,9 +14,11 @@
 #   refolded  合上：layout 回到 sink = true，最后一条 sink.set 是 on
 #   全程      main.mount 只有一条：应用壳的 <main> 只挂载过一次（没重挂载，也没整页重新加载）
 #   竖栏      外屏（folded / refolded）壳的最后一条 rail 带 side 与竖栏矩形（RailProbe：系统把工具栏竖排在一侧）；
-#             网页探针的最后一条 rail：有竖栏一侧、竖栏里有侧栏开关与竖排底栏、页头里看得见的侧栏开关为 0；
-#             folded 时 duoctl 点竖栏的侧栏开关：下沉卡片打开（data-open），再点一次关上。
-#             各姿态的 rail 原文（含 probe 原始量测与网页探针）写进 Step Summary
+#             竖栏由原生画（RailOverlay，bridge 13）：网页探针的最后一条 rail 竖排着、网页只留占位（native）、页头里看得见的
+#             侧栏开关为 0，壳的最后一条 rail.set 没被遮挡、带着页头操作；
+#             folded 时 duoctl 点原生竖栏的侧栏开关（按 RailOverlay 的版式从竖栏矩形算中心）：壳记下 rail.tap lead，
+#             下沉卡片打开（data-open），再点一次关上；内屏横放时点信息面板开关，rail.set 里它的开合翻转两次。
+#             各姿态的 rail / rail.set 原文（含 probe 原始量测与网页探针）写进 Step Summary
 # 三个姿态各截一张，duoctl state（铰链角度、当前屏、尺寸）写进 Step Summary；全部断言通过才写 <输出目录>/.complete。
 # 用法：ios-duo-check.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
 set -euo pipefail
@@ -131,56 +133,56 @@ rail_side() { ev rail | tail -1 | jq -e '(.side == "left" or .side == "right") a
 # rail_note <姿态>：最后一条 rail 原文进 Step Summary
 rail_note() {
   echo "- ${1} rail：\`$(ev rail | tail -1 | jq -c '{side, frame, safeArea, probe}')\`" | tee -a "$summary"
-  echo "- ${1} 网页竖栏：\`$(probe rail | jq -c 'last | .info')\`" | tee -a "$summary"
+  echo "- ${1} 原生竖栏：\`$(ev rail.set | tail -1 | jq -c 'del(.ts)')\`" | tee -a "$summary"
+  echo "- ${1} 网页探针：\`$(probe rail | jq -c 'last | .info')\`" | tee -a "$summary"
 }
-# web_rail <最少操作数>：网页探针的最后一条 rail 竖排着、开关与底栏都在竖栏里、页头里的侧栏开关全藏了，
-# 操作槽里至少有这么多个页头操作（外屏线程页：视图钮 1 个；内屏横放：会话树与更多，非双段时还有信息面板）
-web_rail() {
-  probe rail | jq -e --argjson n "$1" \
-    'last | .info | .side != null and .tap != null and .tabs and .headerToggles == 0 and .actions >= $n'
+# native_rail <最少操作数>：原生接管了竖栏——网页探针最后一条 rail 竖排着、网页只留占位、页头里的侧栏开关全藏了；
+# 壳最后一条 rail.set 带 key、没被遮挡、页头操作至少这么多个（外屏线程页：视图钮 1 个；内屏横放：会话树与更多，非双段时还有信息面板）
+native_rail() {
+  probe rail | jq -e 'last | .info | .side != null and .native and .headerToggles == 0' >/dev/null &&
+    ev rail.set | tail -1 | jq -e --argjson n "$1" '.key != null and .covered == false and (.actions | length) >= $n'
 }
 # card_open <true|false>：网页探针最后一条 data-open 的卡片开合
 card_open() { probe data-open | jq -e --argjson o "$1" 'last | (.open // false) == $o'; }
-# act_pressed <true|false>：操作槽里有开合状态的按钮（信息面板的 aria-pressed，或「更多」的 aria-expanded）
-act_pressed() { probe rail | jq -e --argjson p "$1" 'last | .info.pressed == $p'; }
-# rail_settled <jq 路径>：网页探针最后一条 rail 里的这个中心点稳定了（最后一条已过 1 秒没再变），
-# 并且落在壳最后一条 rail 的竖栏矩形里（两边都是 WebView 坐标，CSS px = pt）。不拿原生矩形顶替探针的值：
-# 网页竖栏真画错了位置时，这一步就一直不成立、红在这里
-rail_settled() {
-  local frame
-  frame=$(ev rail | tail -1 | jq -c '.frame')
-  probe rail | jq -e --arg p "$1" --argjson f "$frame" --argjson now "$(($(date +%s) * 1000))" '
-    last | .info[$p] as $c
-    | $c != null and $f != null and ($now - .ts) >= 1000
-      and $c.x >= $f.x and $c.x <= $f.x + $f.width and $c.y >= $f.y and $c.y <= $f.y + $f.height'
+# rail_point <i>：原生竖栏上面那根胶囊里第 i 个钮（0 = 侧栏开关，之后按 rail.set 的 actions 顺序）的中心：
+# RailOverlay 的胶囊贴竖栏矩形顶边、内边距 4、钮 48pt，水平居中（WebView 坐标 = 屏幕 pt）
+rail_point() {
+  ev rail | tail -1 | jq -r --argjson i "$1" \
+    '.frame | "\(.x + .width / 2 | round) \(.y + 4 + 48 * $i + 24 | round)"'
 }
-# tap_at <步骤> <jq 路径>：等探针记下的中心点稳定且落在原生竖栏里，再点它
-tap_at() {
-  local xy
-  until_ok "$1" 15 "网页竖栏的 ${2} 中心点稳定且在原生竖栏矩形里" rail_settled "$2"
-  xy=$(probe rail | jq -r "last | .info.$2 | \"\\(.x) \\(.y)\"")
+# tapped <part> <行数>：事件日志里第 <行数> 条 rail.tap 之后有这一类点按
+tapped() { ev rail.tap | tail -n +"$(($2 + 1))" | jq -se --arg p "$1" 'any(.part == $p)'; }
+# tap_rail <步骤> <i> <part>：点原生竖栏上第 i 个钮，等壳记下这一类 rail.tap
+tap_rail() {
+  local xy n
+  xy=$(rail_point "$2")
+  n=$(ev rail.tap | wc -l)
   # shellcheck disable=SC2086 # xy 是两个数
   duo tap $xy || fail "$1" "duoctl tap ${xy} 失败"
+  until_ok "$1" 15 "原生竖栏在 (${xy}) 收到点按：rail.tap ${3}" tapped "$3" "$n"
 }
-# rail_tap <姿态> <true|false>：点竖栏的侧栏开关，等卡片开合到位
+# rail_tap <姿态> <true|false>：点原生竖栏的侧栏开关，等卡片开合到位
 rail_tap() {
-  tap_at "$1" tap
+  tap_rail "$1" 0 lead
   until_ok "$1" 30 "点竖栏的侧栏开关后卡片 data-open = $2" card_open "$2"
 }
-# act_tap <姿态>：点竖栏操作槽里有开合状态的那个页头操作，等状态翻转
+# panel_active <true|false>：壳最后一条 rail.set 里信息面板开关的开合
+panel_active() { ev rail.set | tail -1 | jq -e --argjson a "$1" '(.active | index("panel") != null) == $a'; }
+# act_tap <姿态>：点原生竖栏里的信息面板开关，等 rail.set 里它的开合翻转
 act_tap() {
-  local was
-  was=$(probe rail | jq -c 'last | .info.pressed')
-  [[ $was == true || $was == false ]] || fail "$1" "竖栏操作槽里没有带开合状态的页头操作：${was}"
-  tap_at "$1" act
-  until_ok "$1" 30 "点竖栏里的页头操作后开合状态从 ${was} 翻转" act_pressed "$([[ $was == true ]] && echo false || echo true)"
+  local i was
+  i=$(ev rail.set | tail -1 | jq '.actions | index("panel") // empty')
+  [[ -n $i ]] || fail "$1" "原生竖栏里没有信息面板开关：$(ev rail.set | tail -1 | jq -c .actions)"
+  was=$(ev rail.set | tail -1 | jq '.active | index("panel") != null')
+  tap_rail "$1" $((i + 1)) action
+  until_ok "$1" 30 "点竖栏里的信息面板开关后开合从 ${was} 翻转" panel_active "$([[ $was == true ]] && echo false || echo true)"
 }
 
 until_ok folded 90 "web.ready（bridge ≥ 8）" web_ready
 until_ok folded 60 "外屏 compact：探针 layout sink = true、宽 < 600" last_layout true
 until_ok folded 30 "原生跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok folded 30 "外屏竖栏：最后一条 rail 带 side 与矩形" rail_side
-until_ok folded 30 "网页竖栏：开关、底栏与视图钮在竖栏里、页头侧栏开关已隐藏" web_rail 1
+until_ok folded 30 "原生竖栏：视图钮在竖栏里、网页只留占位、页头侧栏开关已隐藏" native_rail 1
 rail_note folded
 rail_tap folded true
 rail_tap folded false
@@ -196,7 +198,7 @@ shot open
 duo rotate landscape || fail landscape "duoctl rotate landscape 失败"
 echo "- landscape：\`$(duo state | jq -c '{hingeAngle, activeScreen, orientation, sizePoints}')\`" | tee -a "$summary"
 until_ok landscape 30 "内屏横放竖栏：最后一条 rail 带 side 与矩形" rail_side
-until_ok landscape 30 "内屏横放网页竖栏：页头操作 ≥ 2 个进了竖栏" web_rail 2
+until_ok landscape 30 "内屏横放原生竖栏：页头操作 ≥ 2 个进了竖栏" native_rail 2
 rail_note landscape
 act_tap landscape
 act_tap landscape
@@ -207,7 +209,7 @@ pose refolded close
 until_ok refolded 60 "合上后 layout 回到 sink = true" last_layout true
 until_ok refolded 30 "原生重新跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok refolded 30 "合上后竖栏回来：最后一条 rail 带 side 与矩形" rail_side
-until_ok refolded 30 "合上后网页竖栏回来（视图钮在竖栏里）" web_rail 1
+until_ok refolded 30 "合上后原生竖栏回来（视图钮在竖栏里）" native_rail 1
 rail_note refolded
 shot refolded
 

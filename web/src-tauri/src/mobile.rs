@@ -1,5 +1,5 @@
 //! 移动端的 Tauri 接线：原生插件事件、推送订阅同步（含官方推送网关的 challenge）、分享下发、导航处理、移动端宿主命令
-//! 与 iOS 原生底栏 / 页头。
+//! 与 iOS 原生底栏 / 页头 / 竖栏。
 //!
 //! 逻辑在 [`crate::mobile_logic`]（主机上单测）；这里只把它接到插件、会话状态机与页面事件上。
 
@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, TabBarSpec};
+use tauri_plugin_oryn_mobile::{HeaderMenuCmd, HeaderShow, HeaderSpec, RailSpec, TabBarSpec};
 
 use crate::api::HttpApi;
 use crate::eventlog;
@@ -418,6 +418,42 @@ pub async fn host_header_menu(app: AppHandle, menu: HeaderMenuCmd) -> Res<()> {
     }
 }
 
+/// 原生竖栏（iPhone Duo，iOS 27.1+）：整份内容；`null` 撤掉。几何由原生 `RailProbe` 自己算。
+/// 应答 = 原生已应用且宿主视图在窗口里。其它平台与更低系统版本返回 `unsupported`，页面继续用网页竖栏。
+#[tauri::command]
+pub async fn host_rail_set(app: AppHandle, spec: Option<RailSpec>) -> Res<()> {
+    if spec.as_ref().is_some_and(|s| !mobile_logic::valid_rail(s)) {
+        return Err("invalid_rail".into());
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let plugin = ios::plugin(&app).ok_or("unsupported")?;
+        let args = tauri_plugin_oryn_mobile::RailSetArgs { spec };
+        plugin.rail_set(&args).await.map_err(|e| e.to_string())?;
+        // CI 端到端检查据此确认原生接管了竖栏、点按后开合状态翻转
+        eventlog::log(
+            "rail.set",
+            match &args.spec {
+                Some(s) => json!({
+                    "key": s.key,
+                    "covered": s.covered,
+                    "lead": s.lead.active,
+                    "actions": s.actions.iter().map(|a| &a.id).collect::<Vec<_>>(),
+                    "active": s.actions.iter().filter(|a| a.active == Some(true)).map(|a| &a.id).collect::<Vec<_>>(),
+                    "selected": s.tabs.selected,
+                }),
+                None => json!({"on": false}),
+            },
+        );
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        Err("unsupported".into())
+    }
+}
+
 /// 可替换图标（只有 iOS）：`{supported, current, options}`，id 见 `mobile_logic::APP_ICONS`。其它平台返回 `unsupported`。
 #[tauri::command]
 pub async fn host_app_icon_get(app: AppHandle) -> Res<mobile_logic::AppIconInfo> {
@@ -524,7 +560,8 @@ mod ios {
             .map(|s| s.inner().clone())
     }
 
-    /// 插件事件：底栏点击转成页面事件 `{type:"tabbar", id}`，页头交互转成 `{type:"header", op, key, …}`；
+    /// 插件事件：底栏点击转成页面事件 `{type:"tabbar", id}`，页头交互转成 `{type:"header", op, key, …}`，
+    /// 竖栏点击转成 `{type:"railtap", key, part, …}`；
     /// 推送状态变化（APNs 令牌到了、权限变了）让页面重取并同步订阅，网关的 challenge 交给登记流程。
     pub fn listen(app: &AppHandle) {
         let Some(p) = plugin(app) else { return };
@@ -543,6 +580,24 @@ mod ios {
                         "header.event",
                         json!({"op": op, "key": key, "menu": menu, "id": id}),
                     );
+                    host::emit(&handle, detail);
+                }
+            }
+            Event::RailTap {
+                key,
+                part,
+                id,
+                item,
+            } => {
+                if let Some(detail) =
+                    mobile_logic::rail_tap_event(&key, part, id.as_deref(), item.as_deref())
+                {
+                    // 字段同页面事件（去掉 type）
+                    let mut fields = detail.clone();
+                    if let Some(o) = fields.as_object_mut() {
+                        o.remove("type");
+                    }
+                    eventlog::log("rail.tap", fields);
                     host::emit(&handle, detail);
                 }
             }
@@ -622,6 +677,17 @@ mod ios {
         let Some(p) = plugin(app) else { return };
         tauri::async_runtime::spawn(async move {
             let _ = p.header_set(None).await;
+        });
+    }
+
+    /// 主框架开始加载新文档：旧页面的原生竖栏撤掉。回调在主线程上，插件调用放进异步任务
+    /// （`rail_set` 要等 Swift 在主线程应用完才应答，绝不能在主线程上等）。
+    pub fn rail_reset(app: &AppHandle) {
+        let Some(p) = plugin(app) else { return };
+        tauri::async_runtime::spawn(async move {
+            let _ = p
+                .rail_set(&tauri_plugin_oryn_mobile::RailSetArgs { spec: None })
+                .await;
         });
     }
 
@@ -720,7 +786,7 @@ mod ios {
 #[cfg(all(debug_assertions, target_os = "ios"))]
 pub use ios::{e2e_open, header_demo};
 #[cfg(target_os = "ios")]
-pub use ios::{header_reset, listen as listen_ios, sink_reset, tab_bar_reset};
+pub use ios::{header_reset, listen as listen_ios, rail_reset, sink_reset, tab_bar_reset};
 
 // ---------------------------------------------------------------- Android 原生插件
 
@@ -909,7 +975,8 @@ mod android {
             | Event::HeaderHit { .. }
             | Event::Sink { .. }
             | Event::NotificationTap { .. }
-            | Event::Rail { .. } => {}
+            | Event::Rail { .. }
+            | Event::RailTap { .. } => {}
         }
     }
 

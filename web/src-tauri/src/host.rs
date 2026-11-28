@@ -32,8 +32,9 @@ pub const MAIN: &str = "main";
 /// `transport: "default" | "unifiedpush"`，`MobileInfo.push` 增加 `alt`、`channel` 可为 `apns`、不再出现 `unsupported`，
 /// 错误码增加 `gateway_*`，10 = 移动端全局助手头像原生共享缓存同步（`host_sync_assistant_avatar`），
 /// 11 = 桌面端开放 `host_open_external`，全平台统一外链打开，
-/// 12 = 桌面端开机自启与启动时隐藏：settings 带 autostart / startHidden，host_info 带 autostartError）。
-pub const BRIDGE: u32 = 12;
+/// 12 = 桌面端开机自启与启动时隐藏：settings 带 autostart / startHidden，host_info 带 autostartError，
+/// 13 = iPhone Duo 原生竖栏 `host_rail_set` 与 `railtap` 事件（iOS 27.1+））。
+pub const BRIDGE: u32 = 13;
 
 /// `host_open_external` 的令牌桶：突发 3，每 2 秒补 1。
 const OPEN_BURST: f64 = 3.0;

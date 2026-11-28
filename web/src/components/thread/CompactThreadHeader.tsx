@@ -48,7 +48,6 @@ import { uiStore, useUi } from "../../state/ui";
 import { boxThreadLabel } from "../boxes/box-model";
 import { useSessionCost } from "../composer/ComposerMeta";
 import { openPull, prIcon, prStatusText } from "../github/PrChip";
-import { InRail } from "../layout/Rail";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { firstGrapheme, nameHue, ProjectBadge, StatusDot } from "../ui/data";
 import { Icon } from "../ui/icons";
@@ -579,8 +578,8 @@ export function CompactThreadHeader({
 					/>
 				)}
 			</div>
-			{/* iPhone Duo 竖栏在时视图钮进竖栏（Rail.tsx），侧栏钮由竖栏顶上的开关取代 */}
-			<InRail>{viewMenu}</InRail>
+			{/* iPhone Duo 竖栏在时视图菜单登记进竖栏、这里不画（ThreadViewMenu），侧栏钮由竖栏顶上的开关取代 */}
+			{viewMenu}
 			{chromeRight && <WindowControls side="right" className="ml-1" />}
 			{dialogs}
 		</header>

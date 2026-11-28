@@ -1,5 +1,5 @@
 /** 宿主适配：web / tauri 判定、前台判定、壳事件、invoke 的参数与容错（假 window）。 */
-import { describe, expect, it, type Mock, vi } from "vitest";
+import { beforeAll, describe, expect, it, type Mock, vi } from "vitest";
 import {
 	BRIDGE,
 	createHost,
@@ -8,9 +8,19 @@ import {
 	type NativeHeaderMenu,
 	type NativeHeaderShow,
 	type NativeHeaderSpec,
+	type NativeRailSpec,
 	type NativeTabBarSpec,
 	parseHeaderEvent,
 } from "./host";
+
+// 前端 tsconfig 不带 Node 类型（静态导入 node:fs 过不了 tsc），只声明用到的函数（同 native-tab-bar.test）；工作目录是 web/
+let readFile: (path: string) => string;
+beforeAll(async () => {
+	const fs = (await import("node:fs" as string)) as {
+		readFileSync(path: string, encoding: "utf8"): string;
+	};
+	readFile = (path) => fs.readFileSync(path, "utf8");
+});
 
 interface FakeWin {
 	win: Window;
@@ -581,13 +591,71 @@ describe("移动壳（M7）", () => {
 		});
 	});
 
+	describe("原生竖栏（bridge 13）", () => {
+		const spec = { key: "t/T-1" } as NativeRailSpec;
+
+		it("只给 ios + bridge 13：set 的参数形状；拒绝原样交给调用方（退回网页竖栏）", async () => {
+			const f = mobileWindow({ platform: "ios", bridge: 13 });
+			const rail = createHost(f.win).mobile?.rail;
+			expect(rail).toBeTruthy();
+			await rail?.set(spec);
+			await rail?.set(null);
+			expect(f.invoke.mock.calls).toEqual([
+				["host_rail_set", { spec }],
+				["host_rail_set", { spec: null }],
+			]);
+			expect(
+				createHost(mobileWindow({ platform: "ios", bridge: 12 }).win).mobile
+					?.rail,
+			).toBeNull();
+			expect(
+				createHost(mobileWindow({ bridge: 13 }).win).mobile?.rail,
+			).toBeNull();
+			const bad = mobileWindow({
+				platform: "ios",
+				bridge: 13,
+				invoke: () => {
+					throw "unsupported";
+				},
+			});
+			await expect(createHost(bad.win).mobile?.rail?.set(spec)).rejects.toBe(
+				"unsupported",
+			);
+		});
+
+		it("railtap 事件（壳的夹具）到 onRailTap；缺字段的整条丢弃；桌面壳忽略", () => {
+			const taps = JSON.parse(
+				readFile("src-tauri/plugins/oryn-mobile/fixtures/rail-tap.json"),
+			) as Record<string, unknown>[];
+			const f = mobileWindow({ platform: "ios", bridge: 13 });
+			const cb = vi.fn();
+			createHost(f.win).onRailTap(cb);
+			for (const t of taps) f.emit(t);
+			f.emit({ type: "railtap", key: "t/T-1", part: "item", id: "more" });
+			f.emit({ type: "railtap", key: "t/T-1", part: "tab" });
+			f.emit({ type: "railtap", part: "lead" });
+			expect(cb.mock.calls).toEqual([
+				[{ part: "lead", key: "t/T-1" }],
+				[{ part: "action", key: "t/T-1", id: "tree" }],
+				[{ part: "item", key: "t/T-1", id: "more", item: "archive" }],
+				[{ part: "tab", key: "t/T-1", id: "projects" }],
+			]);
+
+			const d = fakeWindow({ tauri: true });
+			const c2 = vi.fn();
+			createHost(d.win).onRailTap(c2);
+			d.emit(taps[0] as Record<string, unknown>);
+			expect(c2).not.toHaveBeenCalled();
+		});
+	});
+
 	describe("原生页头（bridge 8）", () => {
 		const spec = { key: "T-1" } as NativeHeaderSpec;
 		const show: NativeHeaderShow = { alpha: 1, ms: 120 };
 		const menu: NativeHeaderMenu = { open: "title", page: "env" };
 
-		it("本页宿主协议版本为 12（桌面端开机自启与启动时隐藏）", () => {
-			expect(BRIDGE).toBe(12);
+		it("本页宿主协议版本为 13（iPhone Duo 原生竖栏）", () => {
+			expect(BRIDGE).toBe(13);
 		});
 
 		it("syncAssistantAvatar 在 bridge 9 旧壳上静默跳过，bridge 10 正常下发 host_sync_assistant_avatar", () => {

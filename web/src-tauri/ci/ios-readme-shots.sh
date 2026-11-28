@@ -91,15 +91,17 @@ ready_thread() { last_is header.set '.on and .key == $k' && last_is header.show 
 ready_sidebar() { last_is tabbar.set '.on' && last_is sink.show '.open == true'; }
 # 展开到内屏后换成列侧栏布局：SinkLayout 退成普通外框，壳撤掉根滚动跟随
 ready_inner() { last_is sink.set '.on == false'; }
-# web_rail <最少操作数>：网页探针最新一页的最后一条 rail：竖排着、底栏在竖栏里、页头里的侧栏开关全藏了、操作槽里至少这么多个页头操作
+# web_rail：网页探针最新一页的最后一条 rail：竖排着、竖栏由原生画（网页只留占位）、页头里的侧栏开关全藏了
 web_rail() {
-  jq -se --argjson n "$1" 'map(select(.event == "rail")) | sort_by(.nav, .seq) | last | .info
-    | .side != null and .tabs and .headerToggles == 0 and .actions >= $n' "$wlog" >/dev/null 2>&1
+  jq -se 'map(select(.event == "rail")) | sort_by(.nav, .seq) | last | .info
+    | .side != null and .native and .headerToggles == 0' "$wlog" >/dev/null 2>&1
 }
-# Duo 外屏：竖栏模式下原生页头不接管（侧栏开关挪进竖栏），等壳报告竖栏、网页竖栏与视图钮就位
-ready_duo_outer() { last_is rail '.side != null' && web_rail 1; }
+# native_rail <最少操作数>：壳最后一条 rail.set 是原生竖栏的内容，没被遮挡，页头操作至少这么多个
+native_rail() { last_is rail.set ".key != null and .covered == false and (.actions | length) >= $1"; }
+# Duo 外屏：竖栏模式下原生页头不接管（侧栏开关挪进竖栏），等壳报告竖栏、原生竖栏带着视图钮就位
+ready_duo_outer() { last_is rail '.side != null' && web_rail && native_rail 1; }
 # Duo 内屏横放：列侧栏布局，且竖栏带着页头操作（会话树、更多，非双段时还有信息面板）
-ready_duo_inner() { ready_inner && last_is rail '.side != null' && web_rail 2; }
+ready_duo_inner() { ready_inner && last_is rail '.side != null' && web_rail && native_rail 2; }
 
 # capture_when <文件名> <就绪谓词>：就绪后再等过渡走完，截到相邻两张一致为止
 capture_when() {

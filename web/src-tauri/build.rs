@@ -38,6 +38,8 @@ fn main() {
             "host_header_set",
             "host_header_show",
             "host_header_menu",
+            // 原生竖栏（iPhone Duo）：只有 iOS 27.1+ 真正实现
+            "host_rail_set",
             // 可替换图标：只有 iOS 真正实现
             "host_app_icon_get",
             "host_app_icon_set",

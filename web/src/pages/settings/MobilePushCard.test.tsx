@@ -37,13 +37,14 @@ let info: MobileInfo;
 let fake: {
 	[K in Exclude<
 		keyof MobileHost,
-		"sink" | "tabBar" | "header" | "appIcon" | "pushTransport"
+		"sink" | "tabBar" | "header" | "rail" | "appIcon" | "pushTransport"
 	>]: Mock<MobileHost[K]>;
 } & {
 	pushTransport: boolean;
 	sink: null;
 	tabBar: null;
 	header: null;
+	rail: null;
 	appIcon: null;
 };
 let mobileCb: (() => void) | undefined;
@@ -65,6 +66,7 @@ beforeEach(() => {
 		sink: null,
 		tabBar: null,
 		header: null,
+		rail: null,
 		appIcon: null,
 	};
 	h.mobile = fake;

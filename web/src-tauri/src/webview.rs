@@ -37,7 +37,7 @@ const DESKTOP_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-window",
 ];
 
-/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、下沉侧栏、原生底栏、原生页头、可替换图标等十六个。
+/// 移动端：没有托盘、快捷键与更新器的命令，另有推送、外链、分享确认、系统栏、下沉侧栏、原生底栏、原生页头、原生竖栏、可替换图标等十七个。
 #[cfg_attr(desktop, allow(dead_code))]
 const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-ready",
@@ -61,6 +61,7 @@ const MOBILE_HOST_PERMISSIONS: &[&str] = &[
     "allow-host-header-set",
     "allow-host-header-show",
     "allow-host-header-menu",
+    "allow-host-rail-set",
     "allow-host-app-icon-get",
     "allow-host-app-icon-set",
 ];
@@ -173,11 +174,13 @@ pub fn create_main(
                 // 其间的 open_path 存为待开路径，由新页面的 host_ready 取走，不会派发给正在卸载的页面
                 PageLoadEvent::Started => {
                     d.nav().web_ready = false;
-                    // 整页导航时旧页面来不及自己撤掉原生底栏与页头
+                    // 整页导航时旧页面来不及自己撤掉原生底栏、页头与竖栏
                     #[cfg(target_os = "ios")]
                     crate::mobile::tab_bar_reset(&loader);
                     #[cfg(target_os = "ios")]
                     crate::mobile::header_reset(&loader);
+                    #[cfg(target_os = "ios")]
+                    crate::mobile::rail_reset(&loader);
                     #[cfg(target_os = "ios")]
                     crate::mobile::sink_reset(&loader);
                     // 主框架逃逸兜底（on_page_load 在全平台均严格只针对主框架，不影响 portal / artifact iframe）：
@@ -495,7 +498,7 @@ mod tests {
         assert!(s.starts_with("window.__ORYN_HOST__ = Object.freeze({"));
         assert!(s.contains("\"version\":\"9.8.7-rc.1\""));
         assert!(s.contains("\"kind\":\"tauri\""));
-        assert!(s.contains("\"bridge\":12"));
+        assert!(s.contains("\"bridge\":13"));
         assert!(s.contains("host_open_external"));
         assert!(s.contains("window!==window.top"));
         assert!(!s.contains("chrome"));
@@ -527,7 +530,7 @@ mod tests {
         ));
         assert_eq!(DESKTOP_HOST_PERMISSIONS.len(), 12);
         assert!(DESKTOP_HOST_PERMISSIONS.contains(&"allow-host-open-external"));
-        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 23);
+        assert_eq!(MOBILE_HOST_PERMISSIONS.len(), 24);
     }
     /// 两个平台的远程权限都对应 `build.rs` 里声明的命令；移动端连接页能力只在移动平台生效、
     /// 除系统栏颜色外不含任何宿主命令。

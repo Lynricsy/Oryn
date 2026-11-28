@@ -17,6 +17,7 @@ import { useProjects } from "../../api/queries";
 import { useSpaces } from "../../api/space-queries";
 import { confirmAction } from "../../lib/confirm";
 import { isDark, markHex } from "../../lib/native-header";
+import { useRail, useRailActions } from "../../lib/rail";
 import { parseTitleCard, withTitleCard } from "../../lib/title";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { deleteThread, patchThread, renameThread } from "../../state/actions";
@@ -25,7 +26,6 @@ import { uiStore, useUi } from "../../state/ui";
 import { BrowserRelayChip } from "../BrowserRelayControl";
 import { boxThreadLabel } from "../boxes/box-model";
 import { PrChip } from "../github/PrChip";
-import { InRail } from "../layout/Rail";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { ScheduleChip, ScheduleRunChip } from "../schedule/ScheduleChip";
 import { ScheduleDialog } from "../schedule/ScheduleDialog";
@@ -563,6 +563,7 @@ export function ThreadHeader({
 	threadId,
 	sidebarToggle,
 	veil = HEADER_VEIL,
+	safeTop = 0,
 	chromeLeft = false,
 	chromeRight = false,
 	infoBeside = false,
@@ -572,6 +573,8 @@ export function ThreadHeader({
 	sidebarToggle: boolean;
 	/** 渐进模糊纱的高度（px）；页头下方还叠着一行（medium 的同级标签条）时加上那一行，纱一起盖住 */
 	veil?: number;
+	/** 页面铺到状态栏下面时的顶部安全区（px）：页头往下推这么多、纱从屏幕顶部盖起（轻模糊）；缺省 0 */
+	safeTop?: number;
 	/** 页头是窗口最左侧的标题行（侧栏没占着左上角）：左侧窗口控件放这里 */
 	chromeLeft?: boolean;
 	/** 页头是窗口最右侧的标题行（右面板没展开）：右侧自绘按钮放这里 */
@@ -596,13 +599,52 @@ export function ThreadHeader({
 	const { items, act, error, openSchedule, dialogs } =
 		useThreadActions(threadId);
 	const isRunner = orb?.kind === "runner";
+	// iPhone Duo 竖栏在时树、信息面板、更多这三个进竖栏（Rail.tsx），页头只留标题与状态
+	const rail = useRail() !== null;
+	useRailActions(
+		rail
+			? [
+					{
+						id: "tree",
+						icon: "tree",
+						label: t("thread.tree"),
+						onClick: () => uiStore.getState().open({ kind: "tree" }),
+					},
+					...(panelToggle
+						? [
+								{
+									id: "panel",
+									icon: "panel" as const,
+									label: t("nav.infoPanel"),
+									active: panelOpen,
+									onClick: () => uiStore.getState().setPanel(!panelOpen),
+								},
+							]
+						: []),
+					{
+						id: "more",
+						icon: "more",
+						label: t("thread.moreActions"),
+						menu: items,
+					},
+				]
+			: null,
+	);
 
 	return (
 		<header
 			data-window-drag=""
 			className="veil-host relative isolate @container/header flex h-12 shrink-0 items-center gap-1.5 px-2 sm:px-3"
+			style={
+				safeTop > 0 ? { height: 48 + safeTop, paddingTop: safeTop } : undefined
+			}
 		>
-			<div aria-hidden className="veil" style={{ height: veil }}>
+			<div
+				aria-hidden
+				className="veil"
+				data-band={safeTop > 0 ? "" : undefined}
+				style={{ height: veil + safeTop }}
+			>
 				<i />
 				<i />
 				<i />
@@ -791,35 +833,36 @@ export function ThreadHeader({
 					{error}
 				</span>
 			)}
-			{/* iPhone Duo 竖栏在时这三个进竖栏（Rail.tsx），页头只留标题与状态 */}
-			<InRail>
-				<IconButton
-					icon="tree"
-					label={t("thread.tree")}
-					onClick={() => uiStore.getState().open({ kind: "tree" })}
-				/>
-				{panelToggle && (
+			{!rail && (
+				<>
 					<IconButton
-						icon="panel"
-						label={t("nav.infoPanel")}
-						active={panelOpen}
-						onClick={() => uiStore.getState().setPanel(!panelOpen)}
+						icon="tree"
+						label={t("thread.tree")}
+						onClick={() => uiStore.getState().open({ kind: "tree" })}
 					/>
-				)}
-				<Menu
-					items={items}
-					trigger={(p) => (
-						<button
-							type="button"
-							aria-label={t("thread.moreActions")}
-							className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
-							{...p}
-						>
-							<Icon name="more" size={16} />
-						</button>
+					{panelToggle && (
+						<IconButton
+							icon="panel"
+							label={t("nav.infoPanel")}
+							active={panelOpen}
+							onClick={() => uiStore.getState().setPanel(!panelOpen)}
+						/>
 					)}
-				/>
-			</InRail>
+					<Menu
+						items={items}
+						trigger={(p) => (
+							<button
+								type="button"
+								aria-label={t("thread.moreActions")}
+								className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+								{...p}
+							>
+								<Icon name="more" size={16} />
+							</button>
+						)}
+					/>
+				</>
+			)}
 			{chromeRight && <WindowControls side="right" className="ml-1" />}
 			{dialogs}
 		</header>

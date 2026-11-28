@@ -696,6 +696,7 @@ describe("设置 → 桌面壳（M6）/ 移动壳（M7）", () => {
 			sink: null,
 			tabBar: null,
 			header: null,
+			rail: null,
 			appIcon: null,
 		};
 	}

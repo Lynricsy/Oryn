@@ -419,9 +419,10 @@ export function ThreadScreen({
 	const panelFull = showPanelColumn && panelMax && panelTab !== "info";
 	/** 转录被面板标签或最大化面板挡住（保持挂载、仍参与布局，见下面纸面的注释）。 */
 	const away = panelFull || !onAgent;
-	// 手机线程页看转录时内容铺到状态栏下面（灵动岛下也看得到对话）：壳不让出顶部安全区，页头往下推、转录留白加上它。
-	// 协调对话（Space / 助手）的 48px 页头同理
-	const bleed = bp === "compact" && !dual && !away;
+	// 手机与 medium 线程页看转录时内容铺到状态栏下面（灵动岛下、iPhone Duo 内屏竖放顶上那一条状态栏旁也看得到对话）：
+	// 壳不让出顶部安全区，页头往下推、转录留白加上它，状态栏那一带只盖轻模糊的纱。协调对话（Space / 助手）的 48px 页头同理。
+	// expanded 的外框自己吃掉安全区（AppShell 的 safe-consumed），不在此列
+	const bleed = (bp === "compact" || bp === "medium") && !dual && !away;
 	const bleedTop = bleed ? safeTop : 0;
 	// 面板列的进出场：打开时挂载后下一帧再展开，收起时先走完 260ms 的收窄再卸载（与左栏同一套时长与缓动）
 	const column = usePresence(showPanelColumn, PANEL_ANIM_MS);
@@ -711,6 +712,7 @@ export function ThreadScreen({
 								threadId={threadId}
 								sidebarToggle={!expanded}
 								veil={topInset}
+								safeTop={bleedTop}
 								chromeLeft={chromeLeft && transcriptShown}
 								chromeRight={transcriptShown && !showPanelColumn && !dual}
 								infoBeside={(showPanelColumn || dual) && panelTab === "info"}

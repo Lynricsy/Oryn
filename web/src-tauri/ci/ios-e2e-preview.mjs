@@ -122,9 +122,9 @@ function watchSink() {
 		}
 		railSoon();
 	}).observe(document.documentElement, { subtree: true, childList: true });
-	// iPhone Duo 竖栏（ios-duo-check.sh）：竖栏一侧、竖栏里的侧栏开关（中心点，CSS px = 屏幕 pt，供 duoctl tap）、
-	// 操作槽里的按钮数、操作槽里一个有开合状态的按钮（优先 aria-pressed 的信息面板，没有时取 aria-expanded 的「更多」菜单）
-	// 的中心点与状态、竖排底栏在不在、
+	// iPhone Duo 竖栏（ios-duo-check.sh）：竖栏一侧、竖栏是不是原生画的（网页只留 data-native 占位）、网页竖栏里的侧栏开关
+	// （中心点，CSS px = 屏幕 pt，供 duoctl tap）、操作槽里的按钮数、操作槽里一个有开合状态的按钮（优先 aria-pressed 的
+	// 信息面板，没有时取 aria-expanded 的「更多」菜单）的中心点与状态、竖排底栏在不在、
 	// 页头里还看得见几个侧栏开关（竖栏在时应为 0）。与上一条相同不重复发。
 	// 只在布局稳定后采：根滚动（下沉卡片开合）与视口变化的同一拍里 WebKit 可能给出过渡中的矩形（本机 x86Sim 实测：
 	// 根滚动到 384 那一拍竖栏开关量成 x = 26，下一帧才回到 410），所以一律推到两帧之后再量；滚动也触发重采。
@@ -142,6 +142,7 @@ function watchSink() {
 			q('[data-testid="rail-actions"] button[aria-expanded]');
 		const info = {
 			side: document.documentElement.dataset.rail ?? null,
+			native: q('[data-testid="rail"][data-native]') !== null,
 			tap: center(q('[data-testid="rail-sidebar"]')),
 			actions: document.querySelectorAll('[data-testid="rail-actions"] button').length,
 			act: center(act),
@@ -169,7 +170,7 @@ function watchSink() {
 		);
 	};
 	new MutationObserver(railSoon).observe(document.documentElement, {
-		subtree: true, attributes: true, attributeFilter: ["data-rail", "aria-pressed", "aria-expanded"],
+		subtree: true, attributes: true, attributeFilter: ["data-rail", "data-native", "aria-pressed", "aria-expanded"],
 	});
 	window.addEventListener("resize", railSoon, { passive: true });
 	window.addEventListener("scroll", railSoon, { passive: true });

@@ -33,6 +33,7 @@ import {
 	useSlotFrame,
 } from "../../lib/native-header";
 import { contentTabs } from "../../lib/orb-features";
+import { useRail, useRailActions } from "../../lib/rail";
 import { useBreakpoint, useViewportSegments } from "../../lib/viewport";
 import { useThread } from "../../state/stores";
 import { useTerminals } from "../../state/terminals";
@@ -476,6 +477,7 @@ export function ThreadTabStrip({
  * 取代 compact 下常驻的标签条，把那一行高度还给转录。`round`：转录页头的 44px 圆形玻璃钮（与侧栏开关、标题胶囊一组）；
  * 不带时是面板标签行里的普通图标钮。`round` 时它也是 iOS 原生页头的右钮（lib/native-header.ts）：登记 `trail` 部件，
  * 原生显示稳了就把自己换成透明（仍可命中）；不带 `round` 的那个什么都不登记。
+ * `round` 且 iPhone Duo 竖栏在时（`useRail`）：登记进竖栏（`useRailActions`），页头里不画。
  */
 export function ThreadViewMenu({
 	threadId,
@@ -492,7 +494,8 @@ export function ThreadViewMenu({
 	const dots = useTabDots(threadId, tabs, shown);
 	const slotRef = useRef<HTMLButtonElement>(null);
 	const frame = useSlotFrame(slotRef, round);
-	const native = useNativeHeaderActive() && round;
+	const rail = useRail() !== null && round;
+	const native = useNativeHeaderActive() && round && !rail;
 	const pending = tabs.find((id) => id !== shown && dots[id]);
 	const items: MenuItem[] = tabs.map((id) => {
 		const dot = dots[id];
@@ -536,6 +539,20 @@ export function ThreadViewMenu({
 			: null,
 		round,
 	);
+	useRailActions(
+		rail
+			? [
+					{
+						id: "views",
+						icon: "views",
+						label: t("rightPanel.views"),
+						...(pending && { dot: dots[pending]?.tone }),
+						menu: items,
+					},
+				]
+			: null,
+	);
+	if (rail) return null;
 	return (
 		<Menu
 			items={items}

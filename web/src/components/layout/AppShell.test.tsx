@@ -23,6 +23,7 @@ import {
 	createHost,
 	host,
 	type MobileHost,
+	type NativeRailTap,
 	type ShareIntake,
 } from "../../lib/host";
 import { applyRail } from "../../lib/rail";
@@ -420,6 +421,7 @@ describe("移动壳里（M7）", () => {
 			sink: null,
 			tabBar: null,
 			header: null,
+			rail: null,
 			appIcon: null,
 		};
 		h.mobile = mobile;
@@ -601,6 +603,41 @@ describe("手机下沉式侧栏（compact）", () => {
 		act(() => applyRail(document.documentElement, null));
 	});
 
+	it("iPhone Duo 原生竖栏的点按：开关、页头操作、菜单项、分区走与网页竖栏同一套回调；换页前的旧 key 丢弃", () => {
+		window.innerWidth = 466;
+		let tap: ((e: NativeRailTap) => void) | undefined;
+		const spy = vi.spyOn(host, "onRailTap").mockImplementation((cb) => {
+			tap = cb;
+			return () => {};
+		});
+		setup(<ThreadHeader threadId="T-1" sidebarToggle={false} />);
+		act(() =>
+			applyRail(document.documentElement, {
+				side: "right",
+				frame: { x: 402, y: 54, width: 64, height: 624 },
+				safeArea: { top: 0, right: 64, bottom: 21, left: 0 },
+			}),
+		);
+		const key = "/t/T-1";
+		act(() => tap?.({ part: "lead", key: "/t/T-0" }));
+		expect(uiStore.getState().sidebarOpen).toBe(false);
+		act(() => tap?.({ part: "lead", key }));
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		act(() => uiStore.getState().setSidebar(false));
+		act(() => tap?.({ part: "action", key, id: "tree" }));
+		expect(uiStore.getState().dialog).toEqual({ kind: "tree" });
+		act(() => tap?.({ part: "item", key, id: "more", item: "rename" }));
+		expect(uiStore.getState().dialog).toEqual({ kind: "rename" });
+		act(() => uiStore.getState().close());
+		act(() => tap?.({ part: "tab", key, id: "projects" }));
+		expect(uiStore.getState().sidebarOpen).toBe(true);
+		expect(
+			screen.getByTestId("rail").querySelector('[data-tab="projects"]'),
+		).toHaveAttribute("aria-current", "true");
+		act(() => applyRail(document.documentElement, null));
+		spy.mockRestore();
+	});
+
 	it("iPhone Duo 竖栏（真实历史）：首次点「助手」经 replace 重定向后，收起侧栏再按返回回到原线程，侧栏保持收起", async () => {
 		window.innerWidth = 466;
 		window.history.replaceState(null, "", "/t/T-1");
@@ -612,9 +649,6 @@ describe("手机下沉式侧栏（compact）", () => {
 			createdAt: 1,
 			auth: { kind: "web" },
 		});
-		function Where(): ReactNode {
-			return <output data-testid="where">{useLocation().pathname}</output>;
-		}
 		render(
 			<QueryClientProvider client={qc}>
 				<BrowserRouter>

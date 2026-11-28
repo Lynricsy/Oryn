@@ -12,13 +12,15 @@
  * 头像与角标整份交给控制器（`setSpec`，内容变了才真正发）；原生浮在 WebView 之上（玻璃折射下面的侧栏列表），
  * 原生看得见时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，但仍可命中（遮挡探测靠它）；被菜单、弹层盖住时原生让位、
  * 网页胶囊顶上。原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
- * `tone="rail"`：iPhone Duo 竖栏（`Rail.tsx`）里的版本：同样四项竖着排成一根玻璃胶囊，跟在竖栏的页头按钮下面；
- * 此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。底栏原本是「换侧栏里的列表」：手机下沉侧栏收着时
- * 点竖栏的一项 = 先展开侧栏、再切到该分区（主区照常跳到它上次停留的页面），等同于打开侧栏后点侧栏里的底栏；
- * 侧栏开着时与侧栏里的底栏一样（换分区，再点当前分区收起）。列侧栏常驻（内屏横放）时侧栏本来就看得见，也与侧栏里的底栏一样。
+ * `tone="rail"`：iPhone Duo 竖栏（`Rail.tsx`）里的网页版本（壳没有原生竖栏时）：同样四项竖着排成一根玻璃胶囊，跟在竖栏的
+ * 页头按钮下面；此时侧栏里不再放底栏，原生底栏随之撤掉。四项的数据（`useSectionTabs`）、头像栅格化（`useAvatarPng`）与
+ * 点按（`useSectionTap`）也给原生竖栏用。底栏原本是「换侧栏里的列表」：手机下沉侧栏收着时点竖栏的一项 = 先展开侧栏、
+ * 再切到该分区（主区照常跳到它上次停留的页面），等同于打开侧栏后点侧栏里的底栏；侧栏开着时与侧栏里的底栏一样
+ * （换分区，再点当前分区收起）。列侧栏常驻（内屏横放）时侧栏本来就看得见，也与侧栏里的底栏一样。
  */
 import {
 	type ReactNode,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -76,16 +78,10 @@ type Frame = NativeTabBarSpec["frame"];
 /** 保留两位小数：亚像素抖动不算矩形变了。 */
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-export function SectionTabBar({
-	tone,
-	safeBottom = false,
-}: {
-	tone: "glass" | "inset" | "rail";
-	safeBottom?: boolean;
-}): ReactNode {
+/** 底栏四项的数据（网页底栏、原生底栏、原生竖栏共用）。 */
+export function useSectionTabs() {
 	const { t } = useTranslation();
 	const section = useSection();
-	const switchSection = useSwitchSection();
 	const conn = useConnection((s) => s.status);
 	const assistant = useAssistantIdentity();
 	const assistantUnread = useIndex((s) =>
@@ -93,11 +89,8 @@ export function SectionTabBar({
 			(th) => th.kind === "assistant" && th.unread && !th.archivedAt,
 		),
 	);
-	const index = SECTION_ORDER.indexOf(section);
 	const avatarIcon = assistant.avatar.avatarIcon;
 	const avatarImage = assistant.avatar.avatarImage;
-	const hasAvatar = Boolean(avatarIcon || avatarImage);
-	const connTone = conn === "unauthorized" ? "err" : "warn";
 	const labels = useMemo<Record<SectionId, string>>(
 		() => ({
 			threads: t("tabBar.threads"),
@@ -107,7 +100,80 @@ export function SectionTabBar({
 		}),
 		[t, assistant.name],
 	);
+	return {
+		section,
+		labels,
+		conn,
+		/** 「更多」上状态点的色调（连接不是 open 时显示）。 */
+		connTone: conn === "unauthorized" ? ("err" as const) : ("warn" as const),
+		assistantUnread,
+		avatarIcon,
+		avatarImage,
+		hasAvatar: Boolean(avatarIcon || avatarImage),
+	};
+}
 
+/** 图片头像栅格化成 PNG 的 base64（异步，给原生用）；没有图片头像或还没出图时为 null。 */
+export function useAvatarPng(src: string | undefined): string | null {
+	const [raster, setRaster] = useState<{
+		src: string;
+		png: string | null;
+	} | null>(null);
+	useEffect(() => {
+		if (!src) return;
+		let live = true;
+		void rasterizeAvatar(src).then((png) => {
+			if (live) setRaster({ src, png });
+		});
+		return () => {
+			live = false;
+		};
+	}, [src]);
+	return raster && raster.src === src ? raster.png : null;
+}
+
+/**
+ * 点一项分区。`rail`（竖栏）且手机下沉侧栏收着时先展开再导航：侧栏的历史标记要压在原页面上、新页面压在标记之上
+ * （flushSync 让打开时压标记的副作用在导航前跑完）。反过来的话标记落在新页面那条记录上，分区页的重定向
+ * （`/assistant` → `/assistant/<id>`，replace）会把它连同标记一起改写掉。其余情况与侧栏里的底栏一样（再点当前分区收起）。
+ */
+export function useSectionTap(rail: boolean): (key: SectionId) => void {
+	const switchSection = useSwitchSection();
+	return useCallback(
+		(key: SectionId) => {
+			if (rail && isSinkLayout() && !uiStore.getState().sidebarOpen) {
+				flushSync(() => uiStore.getState().setSidebar(true));
+				switchSection(key);
+				return;
+			}
+			switchSection(key, { toggleSink: true });
+		},
+		[rail, switchSection],
+	);
+}
+
+export function SectionTabBar({
+	tone,
+	safeBottom = false,
+}: {
+	tone: "glass" | "inset" | "rail";
+	safeBottom?: boolean;
+}): ReactNode {
+	const { t } = useTranslation();
+	const {
+		section,
+		labels,
+		conn,
+		connTone,
+		assistantUnread,
+		avatarIcon,
+		avatarImage,
+		hasAvatar,
+	} = useSectionTabs();
+	const switchSection = useSwitchSection();
+	const rail = tone === "rail";
+	const tap = useSectionTap(rail);
+	const index = SECTION_ORDER.indexOf(section);
 	// ── iOS 原生底栏（只在手机下沉侧栏层）：钩子无条件调用，副作用里判断 sink ──
 	const sink = tone === "glass";
 	const shown = useNativeTabBarShown();
@@ -118,10 +184,6 @@ export function SectionTabBar({
 	const [paint, setPaint] = useState<{
 		dark: boolean;
 		accent: string | null;
-	} | null>(null);
-	const [raster, setRaster] = useState<{
-		src: string;
-		png: string | null;
 	} | null>(null);
 
 	// 胶囊矩形：侧栏层不随卡片移动，与开合无关；视口或胶囊尺寸变了重量，值没变不 set
@@ -184,18 +246,7 @@ export function SectionTabBar({
 	}, [sink]);
 
 	// 图片头像栅格化成 PNG（异步）；出图前先按字形 / sparkles 发
-	const rasterSrc = sink ? avatarImage : undefined;
-	useEffect(() => {
-		if (!rasterSrc) return;
-		let live = true;
-		void rasterizeAvatar(rasterSrc).then((png) => {
-			if (live) setRaster({ src: rasterSrc, png });
-		});
-		return () => {
-			live = false;
-		};
-	}, [rasterSrc]);
-	const avatarPng = raster && raster.src === rasterSrc ? raster.png : null;
+	const avatarPng = useAvatarPng(sink ? avatarImage : undefined);
 
 	useEffect(() => {
 		if (!sink || !frame || !paint || frame.width <= 0 || frame.height <= 0)
@@ -246,7 +297,6 @@ export function SectionTabBar({
 		[sink, switchSection],
 	);
 
-	const rail = tone === "rail";
 	const outer = sink
 		? "px-3 pt-1.5 pb-[max(var(--safe-bottom),0.5rem)]"
 		: `px-2 pt-1.5 ${safeBottom ? "pb-[calc(0.5rem+var(--safe-bottom))]" : "pb-2"}`;
@@ -293,21 +343,7 @@ export function SectionTabBar({
 								tabIndex={hidden ? -1 : undefined}
 								aria-current={on ? "true" : undefined}
 								title={t("sections.tabTitle", { label, keys })}
-								onClick={() => {
-									// 先展开再导航：侧栏的历史标记要压在原页面上、新页面压在标记之上（flushSync 让打开时
-									// 压标记的副作用在导航前跑完）。反过来的话标记落在新页面那条记录上，分区页的重定向
-									// （`/assistant` → `/assistant/<id>`，replace）会把它连同标记一起改写掉。
-									if (
-										rail &&
-										isSinkLayout() &&
-										!uiStore.getState().sidebarOpen
-									) {
-										flushSync(() => uiStore.getState().setSidebar(true));
-										switchSection(key);
-										return;
-									}
-									switchSection(key, { toggleSink: true });
-								}}
+								onClick={() => tap(key)}
 								className={`relative z-10 flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 rounded-full text-2xs leading-none transition-colors duration-150 ${on ? "font-semibold text-accent-ink" : "font-medium text-muted hover:text-fg"}`}
 							>
 								<span className="relative inline-flex">

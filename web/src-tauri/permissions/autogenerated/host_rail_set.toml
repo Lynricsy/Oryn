@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-rail-set"
+description = "Enables the host_rail_set command without any pre-configured scope."
+commands.allow = ["host_rail_set"]
+
+[[permission]]
+identifier = "deny-host-rail-set"
+description = "Denies the host_rail_set command without any pre-configured scope."
+commands.deny = ["host_rail_set"]

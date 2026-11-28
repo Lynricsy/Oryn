@@ -359,6 +359,49 @@ export interface NativeHeaderHost {
 	menu(menu: NativeHeaderMenu): Promise<void>;
 }
 
+/** 原生竖栏的一个页头操作：有 `menu` 的是系统菜单钮，没有的是普通钮。 */
+export interface NativeRailAction {
+	id: string;
+	/** SF Symbol 名。 */
+	symbol: string;
+	label: string;
+	/** 开着（如信息面板开着）：强调色。 */
+	active?: boolean;
+	dot?: "accent" | "warn";
+	menu?: NativeMenu;
+}
+
+/**
+ * iPhone Duo 原生竖栏的整份内容（iOS 27.1+，见 `native-rail.ts`）；只在内容变了时发。
+ * 矩形不在这里：原生按系统竖排的那一列自己摆（与 `rail` 几何事件同一个矩形）。
+ */
+export interface NativeRailSpec {
+	/** 页面键：变了原生收起开着的菜单；事件原样带回。 */
+	key: string;
+	dark: boolean;
+	palette: NativeHeaderSpec["palette"];
+	/** 网页内容（对话框、遮罩）压在竖栏上：原生隐藏、不接触摸。 */
+	covered: boolean;
+	/** 侧栏开关；`active` = 侧栏开着。 */
+	lead: { label: string; active: boolean };
+	/** 当前页头的操作（至多 4 个，从上到下）。 */
+	actions: NativeRailAction[];
+	/** 竖排的分区：与原生底栏同一组项。 */
+	tabs: { label: string; items: NativeTabBarItem[]; selected: string };
+}
+
+/** 原生竖栏上的点按：侧栏开关、普通操作钮、菜单钮里的一项（`item` = 菜单项路径 id）、分区。 */
+export type NativeRailTap =
+	| { part: "lead"; key: string }
+	| { part: "action"; key: string; id: string }
+	| { part: "item"; key: string; id: string; item: string }
+	| { part: "tab"; key: string; id: string };
+
+export interface NativeRailHost {
+	/** 应答 = 原生竖栏已经挂到窗口上；拒绝 = 不可用（iOS < 27.1），调用方继续画网页竖栏。 */
+	set(spec: NativeRailSpec | null): Promise<void>;
+}
+
 /** 可替换图标的 id：`default` 与壳带的其它图标（见壳的 `mobile_logic::APP_ICONS`）。 */
 export interface AppIconState {
 	/** 系统是否允许换图标（iOS 总是 true，留给以后的平台）。 */
@@ -393,6 +436,8 @@ export interface MobileHost {
 	tabBar: NativeTabBarHost | null;
 	/** 原生页头（iOS 且 bridge ≥ 8）；其它情况为 null，用网页页头。 */
 	header: NativeHeaderHost | null;
+	/** iPhone Duo 原生竖栏（iOS 且 bridge ≥ 13）；其它情况为 null，竖排时画网页竖栏。 */
+	rail: NativeRailHost | null;
 	/** 可替换图标（iOS 且 bridge ≥ 6）；其它情况为 null，设置里不显示这一项。 */
 	appIcon: AppIconHost | null;
 }
@@ -423,12 +468,14 @@ export interface Host {
 	onRail(cb: (r: RailGeometry | null) => void): () => void;
 	/** 原生页头上的点击（仅 iOS 移动壳；见 `native-header.ts`）。 */
 	onHeader(cb: (e: NativeHeaderEvent) => void): () => void;
+	/** 原生竖栏上的点按（仅 iOS 移动壳；见 `native-rail.ts`）。 */
+	onRailTap(cb: (e: NativeRailTap) => void): () => void;
 	desktop: DesktopHost | null;
 	mobile: MobileHost | null;
 }
 
-/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`；11 = 桌面端开放 `host_open_external`、`host_open_external` 支持 `mailto:`/`tel:`，全平台统一外链打开；12 = 桌面端开机自启与启动时隐藏：settings 带 `autostart` / `startHidden`，`host_info` 带 `autostartError`）。 */
-export const BRIDGE = 12;
+/** 本页面实现的宿主协议版本（与壳 `host_ready` 返回的 `bridge` 对应；3 = 桌面自绘标题栏；4 = iOS 原生底栏；5 = iOS 原生页头；6 = iOS 可替换图标；7 = 原生底栏改系统 UITabBar；8 = 下沉侧栏改由根滚动驱动、原生按 contentOffset 跟随，原生底栏浮在 WebView 之上、右缘裁到卡片左缘，页头可只有侧栏钮；9 = 官方推送网关：`host_push_enable` 可带 `transport`，推送状态带 `alt`、通道含 `apns`、不再报 `unsupported`；10 = 移动端全局助手头像原生共享缓存同步 `host_sync_assistant_avatar`；11 = 桌面端开放 `host_open_external`、`host_open_external` 支持 `mailto:`/`tel:`，全平台统一外链打开；12 = 桌面端开机自启与启动时隐藏：settings 带 `autostart` / `startHidden`，`host_info` 带 `autostartError`；13 = iPhone Duo 原生竖栏 `host_rail_set` 与 `railtap` 事件）。 */
+export const BRIDGE = 13;
 export const HOST_EVENT = "oryn:host";
 
 export type Invoke = <T>(
@@ -497,6 +544,7 @@ function webHost(win: Window): Host {
 		onTabBar: () => noop,
 		onRail: () => noop,
 		onHeader: () => noop,
+		onRailTap: () => noop,
 		desktop: null,
 		mobile: null,
 	};
@@ -611,6 +659,21 @@ export function parseHeaderEvent(v: unknown): NativeHeaderEvent | null {
 			? { op: "select", key, menu, id: o.id }
 			: null;
 	}
+	return null;
+}
+
+/** 解析 `railtap` 事件：`key` 必须是字符串；除 lead 外要有字符串 `id`，item 还要有字符串 `item`，否则整条丢弃。 */
+export function parseRailTap(v: unknown): NativeRailTap | null {
+	if (!v || typeof v !== "object") return null;
+	const o = v as Record<string, unknown>;
+	const key = o.key;
+	if (typeof key !== "string") return null;
+	if (o.part === "lead") return { part: "lead", key };
+	if (typeof o.id !== "string") return null;
+	if (o.part === "action" || o.part === "tab")
+		return { part: o.part, key, id: o.id };
+	if (o.part === "item" && typeof o.item === "string")
+		return { part: "item", key, id: o.id, item: o.item };
 	return null;
 }
 
@@ -771,6 +834,7 @@ function mobileHost(
 	appIcon: boolean,
 	pushTransport: boolean,
 	syncAvatar: boolean,
+	rail: boolean,
 ): MobileHost {
 	return {
 		info: () => invoke<MobileInfo>("host_mobile_info"),
@@ -821,6 +885,9 @@ function mobileHost(
 					menu: (menu) => invoke<void>("host_header_menu", { menu }),
 				}
 			: null,
+		rail: rail
+			? { set: (spec) => invoke<void>("host_rail_set", { spec }) }
+			: null,
 		appIcon: appIcon
 			? {
 					get: () => invoke<AppIconState>("host_app_icon_get"),
@@ -845,6 +912,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 	const tabBar = listeners<[string]>();
 	const rail = listeners<[RailGeometry | null]>();
 	const header = listeners<[NativeHeaderEvent]>();
+	const railTap = listeners<[NativeRailTap]>();
 	const bridge = meta?.bridge ?? 0;
 	const isMobile =
 		(platform === "android" || platform === "ios") && bridge >= 2;
@@ -883,6 +951,9 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		else if (isMobile && d.type === "header") {
 			const e = parseHeaderEvent(d);
 			if (e) header.emit(e);
+		} else if (isMobile && d.type === "railtap") {
+			const e = parseRailTap(d);
+			if (e) railTap.emit(e);
 		}
 	});
 
@@ -950,6 +1021,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 		onTabBar: (cb) => tabBar.add(cb),
 		onRail: (cb) => rail.add(cb),
 		onHeader: (cb) => header.add(cb),
+		onRailTap: (cb) => railTap.add(cb),
 		mobile: isMobile
 			? mobileHost(
 					invoke,
@@ -959,6 +1031,7 @@ function tauriHost(win: Window, invoke: Invoke): Host {
 					platform === "ios" && bridge >= 6,
 					bridge >= 9,
 					bridge >= 10,
+					platform === "ios" && bridge >= 13,
 				)
 			: null,
 		desktop: isMobile
