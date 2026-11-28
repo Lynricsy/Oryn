@@ -152,7 +152,7 @@ app_stop() {
   sim_run 60 xcrun simctl terminate "$udid" "$bundle" >/dev/null || true
   pid=$(app_pid)
   [[ -z $pid ]] && return 0
-  echo "--- terminate 之后 Oryn 仍在：pid ${pid}，$(ps -o stat=,wchan=,etime= -p "$pid" 2>/dev/null)；SIGKILL" >&2
+  echo "--- terminate 之后 Oryn 仍在：pid ${pid}，$(ps -o stat=,%cpu=,time=,etime= -p "$pid" 2>/dev/null)（状态 %CPU 累计CPU 已运行）；SIGKILL" >&2
   kill -9 "$pid" 2>/dev/null || true
   for _ in $(seq 1 20); do
     kill -0 "$pid" 2>/dev/null || return 0
@@ -171,11 +171,11 @@ app_sample() {
     echo "--- 模拟器 ${udid} 里没有在跑的 Oryn 进程" >&2
     return 0
   fi
-  echo "--- 采样 pid ${pid}（$(ps -o stat=,wchan=,etime= -p "$pid" 2>/dev/null)）：$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-200)"
+  echo "--- 采样 pid ${pid}（$(ps -o stat=,%cpu=,time=,etime= -p "$pid" 2>/dev/null)，状态 %CPU 累计CPU 已运行）：$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-200)"
   rm -f "$1"
   sim_run 60 sample "$pid" 3 -file "$1" >/dev/null 2>"$err" || true
   if [[ ! -s $1 ]]; then
-    echo "--- Oryn（pid ${pid}）采样失败：没有生成 $(basename "$1")；进程现在 $(ps -o stat=,wchan= -p "$pid" 2>/dev/null || echo 已退出)" >&2
+    echo "--- Oryn（pid ${pid}）采样失败：没有生成 $(basename "$1")；进程现在 $(ps -o stat=,%cpu=,time= -p "$pid" 2>/dev/null || echo 已退出)" >&2
     tail -6 "$err" >&2 || true
     rm -f "$err"
     return 0
