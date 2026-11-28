@@ -2201,8 +2201,8 @@ interface ViewToolSpec {
 	parameters: Record<string, unknown>;
 }
 
-/** 读 ORYN_VIEW_TOOLS 指向的契约文件；没设、读不到或格式不对时返回 undefined（不注册、不追加指引）。 */
-function loadViewTools(): { guide: string; tools: ViewToolSpec[] } | undefined {
+/** 读 ORYN_VIEW_TOOLS 指向的契约文件；没设、读不到或格式不对时返回 undefined（不注册、不追加指引）。writingGuide 缺失时为空串。 */
+function loadViewTools(): { guide: string; writingGuide: string; tools: ViewToolSpec[] } | undefined {
 	const path = process.env.ORYN_VIEW_TOOLS;
 	if (!path) {
 		return undefined;
@@ -2225,7 +2225,8 @@ function loadViewTools(): { guide: string; tools: ViewToolSpec[] } | undefined {
 			typeof t.description === "string" &&
 			isObject(t.parameters),
 	);
-	return tools.length > 0 ? { guide: raw.guide, tools } : undefined;
+	const writingGuide = typeof raw.writingGuide === "string" ? raw.writingGuide : "";
+	return tools.length > 0 ? { guide: raw.guide, writingGuide, tools } : undefined;
 }
 
 /** render_ui 的块里是否有交互块（form / actions），递归进 card / columns / tabs。 */
@@ -2373,7 +2374,20 @@ function registerViews(pi: ExtensionAPI): ((ctx: ExtensionContext) => string | u
 	};
 	pi.on("session_start", hideInSubagents);
 	pi.on("session_switch", hideInSubagents);
-	return (ctx) => (ctx.agent.kind === "main" && pi.getActiveTools().includes("render_ui") ? file.guide : undefined);
+	// 只给主 agent：render_ui 激活时放视图指引；写作块指引不依赖视图工具，契约里有就放。
+	return (ctx) => {
+		if (ctx.agent.kind !== "main") {
+			return undefined;
+		}
+		const parts: string[] = [];
+		if (pi.getActiveTools().includes("render_ui")) {
+			parts.push(file.guide);
+		}
+		if (file.writingGuide) {
+			parts.push(file.writingGuide);
+		}
+		return parts.length > 0 ? parts.join("\n\n") : undefined;
+	};
 }
 
 // 按工作线程角色白名单限制激活的工具（ORYN_ROLE_TOOLS 为 JSON 字符串数组；未设置时不限制，空数组 [] 禁用全部工具）。

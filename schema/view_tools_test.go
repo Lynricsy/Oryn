@@ -8,11 +8,13 @@ import (
 )
 
 // 视图工具契约：每个请求都带这两份 schema 与指引，压缩后的体积是 token 成本的上限。
-const maxViewToolsCompact = 20 << 10
+// 上限从 20 KiB 放宽到 22 KiB，多出来的是写作块指引（writingGuide）。
+const maxViewToolsCompact = 22 << 10
 
 type viewToolsDoc struct {
-	Guide string `json:"guide"`
-	Tools []struct {
+	Guide        string `json:"guide"`
+	WritingGuide string `json:"writingGuide"`
+	Tools        []struct {
 		Name        string         `json:"name"`
 		Label       string         `json:"label"`
 		Description string         `json:"description"`
@@ -29,6 +31,9 @@ func TestViewToolsContract(t *testing.T) {
 	}
 	if !strings.HasPrefix(doc.Guide, "# Views") {
 		t.Fatalf("guide 开头不对: %q", doc.Guide[:min(len(doc.Guide), 40)])
+	}
+	if !strings.HasPrefix(doc.WritingGuide, "# Writing blocks") {
+		t.Fatalf("writingGuide 开头不对: %q", doc.WritingGuide[:min(len(doc.WritingGuide), 40)])
 	}
 	if len(doc.Tools) != 2 || doc.Tools[0].Name != "render_ui" || doc.Tools[1].Name != "render_html" {
 		t.Fatalf("工具名单不对: %+v", doc.Tools)

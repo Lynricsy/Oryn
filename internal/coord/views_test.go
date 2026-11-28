@@ -49,6 +49,7 @@ func TestViewToolsInProfile(t *testing.T) {
 		}
 		assert.Equal(t, ui, html, "两个工具同进同出")
 		assert.Equal(t, ui, strings.Contains(p.SystemPrompt, viewGuide()), "工具与指引同进同出")
+		assert.Equal(t, ui, strings.Contains(p.SystemPrompt, "# Writing blocks"), "写作块指引跟随生成式 UI 开关")
 		return ui
 	}
 

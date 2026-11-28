@@ -1,7 +1,7 @@
 // 视图工具（M33）的真跑检查：用 bun 直接加载 oryn-orb.ts，给它假的 pi（收集 registerTool 的定义与 on 注册的处理器，
 // 维护一份激活工具列表）与假的 ctx（agent.kind、ui.input）。断言：没有 ORYN_VIEW_TOOLS 时不注册；注册的两个工具与契约文件
-// 一致；C3 的六种结果与 details.view.spec；子 agent 里工具从激活集去掉且 execute 拒绝；指引只在主 agent 且 render_ui 激活时
-// 追加（orb 与 Runner 两个分支，含角色白名单不含 render_ui 的情形）。
+// 一致；C3 的六种结果与 details.view.spec；子 agent 里工具从激活集去掉且 execute 拒绝；视图指引只在主 agent 且 render_ui 激活时
+// 追加（orb 与 Runner 两个分支，含角色白名单不含 render_ui 的情形）；写作块指引只给主 agent，不依赖 render_ui 是否激活。
 // 用法：bun testdata/view_tools.ts <oryn-orb.ts 的路径> <view-tools.json 的路径>（由 viewtools_test.go 调用）。
 // 成功打印 OK，失败非零退出。
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -18,6 +18,7 @@ const viewPath = process.argv[3];
 if (!extPath || !viewPath) fail("缺少扩展路径或 view-tools.json 路径参数");
 const contract = JSON.parse(readFileSync(viewPath, "utf8")) as {
 	guide: string;
+	writingGuide: string;
 	tools: { name: string; label: string; description: string; parameters: unknown }[];
 };
 
@@ -110,6 +111,7 @@ const neverAsked = () => fail("不该调用 ctx.ui.input");
 	const p = load();
 	if (p.tools.has("render_ui") || p.tools.has("render_html")) fail("没有 ORYN_VIEW_TOOLS 时不应注册视图工具");
 	if ((await p.prompt(ctxWith("main", neverAsked).ctx)).includes(contract.guide)) fail("没有 ORYN_VIEW_TOOLS 时不应追加指引");
+	if ((await p.prompt(ctxWith("main", neverAsked).ctx)).includes("# Writing blocks")) fail("没有 ORYN_VIEW_TOOLS 时不应追加写作块指引");
 	process.env.ORYN_VIEW_TOOLS = join(dir, "missing.json");
 	const q = load();
 	if (q.tools.has("render_ui")) fail("文件读不到时不应注册视图工具");
@@ -284,11 +286,14 @@ const hasViews = (names: string[]) => names.includes("render_ui") || names.inclu
 await p.emit("session_start", { type: "session_start" }, main);
 if (!hasViews(p.active())) fail("主 agent 的激活集里应有视图工具");
 if (!(await p.prompt(main)).includes(contract.guide)) fail("主 agent 且 render_ui 激活时应追加指引");
+if (!contract.writingGuide.startsWith("# Writing blocks")) fail("契约里缺写作块指引");
+if (!(await p.prompt(main)).includes(contract.writingGuide)) fail("主 agent 应追加写作块指引");
 {
 	const s = load();
 	await s.emit("session_start", { type: "session_start" }, sub);
 	if (hasViews(s.active())) fail(`子 agent 的激活集里不应有视图工具：${s.active().join(",")}`);
 	if ((await s.prompt(sub)).includes(contract.guide)) fail("子 agent 不应追加指引");
+	if ((await s.prompt(sub)).includes(contract.writingGuide)) fail("子 agent 不应追加写作块指引");
 	const w = load();
 	await w.emit("session_switch", { type: "session_switch" }, sub);
 	if (hasViews(w.active())) fail("session_switch 后子 agent 的激活集里不应有视图工具");
@@ -299,6 +304,7 @@ if (!(await p.prompt(main)).includes(contract.guide)) fail("主 agent 且 render
 	await t.emit("session_start", { type: "session_start" }, sub);
 	const clone = await t.prompt(sub, ["base", parentBlock]);
 	if (clone.includes(contract.guide)) fail("/tan 克隆不应继承父会话的视图指引");
+	if (clone.includes(contract.writingGuide)) fail("/tan 克隆不应继承父会话的写作块指引");
 	if (clone.split("# Oryn orb 环境").length !== 2) fail("/tan 克隆的 orb 指引应只出现一次");
 	if (!clone.startsWith("base\n")) fail("/tan 克隆应保留父会话的基础提示词");
 }
@@ -320,7 +326,9 @@ process.env.ORYN_ROLE_TOOLS = JSON.stringify(["read"]);
 	const m = load();
 	await m.emit("session_start", { type: "session_start" }, main);
 	if (hasViews(m.active())) fail("白名单不含视图工具时不应激活");
-	if ((await m.prompt(main)).includes(contract.guide)) fail("角色白名单不含 render_ui 时不应追加指引");
+	const prompt = await m.prompt(main);
+	if (prompt.includes(contract.guide)) fail("角色白名单不含 render_ui 时不应追加视图指引");
+	if (!prompt.includes(contract.writingGuide)) fail("角色白名单不含 render_ui 时仍应追加写作块指引");
 }
 delete process.env.ORYN_ROLE_TOOLS;
 
@@ -331,9 +339,11 @@ process.env.ORYN_RUNNER = "1";
 	if (!r.tools.has("render_ui") || !r.tools.has("render_html")) fail("Runner 上应注册视图工具");
 	await r.emit("session_start", { type: "session_start" }, main);
 	if (!(await r.prompt(main)).includes(contract.guide)) fail("Runner 主 agent 应追加指引");
+	if (!(await r.prompt(main)).includes(contract.writingGuide)) fail("Runner 主 agent 应追加写作块指引");
 	const s = load();
 	await s.emit("session_start", { type: "session_start" }, sub);
 	if ((await s.prompt(sub)).includes(contract.guide)) fail("Runner 子 agent 不应追加指引");
+	if ((await s.prompt(sub)).includes(contract.writingGuide)) fail("Runner 子 agent 不应追加写作块指引");
 }
 delete process.env.ORYN_RUNNER;
 
