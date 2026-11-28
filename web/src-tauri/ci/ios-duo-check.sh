@@ -14,7 +14,9 @@
 #   refolded  合上：layout 回到 sink = true，最后一条 sink.set 是 on
 #   全程      main.mount 只有一条：应用壳的 <main> 只挂载过一次（没重挂载，也没整页重新加载）
 #   竖栏      外屏（folded / refolded）壳的最后一条 rail 带 side 与竖栏矩形（RailProbe：系统把工具栏竖排在一侧）；
-#             各姿态的 rail 原文（含 probe 原始量测）写进 Step Summary
+#             网页探针的最后一条 rail：有竖栏一侧、竖栏里有侧栏开关与竖排底栏、页头里看得见的侧栏开关为 0；
+#             folded 时 duoctl 点竖栏的侧栏开关：下沉卡片打开（data-open），再点一次关上。
+#             各姿态的 rail 原文（含 probe 原始量测与网页探针）写进 Step Summary
 # 三个姿态各截一张，duoctl state（铰链角度、当前屏、尺寸）写进 Step Summary；全部断言通过才写 <输出目录>/.complete。
 # 用法：ios-duo-check.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
 set -euo pipefail
@@ -127,13 +129,31 @@ last_sink() { ev sink.set | tail -1 | jq -e --argjson o "$1" '.on == $o'; }
 # rail_side：壳的最后一条 rail 竖排在某一侧，且竖栏矩形不空
 rail_side() { ev rail | tail -1 | jq -e '(.side == "left" or .side == "right") and .frame.width > 0 and .frame.height > 0'; }
 # rail_note <姿态>：最后一条 rail 原文进 Step Summary
-rail_note() { echo "- ${1} rail：\`$(ev rail | tail -1 | jq -c '{side, frame, safeArea, probe}')\`" | tee -a "$summary"; }
+rail_note() {
+  echo "- ${1} rail：\`$(ev rail | tail -1 | jq -c '{side, frame, safeArea, probe}')\`" | tee -a "$summary"
+  echo "- ${1} 网页竖栏：\`$(probe rail | jq -c 'last | .info')\`" | tee -a "$summary"
+}
+# web_rail：网页探针的最后一条 rail 竖排着、开关与底栏都在竖栏里、页头里的侧栏开关全藏了
+web_rail() { probe rail | jq -e 'last | .info | .side != null and .tap != null and .tabs and .headerToggles == 0'; }
+# card_open <true|false>：网页探针最后一条 data-open 的卡片开合
+card_open() { probe data-open | jq -e --argjson o "$1" 'last | (.open // false) == $o'; }
+# rail_tap <姿态> <true|false>：点竖栏的侧栏开关，等卡片开合到位
+rail_tap() {
+  local xy
+  xy=$(probe rail | jq -r 'last | .info.tap | "\(.x) \(.y)"')
+  # shellcheck disable=SC2086 # xy 是两个数
+  duo tap $xy || fail "$1" "duoctl tap ${xy} 失败"
+  until_ok "$1" 30 "点竖栏的侧栏开关后卡片 data-open = $2" card_open "$2"
+}
 
 until_ok folded 90 "web.ready（bridge ≥ 8）" web_ready
 until_ok folded 60 "外屏 compact：探针 layout sink = true、宽 < 600" last_layout true
 until_ok folded 30 "原生跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok folded 30 "外屏竖栏：最后一条 rail 带 side 与矩形" rail_side
+until_ok folded 30 "网页竖栏：开关与底栏在竖栏里、页头侧栏开关已隐藏" web_rail
 rail_note folded
+rail_tap folded true
+rail_tap folded false
 shot folded
 
 pose open open
@@ -146,6 +166,7 @@ pose refolded close
 until_ok refolded 60 "合上后 layout 回到 sink = true" last_layout true
 until_ok refolded 30 "原生重新跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok refolded 30 "合上后竖栏回来：最后一条 rail 带 side 与矩形" rail_side
+until_ok refolded 30 "合上后网页竖栏回来" web_rail
 rail_note refolded
 shot refolded
 

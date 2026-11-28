@@ -116,10 +116,33 @@ function watchSink() {
 			line("main.mount", { n: ++mounts });
 		}
 		const now = card() !== null;
-		if (now === sink) return;
-		sink = now;
-		line("layout", { sink: now, w: window.innerWidth });
+		if (now !== sink) {
+			sink = now;
+			line("layout", { sink: now, w: window.innerWidth });
+		}
+		railSample();
 	}).observe(document.documentElement, { subtree: true, childList: true });
+	// iPhone Duo 竖栏（ios-duo-check.sh）：竖栏一侧、竖栏里的侧栏开关（中心点，CSS px = 屏幕 pt，供 duoctl tap）、
+	// 操作槽里的按钮数、竖排底栏在不在、页头里还看得见几个侧栏开关（竖栏在时应为 0）。与上一条相同不重复发
+	let lastRail;
+	const railSample = () => {
+		const q = (s) => document.querySelector(s);
+		const toggle = q('[data-testid="rail-sidebar"]')?.getBoundingClientRect();
+		const info = {
+			side: document.documentElement.dataset.rail ?? null,
+			tap: toggle ? { x: Math.round(toggle.x + toggle.width / 2), y: Math.round(toggle.y + toggle.height / 2) } : null,
+			actions: document.querySelectorAll('[data-testid="rail-actions"] button').length,
+			tabs: q('[data-testid="rail"] [data-tone="rail"]') !== null,
+			headerToggles: [...document.querySelectorAll("[data-sidebar-toggle]")].filter((e) => e.getClientRects().length > 0).length,
+			w: window.innerWidth,
+		};
+		const key = JSON.stringify(info);
+		if (key === lastRail) return;
+		lastRail = key;
+		line("rail", info);
+	};
+	new MutationObserver(railSample).observe(document.documentElement, { attributes: true, attributeFilter: ["data-rail"] });
+	window.addEventListener("resize", railSample, { passive: true });
 	line("ready");
 }
 
