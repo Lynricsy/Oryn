@@ -49,7 +49,7 @@ type RecoveryResult struct {
 	Remaining int
 }
 
-// Recover 作废一个恢复码，签发只能重新注册 Passkey 的一次性会话（15 分钟）。
+// Recover 作废一个恢复码，签发只能重新注册 Passkey 或重设密码登录的一次性会话（15 分钟）。
 func (s *Service) Recover(ctx context.Context, r *http.Request, code string) (RecoveryResult, error) {
 	var res RecoveryResult
 	if normalizeRecoveryCode(code) == "" {
@@ -64,7 +64,7 @@ func (s *Service) Recover(ctx context.Context, r *http.Request, code string) (Re
 		if n == 0 {
 			return newErr(http.StatusUnauthorized, "unauthorized", "恢复码无效或已使用")
 		}
-		res.Cookie, res.Expires, err = createSession(ctx, q, sessionKindRecovery, r.UserAgent(), RecoveryTTL, nil)
+		res.Cookie, res.Expires, err = createSession(ctx, q, sessionKindRecovery, r.UserAgent(), RecoveryTTL, sessionAuth{})
 		if err != nil {
 			return err
 		}

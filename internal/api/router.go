@@ -45,14 +45,17 @@ type Server struct {
 // publicPaths 是 /api/v1 下免鉴权的路径；另外 /provider/v1/ 前缀由 provider 令牌自行鉴权，
 // /api/v1/public/ 前缀是公开分享的匿名只读接口（以 slug 为能力令牌）。
 var publicPaths = map[string]bool{
-	"/healthz":                   true,
-	"/api/v1/auth/setup/begin":   true,
-	"/api/v1/auth/setup/finish":  true,
-	"/api/v1/auth/login/begin":   true,
-	"/api/v1/auth/login/finish":  true,
-	"/api/v1/auth/recovery":      true,
-	"/api/v1/devices/pair/start": true,
-	"/api/v1/devices/pair/poll":  true,
+	"/healthz":                            true,
+	"/api/v1/auth/setup/begin":            true,
+	"/api/v1/auth/setup/finish":           true,
+	"/api/v1/auth/login/begin":            true,
+	"/api/v1/auth/login/finish":           true,
+	"/api/v1/auth/recovery":               true,
+	"/api/v1/auth/password/setup/begin":   true,
+	"/api/v1/auth/password/setup/finish":  true,
+	"/api/v1/auth/password/login":         true,
+	"/api/v1/devices/pair/start":          true,
+	"/api/v1/devices/pair/poll":           true,
 }
 
 // NewRouter 返回控制面根路由。

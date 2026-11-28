@@ -8753,6 +8753,9 @@ type Me struct {
 	DisplayName  string      `json:"displayName"`
 	PasskeyCount *int        `json:"passkeyCount,omitempty"`
 
+	// PasswordEnabled 已启用密码 + TOTP 登录
+	PasswordEnabled *bool `json:"passwordEnabled,omitempty"`
+
 	// RecoveryCodesRemaining 剩余未使用的恢复码数量（仅网页会话）
 	RecoveryCodesRemaining *int `json:"recoveryCodesRemaining,omitempty"`
 }
@@ -10545,6 +10548,27 @@ type PasskeyList struct {
 
 	// ReauthValidUntil 当前会话重新验证的有效期截止（UTC 毫秒）；null = 需要先 reauth
 	ReauthValidUntil *int64 `json:"reauthValidUntil"`
+}
+
+// PasswordCredentials defines model for PasswordCredentials.
+type PasswordCredentials struct {
+	// Code 6 位 TOTP 验证码
+	Code     string `json:"code"`
+	Password string `json:"password"`
+}
+
+// PasswordEnrollFinishRequest defines model for PasswordEnrollFinishRequest.
+type PasswordEnrollFinishRequest struct {
+	// Code 验证器 App 上用本次密钥算出的 6 位验证码
+	Code         string `json:"code"`
+	EnrollmentID string `json:"enrollmentId"`
+	Password     string `json:"password"`
+}
+
+// PasswordSetupBeginRequest defines model for PasswordSetupBeginRequest.
+type PasswordSetupBeginRequest struct {
+	// Token `ost_…` 初始化令牌；恢复流程中省略
+	Token *string `json:"token,omitempty"`
 }
 
 // PauseMode defines model for PauseMode.
@@ -13449,6 +13473,18 @@ type ToolStats struct {
 	Tz    string      `json:"tz"`
 }
 
+// TotpEnrollment defines model for TotpEnrollment.
+type TotpEnrollment struct {
+	// EnrollmentID 本次登记的句柄（5 分钟有效），finish 时回传
+	EnrollmentID string `json:"enrollmentId"`
+
+	// OtpauthURI `otpauth://totp/…`（SHA1、6 位、30 秒），渲染成二维码给验证器 App 扫描
+	OtpauthURI string `json:"otpauthUri"`
+
+	// Secret TOTP 密钥（无填充 Base32），供无法扫码时手动输入
+	Secret string `json:"secret"`
+}
+
 // UpdateBoxAppRequest defines model for UpdateBoxAppRequest.
 type UpdateBoxAppRequest struct {
 	Public bool `json:"public"`
@@ -15474,6 +15510,21 @@ type AddPasskeyFinishJSONRequestBody = AuthSetupFinishRequest
 
 // RenamePasskeyJSONRequestBody defines body for RenamePasskey for application/json ContentType.
 type RenamePasskeyJSONRequestBody = RenamePasskeyRequest
+
+// SetPasswordFinishJSONRequestBody defines body for SetPasswordFinish for application/json ContentType.
+type SetPasswordFinishJSONRequestBody = PasswordEnrollFinishRequest
+
+// AuthPasswordLoginJSONRequestBody defines body for AuthPasswordLogin for application/json ContentType.
+type AuthPasswordLoginJSONRequestBody = PasswordCredentials
+
+// PasswordReauthJSONRequestBody defines body for PasswordReauth for application/json ContentType.
+type PasswordReauthJSONRequestBody = PasswordCredentials
+
+// AuthPasswordSetupBeginJSONRequestBody defines body for AuthPasswordSetupBegin for application/json ContentType.
+type AuthPasswordSetupBeginJSONRequestBody = PasswordSetupBeginRequest
+
+// AuthPasswordSetupFinishJSONRequestBody defines body for AuthPasswordSetupFinish for application/json ContentType.
+type AuthPasswordSetupFinishJSONRequestBody = PasswordEnrollFinishRequest
 
 // ReauthFinishJSONRequestBody defines body for ReauthFinish for application/json ContentType.
 type ReauthFinishJSONRequestBody = AuthLoginFinishRequest
@@ -18627,6 +18678,27 @@ type ServerInterface interface {
 	// RenamePasskey 给 Passkey 改名
 	// (PATCH /api/v1/auth/passkeys/{passkeyId})
 	RenamePasskey(w http.ResponseWriter, r *http.Request, passkeyID string)
+	// DeletePassword 关闭密码登录（删除密码与 TOTP）
+	// (DELETE /api/v1/auth/password)
+	DeletePassword(w http.ResponseWriter, r *http.Request)
+	// SetPasswordBegin 开始设置或重设密码登录（生成新的 TOTP 密钥）
+	// (POST /api/v1/auth/password/begin)
+	SetPasswordBegin(w http.ResponseWriter, r *http.Request)
+	// SetPasswordFinish 完成设置密码登录；替换原有密码与 TOTP
+	// (POST /api/v1/auth/password/finish)
+	SetPasswordFinish(w http.ResponseWriter, r *http.Request)
+	// AuthPasswordLogin 用密码 + TOTP 验证码登录
+	// (POST /api/v1/auth/password/login)
+	AuthPasswordLogin(w http.ResponseWriter, r *http.Request)
+	// PasswordReauth 用密码 + TOTP 验证码重新验证当前会话；此后 5 分钟内可做敏感操作
+	// (POST /api/v1/auth/password/reauth)
+	PasswordReauth(w http.ResponseWriter, r *http.Request)
+	// AuthPasswordSetupBegin 开始用密码 + TOTP 初始化（不用 Passkey）
+	// (POST /api/v1/auth/password/setup/begin)
+	AuthPasswordSetupBegin(w http.ResponseWriter, r *http.Request)
+	// AuthPasswordSetupFinish 完成密码 + TOTP 初始化
+	// (POST /api/v1/auth/password/setup/finish)
+	AuthPasswordSetupFinish(w http.ResponseWriter, r *http.Request)
 	// ReauthBegin 对当前会话做一次 Passkey 断言（allowCredentials = 所有者全部凭据）
 	// (POST /api/v1/auth/reauth/begin)
 	ReauthBegin(w http.ResponseWriter, r *http.Request)
@@ -20118,6 +20190,48 @@ func (_ Unimplemented) DeletePasskey(w http.ResponseWriter, r *http.Request, pas
 // RenamePasskey 给 Passkey 改名
 // (PATCH /api/v1/auth/passkeys/{passkeyId})
 func (_ Unimplemented) RenamePasskey(w http.ResponseWriter, r *http.Request, passkeyID string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeletePassword 关闭密码登录（删除密码与 TOTP）
+// (DELETE /api/v1/auth/password)
+func (_ Unimplemented) DeletePassword(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetPasswordBegin 开始设置或重设密码登录（生成新的 TOTP 密钥）
+// (POST /api/v1/auth/password/begin)
+func (_ Unimplemented) SetPasswordBegin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetPasswordFinish 完成设置密码登录；替换原有密码与 TOTP
+// (POST /api/v1/auth/password/finish)
+func (_ Unimplemented) SetPasswordFinish(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AuthPasswordLogin 用密码 + TOTP 验证码登录
+// (POST /api/v1/auth/password/login)
+func (_ Unimplemented) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PasswordReauth 用密码 + TOTP 验证码重新验证当前会话；此后 5 分钟内可做敏感操作
+// (POST /api/v1/auth/password/reauth)
+func (_ Unimplemented) PasswordReauth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AuthPasswordSetupBegin 开始用密码 + TOTP 初始化（不用 Passkey）
+// (POST /api/v1/auth/password/setup/begin)
+func (_ Unimplemented) AuthPasswordSetupBegin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AuthPasswordSetupFinish 完成密码 + TOTP 初始化
+// (POST /api/v1/auth/password/setup/finish)
+func (_ Unimplemented) AuthPasswordSetupFinish(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -24486,6 +24600,104 @@ func (siw *ServerInterfaceWrapper) RenamePasskey(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RenamePasskey(w, r, passkeyID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeletePassword operation middleware
+func (siw *ServerInterfaceWrapper) DeletePassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeletePassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetPasswordBegin operation middleware
+func (siw *ServerInterfaceWrapper) SetPasswordBegin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPasswordBegin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetPasswordFinish operation middleware
+func (siw *ServerInterfaceWrapper) SetPasswordFinish(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetPasswordFinish(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthPasswordLogin operation middleware
+func (siw *ServerInterfaceWrapper) AuthPasswordLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthPasswordLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PasswordReauth operation middleware
+func (siw *ServerInterfaceWrapper) PasswordReauth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PasswordReauth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthPasswordSetupBegin operation middleware
+func (siw *ServerInterfaceWrapper) AuthPasswordSetupBegin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthPasswordSetupBegin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AuthPasswordSetupFinish operation middleware
+func (siw *ServerInterfaceWrapper) AuthPasswordSetupFinish(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AuthPasswordSetupFinish(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34434,6 +34646,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/auth/recovery-codes", wrapper.RegenerateRecoveryCodes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/password/setup/begin", wrapper.AuthPasswordSetupBegin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/password/setup/finish", wrapper.AuthPasswordSetupFinish)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/password/login", wrapper.AuthPasswordLogin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/password/reauth", wrapper.PasswordReauth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/password/begin", wrapper.SetPasswordBegin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/auth/password/finish", wrapper.SetPasswordFinish)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/auth/password", wrapper.DeletePassword)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/v1/auth/app-session", wrapper.CreateAppSession)

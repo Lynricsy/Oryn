@@ -1,6 +1,6 @@
 # 代部署手册（给 AI agent）
 
-本文写给替用户部署 Oryn 的 AI agent。读完后你能在一台 Linux 服务器上装好控制面 `orynd` 与本机 Docker provider，把一个能用的 Oryn 交给用户。全程只问用户必要的信息，其余自己探测。用户只需要亲手做一件事：在浏览器里注册管理员 Passkey。
+本文写给替用户部署 Oryn 的 AI agent。读完后你能在一台 Linux 服务器上装好控制面 `orynd` 与本机 Docker provider，把一个能用的 Oryn 交给用户。全程只问用户必要的信息，其余自己探测。用户只需要亲手做一件事：在浏览器里注册管理员 Passkey（或设置密码 + 验证器）。
 
 本文只覆盖单机最小部署：一个域名、HTTPS、本机 Docker 跑 orb。网络隔离、Sysbox、Firecracker、Office 引擎、Hindsight、GitHub 集成等可选组件见 [deploy.md](deploy.md)，用户明确要求时再做。
 
@@ -189,7 +189,7 @@ sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token
 
 > Oryn 已经部署好了：`https://<域名>`
 >
-> 1. 用电脑或手机的浏览器打开这个一次性链接，注册管理员 Passkey：`<setup 链接>`。页面会显示 10 个恢复码，只显示这一次，请存到密码管理器里。
+> 1. 用电脑或手机的浏览器打开这个一次性链接，注册管理员 Passkey；没有 Passkey 的设备可以改用「密码 + 验证器」（需要 Google Authenticator、1Password 等能生成 6 位验证码的 App）：`<setup 链接>`。页面会显示 10 个恢复码，只显示这一次，请存到密码管理器里。
 > 2. 配置模型：「设置 → 助手与 Agent → 配置文件」编辑 `models.yml`；API Key 等密钥在「设置 → 工作区 → 密钥」。
 > 3. 在「设置 → 账户与设备」里吊销名为 `deploy-agent` 的设备，那是部署时用的临时凭据。
 >
@@ -209,4 +209,4 @@ sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token
 | provider 一直 `offline` | 看 `journalctl -u oryn-provider -n 50`：令牌文件权限或内容错误，或 `url` 连不上 `127.0.0.1:7600`。 |
 | orb 停在 `failed`，原因提到镜像 | 镜像没下载完或标签写错。`docker image inspect` 确认后重新开线程。 |
 | orb 停在 `connecting` | orb 连不上 `orb_url`。确认 `orynd.yaml` 的 `listen` 包含 docker0 地址，主机防火墙没有拦 docker0 → 7600。 |
-| `setup-token` 报已初始化 | 用户已经注册过 Passkey，不需要新链接；忘记登录方式时让用户用恢复码。 |
+| `setup-token` 报已初始化 | 用户已经初始化过（Passkey 或密码 + 验证器），不需要新链接；忘记登录方式或丢了验证器时让用户用恢复码，恢复后可重新注册 Passkey 或重设密码 + 验证器。 |

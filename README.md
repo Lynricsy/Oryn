@@ -16,7 +16,7 @@
 ### 让 Agent 替你部署
 
 > [!TIP]
-> 有一台 Linux 服务器和一个域名就够了。把下面这段话发给你的 Coding Agent（Claude Code、Codex、omp 等能执行命令的都行），它会按 [代部署手册](docs/deploy-agent.md) 自行探测环境、一次问完必要信息、逐步验证，最后把能用的 Oryn 交给你；你只需在浏览器里注册管理员 Passkey。
+> 有一台 Linux 服务器和一个域名就够了。把下面这段话发给你的 Coding Agent（Claude Code、Codex、omp 等能执行命令的都行），它会按 [代部署手册](docs/deploy-agent.md) 自行探测环境、一次问完必要信息、逐步验证，最后把能用的 Oryn 交给你；你只需在浏览器里注册管理员 Passkey（或设置密码 + 验证器）。
 
 ```text
 请阅读 https://raw.githubusercontent.com/Lynricsy/Oryn/main/docs/deploy-agent.md ，严格按照其中的步骤在这台服务器上部署 Oryn。
@@ -259,7 +259,7 @@ Web、Windows / macOS / Linux、Android、iOS、CLI 与 Chrome 扩展，服务�
   <img alt="设置页：左侧是按个人、助手与 Agent、工作区分组的设置导航与搜索框；左图为模型与角色分区，列出默认 Agent 身份、默认思考档位与轮换顺序里每个角色的模型；右图为 SSH 主机分区，列出全局主机、钥匙与网关审计。" src="docs/assets/settings-light.png" width="100%">
 </picture>
 
-- **设置页**：约 20 个分区按「个人 / 助手与 Agent / 工作区」分组导航，可搜索；「账户」里管理 Passkey（新增、改名、删除）并重新生成恢复码，「外观」里切换界面语言（同时传给 agent），「控制面」里覆盖运维参数。
+- **设置页**：约 20 个分区按「个人 / 助手与 Agent / 工作区」分组导航，可搜索；「账户」里管理 Passkey（新增、改名、删除）与密码 + 验证器登录（设置、重设、关闭）并重新生成恢复码，「外观」里切换界面语言（同时传给 agent），「控制面」里覆盖运维参数。
 - **图形化 Agent 配置**：技能、子 Agent、模型角色、规则、扩展与 MCP 做成表单，保存后数秒内下发到所有运行中的环境。技能目录、扩展与工具子目录可以管理附属文件，也能把文件夹或 zip 整个导入。
 - **项目级配置**：每个项目另有一层规则与技能，镜像进环境但不写进仓库，`git status` 保持干净；还可以有自己的环境变量与 Git 令牌，只注入本项目的环境，同名时覆盖全局密钥。
 - **Hindsight 记忆**：同一项目的线程共享记忆，不同项目互不可见；跨项目的经验要你批准才生效。
@@ -299,7 +299,7 @@ flowchart LR
 
 | 组件 | 路径 | 职责 |
 |---|---|---|
-| `orynd` | `cmd/orynd` | 控制面单二进制：REST + WebSocket、SQLite、Passkey 与设备配对、调度、协调沙箱、出站密钥注入代理、内嵌 Web 前端 |
+| `orynd` | `cmd/orynd` | 控制面单二进制：REST + WebSocket、SQLite、Passkey / 密码 + TOTP 登录与设备配对、调度、协调沙箱、出站密钥注入代理、内嵌 Web 前端 |
 | `orbd` | `cmd/orbd` | 环境内守护进程：出站长连接回控制面，监督 Oryn Core，托管服务、桌面与本地出站代理；`--runner` 模式接入个人机器 |
 | `oryn` | `cmd/oryn` | 命令行客户端与宿主机 Provider 执行器（`docker`、`firecracker`、脚本 `dispatch`） |
 | `web/` | `web/src` · `web/src-tauri` | React 19 + Tailwind CSS 4 前端，以及桌面与移动端的 Tauri 2 壳 |
@@ -350,7 +350,7 @@ EOF
 ./bin/orynd --config .dev/quickstart-orynd.yaml
 ```
 
-首次启动会在日志里打印一次性的 `http://localhost:7600/setup#token=ost_…`。在浏览器打开它，注册管理员 Passkey 并保存恢复码。
+首次启动会在日志里打印一次性的 `http://localhost:7600/setup#token=ost_…`。在浏览器打开它，注册管理员 Passkey（或改用密码 + 验证器 App 的 6 位验证码）并保存恢复码。
 
 > [!NOTE]
 > 仓库里的 `dev/orynd.yaml` 额外监听 Firecracker 网段 `172.31.255.1`，没有初始化该网卡时请用上面的纯 Docker 配置。

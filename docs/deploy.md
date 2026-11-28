@@ -167,7 +167,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now orynd
 journalctl -u orynd | grep 'setup#token='
 ```
 
-首次启动没有所有者时，日志里打印 `https://oryn.example.com/setup#token=ost_…`（令牌在 URL 片段里，不会进入反代访问日志）。浏览器打开它注册 Passkey，并妥善保存显示一次的 10 个恢复码。链接丢失时运行 `sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token` 重新生成。之后可在「设置 → 账户」里重新生成恢复码、管理 Passkey（新增、改名、删除）；新增、删除和重新生成之前要先用 Passkey 验证一次，且要在浏览器里操作（桌面端和移动端的内嵌页面用不了 Passkey）。
+首次启动没有所有者时，日志里打印 `https://oryn.example.com/setup#token=ost_…`（令牌在 URL 片段里，不会进入反代访问日志）。浏览器打开它注册 Passkey，或者改用「密码 + 验证器」（密码加 Google Authenticator、1Password 等 App 上的 6 位 TOTP 验证码，两者缺一不可），并妥善保存显示一次的 10 个恢复码。链接丢失时运行 `sudo -u oryn orynd --config /etc/oryn/orynd.yaml setup-token` 重新生成。之后可在「设置 → 账户」里重新生成恢复码、管理 Passkey（新增、改名、删除）、设置 / 重设 / 关闭密码登录；这些操作之前要先验证一次（Passkey，或密码 + 验证码），Passkey 要在浏览器里操作（桌面端和移动端的内嵌页面用不了 Passkey，可以用密码 + 验证码）。Passkey 与密码登录至少保留一种：没有密码登录时不能删最后一把 Passkey，没有 Passkey 时不能关闭密码登录。密码登录相关端点不做限流。
 
 桌面 App（Windows / macOS / Linux）连接的就是这个 `public_url`，安装、配对与发版见 [desktop.md](desktop.md)。App 要求服务器走 HTTPS：会话 Cookie 带 `Secure`，Linux 上的 WebKitGTK 连 `http://localhost` 也不接受，本机试用时用 `dev/tlsproxy` 在 orynd 前面加一层 TLS。
 

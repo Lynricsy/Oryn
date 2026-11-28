@@ -265,6 +265,148 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password/setup/begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 开始用密码 + TOTP 初始化（不用 Passkey）
+         * @description 与 `auth/setup/begin` 相同的两种入口：首次初始化带 `ost_` 初始化令牌；恢复流程持恢复会话 Cookie（省略 `token`），
+         *     此时会替换已有的密码与 TOTP。返回待登记的 TOTP 密钥，finish 时须同时提交密码与该密钥算出的验证码。
+         */
+        post: operations["authPasswordSetupBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/setup/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 完成密码 + TOTP 初始化
+         * @description 成功后建立网页会话（Set-Cookie `__Host-oryn_session`）。首次初始化时返回 10 个恢复码（仅此一次）；恢复流程删除恢复会话。
+         */
+        post: operations["authPasswordSetupFinish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 用密码 + TOTP 验证码登录
+         * @description 密码或验证码任一不对（含未启用密码登录）统一返回 401 unauthorized，不区分哪一项错。同一个验证码只能用一次。
+         */
+        post: operations["authPasswordLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/reauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 用密码 + TOTP 验证码重新验证当前会话；此后 5 分钟内可做敏感操作
+         * @description 只接受网页会话与 App 会话。错误规则同 `authPasswordLogin`。
+         */
+        post: operations["passwordReauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/begin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 开始设置或重设密码登录（生成新的 TOTP 密钥）
+         * @description 需要 5 分钟内的验证（Passkey 或密码 + TOTP），否则 403 reauth_required。
+         */
+        post: operations["setPasswordBegin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 完成设置密码登录；替换原有密码与 TOTP
+         * @description 用密码登录的其它会话立即吊销（当前会话保留）；不签发新会话。
+         */
+        post: operations["setPasswordFinish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 关闭密码登录（删除密码与 TOTP）
+         * @description 需要 5 分钟内的验证，否则 403 reauth_required；没有 Passkey 时 → 409 last_login_method（至少保留一种登录方式）。
+         *     用密码登录的其它会话立即吊销（当前会话保留）。
+         */
+        delete: operations["deletePassword"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/app-session": {
         parameters: {
             query?: never;
@@ -6947,6 +7089,8 @@ export interface components {
                 deviceId?: components["schemas"]["DeviceId"];
             };
             passkeyCount?: number;
+            /** @description 已启用密码 + TOTP 登录 */
+            passwordEnabled?: boolean;
             /** @description 剩余未使用的恢复码数量（仅网页会话） */
             recoveryCodesRemaining?: number;
         };
@@ -7001,6 +7145,29 @@ export interface components {
         };
         RecoveryCodes: {
             recoveryCodes: string[];
+        };
+        PasswordSetupBeginRequest: {
+            /** @description `ost_…` 初始化令牌；恢复流程中省略 */
+            token?: string;
+        };
+        TotpEnrollment: {
+            /** @description 本次登记的句柄（5 分钟有效），finish 时回传 */
+            enrollmentId: string;
+            /** @description TOTP 密钥（无填充 Base32），供无法扫码时手动输入 */
+            secret: string;
+            /** @description `otpauth://totp/…`（SHA1、6 位、30 秒），渲染成二维码给验证器 App 扫描 */
+            otpauthUri: string;
+        };
+        PasswordEnrollFinishRequest: {
+            enrollmentId: string;
+            password: string;
+            /** @description 验证器 App 上用本次密钥算出的 6 位验证码 */
+            code: string;
+        };
+        PasswordCredentials: {
+            password: string;
+            /** @description 6 位 TOTP 验证码 */
+            code: string;
         };
         Device: {
             id: components["schemas"]["DeviceId"];
@@ -14174,6 +14341,173 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RecoveryCodes"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    authPasswordSetupBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordSetupBeginRequest"];
+            };
+        };
+        responses: {
+            /** @description 待登记的 TOTP 密钥 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpEnrollment"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    authPasswordSetupFinish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordEnrollFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description 初始化成功 */
+            200: {
+                headers: {
+                    /** @description `__Host-oryn_session=…; Path=/; HttpOnly; Secure; SameSite=Lax` */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSetupFinishResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    authPasswordLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordCredentials"];
+            };
+        };
+        responses: {
+            /** @description 登录成功（Set-Cookie `__Host-oryn_session`，有效期 30 天，滑动续期；此刻记为一次验证） */
+            200: {
+                headers: {
+                    /** @description `__Host-oryn_session=…; Path=/; HttpOnly; Secure; SameSite=Lax` */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    passwordReauth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordCredentials"];
+            };
+        };
+        responses: {
+            /** @description 验证时刻与有效期截止 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReauthResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setPasswordBegin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 待登记的 TOTP 密钥 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpEnrollment"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setPasswordFinish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordEnrollFinishRequest"];
+            };
+        };
+        responses: {
+            /** @description 已设置 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deletePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已关闭 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

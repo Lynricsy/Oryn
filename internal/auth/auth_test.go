@@ -120,11 +120,11 @@ func TestRevocations(t *testing.T) {
 	require.ErrorAs(t, svc.RevokeDevice(ctx, "dev_missing"), &e)
 	assert.Equal(t, 404, e.Status)
 
-	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, nil)
+	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, sessionAuth{})
 	require.NoError(t, err)
 	require.NoError(t, svc.Logout(ctx, Principal{Kind: KindWeb, ID: ids.Hash(live)}))
 
-	old, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, nil)
+	old, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, sessionAuth{})
 	require.NoError(t, err)
 	require.NoError(t, svc.sweep(ctx, time.Now()))
 
@@ -279,7 +279,7 @@ func TestTicketsRevokedWithPrincipal(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok, "已吊销的设备")
 
-	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, nil)
+	live, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, sessionAuth{})
 	require.NoError(t, err)
 	web := Principal{Kind: KindWeb, ID: ids.Hash(live)}
 	ok, err = svc.PrincipalValid(ctx, web)
@@ -289,7 +289,7 @@ func TestTicketsRevokedWithPrincipal(t *testing.T) {
 	ok, err = svc.PrincipalValid(ctx, web)
 	require.NoError(t, err)
 	assert.False(t, ok, "已注销的网页会话")
-	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, nil)
+	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, sessionAuth{})
 	require.NoError(t, err)
 	ok, err = svc.PrincipalValid(ctx, Principal{Kind: KindWeb, ID: ids.Hash(expired)})
 	require.NoError(t, err)
@@ -311,9 +311,9 @@ func TestSessionCookie(t *testing.T) {
 	}
 	assert.NotContains(t, strings.ToLower(sc), "domain")
 
-	valid, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, nil)
+	valid, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", SessionTTL, sessionAuth{})
 	require.NoError(t, err)
-	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, nil)
+	expired, _, err := createSession(ctx, svc.st.Q, sessionKindFull, "", -time.Second, sessionAuth{})
 	require.NoError(t, err)
 	old := time.Now().Add(-2 * sessionTouchEvery).UnixMilli()
 	require.NoError(t, svc.st.Q.TouchWebSession(ctx, db.TouchWebSessionParams{

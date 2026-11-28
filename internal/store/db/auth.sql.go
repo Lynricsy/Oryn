@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const clearOwnerPassword = `-- name: ClearOwnerPassword :exec
+UPDATE owner SET password_hash = NULL, totp_secret_enc = NULL, totp_last_step = 0 WHERE id = 1
+`
+
+func (q *Queries) ClearOwnerPassword(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearOwnerPassword)
+	return err
+}
+
 const countPasskeys = `-- name: CountPasskeys :one
 SELECT COUNT(*) FROM passkeys
 `
@@ -112,22 +121,24 @@ func (q *Queries) CreatePasskey(ctx context.Context, arg CreatePasskeyParams) er
 }
 
 const createWebSession = `-- name: CreateWebSession :exec
-INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, verified_at, passkey_id)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, verified_at, passkey_id, via_password)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 `
 
 type CreateWebSessionParams struct {
-	IDHash     string `json:"idHash"`
-	Kind       string `json:"kind"`
-	CreatedAt  int64  `json:"createdAt"`
-	ExpiresAt  int64  `json:"expiresAt"`
-	LastSeenAt int64  `json:"lastSeenAt"`
-	UserAgent  string `json:"userAgent"`
-	VerifiedAt *int64 `json:"verifiedAt"`
-	PasskeyID  []byte `json:"passkeyId"`
+	IDHash      string `json:"idHash"`
+	Kind        string `json:"kind"`
+	CreatedAt   int64  `json:"createdAt"`
+	ExpiresAt   int64  `json:"expiresAt"`
+	LastSeenAt  int64  `json:"lastSeenAt"`
+	UserAgent   string `json:"userAgent"`
+	VerifiedAt  *int64 `json:"verifiedAt"`
+	PasskeyID   []byte `json:"passkeyId"`
+	ViaPassword int64  `json:"viaPassword"`
 }
 
 // verified_at / passkey_id: set when the session was created by a passkey ceremony (login / setup), NULL otherwise.
+// via_password = 1: created by password + TOTP login / setup (verified_at set, passkey_id NULL).
 func (q *Queries) CreateWebSession(ctx context.Context, arg CreateWebSessionParams) error {
 	_, err := q.db.ExecContext(ctx, createWebSession,
 		arg.IDHash,
@@ -138,6 +149,7 @@ func (q *Queries) CreateWebSession(ctx context.Context, arg CreateWebSessionPara
 		arg.UserAgent,
 		arg.VerifiedAt,
 		arg.PasskeyID,
+		arg.ViaPassword,
 	)
 	return err
 }
@@ -243,9 +255,36 @@ func (q *Queries) DeleteWebSessionsByPasskey(ctx context.Context, arg DeleteWebS
 	return items, nil
 }
 
+const deleteWebSessionsByPassword = `-- name: DeleteWebSessionsByPassword :many
+DELETE FROM web_sessions WHERE via_password = 1 AND id_hash <> ?1 RETURNING id_hash
+`
+
+func (q *Queries) DeleteWebSessionsByPassword(ctx context.Context, keepIDHash string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, deleteWebSessionsByPassword, keepIDHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id_hash string
+		if err := rows.Scan(&id_hash); err != nil {
+			return nil, err
+		}
+		items = append(items, id_hash)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getOwner = `-- name: GetOwner :one
 
-SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image, agent_name, assistant_name, assistant_avatar_icon, assistant_avatar_image, new_thread_target, auto_publish_artifacts, github_automation_identity, selection_actions, language, generative_ui, ai_consent_at, ai_consent_recipients FROM owner WHERE id = 1
+SELECT id, display_name, user_handle, created_at, git_name, git_email, agent_avatar_icon, agent_avatar_image, user_avatar_icon, user_avatar_image, agent_name, assistant_name, assistant_avatar_icon, assistant_avatar_image, new_thread_target, auto_publish_artifacts, github_automation_identity, selection_actions, language, generative_ui, ai_consent_at, ai_consent_recipients, password_hash, totp_secret_enc, totp_last_step FROM owner WHERE id = 1
 `
 
 // Owner, passkeys, recovery codes, web sessions.
@@ -275,6 +314,9 @@ func (q *Queries) GetOwner(ctx context.Context) (Owner, error) {
 		&i.GenerativeUi,
 		&i.AiConsentAt,
 		&i.AiConsentRecipients,
+		&i.PasswordHash,
+		&i.TotpSecretEnc,
+		&i.TotpLastStep,
 	)
 	return i, err
 }
@@ -300,7 +342,7 @@ func (q *Queries) GetPasskey(ctx context.Context, id []byte) (Passkey, error) {
 }
 
 const getWebSession = `-- name: GetWebSession :one
-SELECT web_sessions.id_hash, web_sessions.kind, web_sessions.created_at, web_sessions.expires_at, web_sessions.last_seen_at, web_sessions.user_agent, web_sessions.device_id, web_sessions.verified_at, web_sessions.passkey_id FROM web_sessions
+SELECT web_sessions.id_hash, web_sessions.kind, web_sessions.created_at, web_sessions.expires_at, web_sessions.last_seen_at, web_sessions.user_agent, web_sessions.device_id, web_sessions.verified_at, web_sessions.passkey_id, web_sessions.via_password FROM web_sessions
 WHERE web_sessions.id_hash = ?1
   AND (web_sessions.device_id IS NULL OR EXISTS (
     SELECT 1 FROM devices WHERE devices.id = web_sessions.device_id AND devices.revoked_at IS NULL
@@ -323,6 +365,7 @@ func (q *Queries) GetWebSession(ctx context.Context, idHash string) (WebSession,
 		&i.DeviceID,
 		&i.VerifiedAt,
 		&i.PasskeyID,
+		&i.ViaPassword,
 	)
 	return i, err
 }
@@ -405,6 +448,21 @@ func (q *Queries) RenamePasskey(ctx context.Context, arg RenamePasskeyParams) (i
 	return result.RowsAffected()
 }
 
+const setOwnerPassword = `-- name: SetOwnerPassword :exec
+UPDATE owner SET password_hash = ?1, totp_secret_enc = ?2, totp_last_step = 0 WHERE id = 1
+`
+
+type SetOwnerPasswordParams struct {
+	PasswordHash  *string `json:"passwordHash"`
+	TotpSecretEnc []byte  `json:"totpSecretEnc"`
+}
+
+// Replaces password + TOTP together; resets the replay guard because the TOTP secret is new.
+func (q *Queries) SetOwnerPassword(ctx context.Context, arg SetOwnerPasswordParams) error {
+	_, err := q.db.ExecContext(ctx, setOwnerPassword, arg.PasswordHash, arg.TotpSecretEnc)
+	return err
+}
+
 const touchWebSession = `-- name: TouchWebSession :exec
 UPDATE web_sessions SET last_seen_at = ?1, expires_at = ?2 WHERE id_hash = ?3
 `
@@ -475,6 +533,19 @@ type UseRecoveryCodeParams struct {
 
 func (q *Queries) UseRecoveryCode(ctx context.Context, arg UseRecoveryCodeParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, useRecoveryCode, arg.UsedAt, arg.CodeHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const useTotpStep = `-- name: UseTotpStep :execrows
+UPDATE owner SET totp_last_step = ?1 WHERE id = 1 AND totp_last_step < ?1
+`
+
+// Accepts a TOTP time step only once: 0 rows = the step (or a later one) was already used.
+func (q *Queries) UseTotpStep(ctx context.Context, step int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, useTotpStep, step)
 	if err != nil {
 		return 0, err
 	}

@@ -1,10 +1,10 @@
-// Package auth 实现控制面鉴权：Passkey（WebAuthn）初始化与登录、恢复码、网页会话、
+// Package auth 实现控制面鉴权：Passkey（WebAuthn）与密码 + TOTP 的初始化与登录、恢复码、网页会话、
 // 设备配对与设备令牌、WebSocket 票据，以及保护 /api/v1 的中间件。
 //
 // 凭据形态：
 //   - 网页会话：Cookie `__Host-oryn_session`（Path=/、无 Domain、HttpOnly、Secure、SameSite=Lax），30 天有效、滑动续期；
 //     `__Host-` 前缀让浏览器拒绝任何带 Domain 的同名 Cookie，portal 子域无法从父域写入覆盖它；
-//     变更类请求必须带头 `X-Oryn-CSRF: 1`。kind=recovery 的会话只能调用 `auth/setup/*`、`me`、`auth/logout`。
+//     变更类请求必须带头 `X-Oryn-CSRF: 1`。kind=recovery 的会话只能调用 `auth/setup/*`、`auth/password/setup/*`、`me`、`auth/logout`。
 //   - 设备令牌：`Authorization: Bearer odt_…`，可逐台吊销。
 //
 // 库中只保存令牌与会话 id 的 SHA-256。
@@ -40,7 +40,7 @@ const (
 	sessionTouchEvery = time.Hour
 	// deviceTouchEvery 控制设备 last_seen_at 的更新频率。
 	deviceTouchEvery = time.Minute
-	// reauthTTL 是一次 Passkey 验证（登录、注册或 reauth）对敏感操作的有效期，从验证时刻起固定，不随操作延长。
+	// reauthTTL 是一次验证（Passkey 或密码 + TOTP 的登录、注册或 reauth）对敏感操作的有效期，从验证时刻起固定，不随操作延长。
 	reauthTTL = 5 * time.Minute
 
 	sessionKindFull     = "full"
@@ -103,10 +103,10 @@ func newErr(status int, code, msg string) *Error {
 var (
 	errUnauthorized = newErr(http.StatusUnauthorized, "unauthorized", "未登录或凭据无效")
 	errCSRF         = newErr(http.StatusForbidden, "forbidden", "缺少 X-Oryn-CSRF 头")
-	errRecoveryOnly = newErr(http.StatusForbidden, "forbidden", "恢复会话只能重新注册 Passkey")
+	errRecoveryOnly = newErr(http.StatusForbidden, "forbidden", "恢复会话只能重新注册 Passkey 或重设密码登录")
 )
 
-// recoveryAllowed 是恢复会话可经中间件访问的路径（auth/setup/* 免中间件，由处理器自行校验）。
+// recoveryAllowed 是恢复会话可经中间件访问的路径（auth/setup/*、auth/password/setup/* 免中间件，由处理器自行校验）。
 var recoveryAllowed = map[string]bool{
 	"/api/v1/me":          true,
 	"/api/v1/auth/logout": true,
@@ -262,9 +262,16 @@ func isMutation(method string) bool {
 	return true
 }
 
-// createSession 写入一条网页会话并返回明文 Cookie 值与过期时间。
-// passkeyID 非 nil 表示会话由 Passkey 仪式（登录 / 注册）签发：记下所用凭据，并把此刻记为一次验证。
-func createSession(ctx context.Context, q *db.Queries, kind, userAgent string, ttl time.Duration, passkeyID []byte) (string, time.Time, error) {
+// sessionAuth 记录会话由哪种验证签发；零值 = 未验证（恢复会话、admin 签发）。
+type sessionAuth struct {
+	// passkeyID 非 nil：由 Passkey 仪式（登录 / 注册）签发，记下所用凭据。
+	passkeyID []byte
+	// password：由密码 + TOTP 登录或初始化签发；改密码、关闭密码登录时据此吊销。
+	password bool
+}
+
+// createSession 写入一条网页会话并返回明文 Cookie 值与过期时间。经过验证（Passkey 或密码 + TOTP）签发的会话把此刻记为一次验证。
+func createSession(ctx context.Context, q *db.Queries, kind, userAgent string, ttl time.Duration, via sessionAuth) (string, time.Time, error) {
 	tok := ids.Token("ows")
 	now := time.Now()
 	exp := now.Add(ttl)
@@ -273,11 +280,14 @@ func createSession(ctx context.Context, q *db.Queries, kind, userAgent string, t
 	}
 	arg := db.CreateWebSessionParams{
 		IDHash: ids.Hash(tok), Kind: kind, CreatedAt: now.UnixMilli(),
-		ExpiresAt: exp.UnixMilli(), LastSeenAt: now.UnixMilli(), UserAgent: userAgent,
+		ExpiresAt: exp.UnixMilli(), LastSeenAt: now.UnixMilli(), UserAgent: userAgent, PasskeyID: via.passkeyID,
 	}
-	if passkeyID != nil {
+	if via.passkeyID != nil || via.password {
 		verified := now.UnixMilli()
-		arg.VerifiedAt, arg.PasskeyID = &verified, passkeyID
+		arg.VerifiedAt = &verified
+	}
+	if via.password {
+		arg.ViaPassword = 1
 	}
 	err := q.CreateWebSession(ctx, arg)
 	return tok, exp, err
@@ -285,7 +295,7 @@ func createSession(ctx context.Context, q *db.Queries, kind, userAgent string, t
 
 // CreateWebSession 直接签发一条完整网页会话（测试与本机工具使用），返回 Cookie 值。
 func CreateWebSession(ctx context.Context, st *store.Store, userAgent string) (string, error) {
-	tok, _, err := createSession(ctx, st.Q, sessionKindFull, userAgent, SessionTTL, nil)
+	tok, _, err := createSession(ctx, st.Q, sessionKindFull, userAgent, SessionTTL, sessionAuth{})
 	return tok, err
 }
 
@@ -309,10 +319,10 @@ func ReauthValidUntil(p Principal, now time.Time) (time.Time, bool) {
 	return until, true
 }
 
-// RequireRecentAuth 要求会话在 reauthTTL 内做过 Passkey 验证，否则返回 403 reauth_required。
+// RequireRecentAuth 要求会话在 reauthTTL 内做过验证（Passkey 或密码 + TOTP），否则返回 403 reauth_required。
 func RequireRecentAuth(p Principal, now time.Time) error {
 	if _, ok := ReauthValidUntil(p, now); !ok {
-		return newErr(http.StatusForbidden, "reauth_required", "这项操作需要先用 Passkey 验证身份（5 分钟内有效）")
+		return newErr(http.StatusForbidden, "reauth_required", "这项操作需要先验证身份（Passkey 或密码 + 验证码，5 分钟内有效）")
 	}
 	return nil
 }

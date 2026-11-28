@@ -84,7 +84,7 @@ func TestAPIPolicyComplete(t *testing.T) {
 			t.Errorf("%s: ConfirmWhen 只用于 write 且必须有 ConfirmNote", op)
 		}
 	}
-	want := map[opClass]int{opRead: 141, opWrite: 86, opConfirm: 63, opDeny: 127}
+	want := map[opClass]int{opRead: 141, opWrite: 86, opConfirm: 63, opDeny: 134}
 	for c, n := range want {
 		if counts[c] != n {
 			t.Errorf("%s 数量 = %d, want %d", c, counts[c], n)

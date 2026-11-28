@@ -20,6 +20,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/secrets"
 	"github.com/Lynricsy/Oryn/internal/store"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -40,11 +41,14 @@ const (
 // 仪式状态是无状态的：begin 把 SessionData 等用进程内随机密钥以 AES-GCM 封装成 ceremonyId 交给客户端，
 // finish 时解封校验。服务端不为进行中的仪式保存任何东西，匿名请求无法把仪式表塞满挤掉所有者的登录；
 // 只有成功完成的仪式记入 used（5 分钟），防止同一 ceremonyId 被重放。重启后未完成的仪式失效。
+// 密码 + TOTP 的登记（password.go）沿用同一套封装。
 type Service struct {
 	st      *store.Store
 	dataDir string
 	wa      *webauthn.WebAuthn
 	aead    cipher.AEAD
+	// box 用数据目录的主密钥加密落库的 TOTP 密钥。
+	box *secrets.Box
 
 	limiter     *limiter
 	revocations revocations
@@ -65,6 +69,8 @@ type ceremony struct {
 	TokenHash       string `json:"t,omitempty"`
 	RecoverySession string `json:"r,omitempty"`
 	PasskeyName     string `json:"n,omitempty"`
+	// TOTPSecret 是待登记的 TOTP 密钥（无填充 Base32），只出现在密码 + TOTP 的登记仪式里。
+	TOTPSecret string `json:"p,omitempty"`
 	// WebSession 是发起仪式的网页会话 id 哈希（追加 Passkey、重新验证）；finish 时必须等于当前会话。
 	WebSession string `json:"w,omitempty"`
 }
@@ -98,8 +104,12 @@ func NewService(st *store.Store, dataDir, publicURL string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	box, err := secrets.LoadOrCreate(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
-		st: st, dataDir: dataDir, wa: wa, aead: aead, limiter: newLimiter(), used: map[string]time.Time{},
+		st: st, dataDir: dataDir, wa: wa, aead: aead, box: box, limiter: newLimiter(), used: map[string]time.Time{},
 		appCodes: NewCodes("oac"),
 	}, nil
 }
@@ -228,34 +238,9 @@ type Ceremony struct {
 // BeginSetup 开始注册 Passkey。token 非空 = 首次初始化；为空 = 恢复流程（要求恢复会话 Cookie + CSRF 头）。
 func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name string) (Ceremony, error) {
 	c := &ceremony{Kind: ceremonySetup, PasskeyName: strings.TrimSpace(name)}
-	var user *waUser
-	if token != "" {
-		_, _, exists, err := loadOwner(ctx, s.st.Q)
-		if err != nil {
-			return Ceremony{}, err
-		}
-		if exists {
-			return Ceremony{}, newErr(http.StatusConflict, "conflict", ErrAlreadyInitialized.Error())
-		}
-		if c.TokenHash, err = checkSetupToken(s.dataDir, token); err != nil {
-			return Ceremony{}, err
-		}
-		c.Handle = make([]byte, 32)
-		_, _ = rand.Read(c.Handle)
-		user = &waUser{handle: c.Handle, display: defaultOwner}
-	} else {
-		ws, err := s.recoverySession(ctx, r)
-		if err != nil {
-			return Ceremony{}, err
-		}
-		u, _, exists, err := loadOwner(ctx, s.st.Q)
-		if err != nil {
-			return Ceremony{}, err
-		}
-		if !exists {
-			return Ceremony{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
-		}
-		user, c.RecoverySession = u, ws.IDHash
+	user, err := s.beginSetupEntry(ctx, r, token, c)
+	if err != nil {
+		return Ceremony{}, err
 	}
 	creation, session, err := s.wa.BeginRegistration(user, registrationOptions(user)...)
 	if err != nil {
@@ -268,6 +253,115 @@ func (s *Service) BeginSetup(ctx context.Context, r *http.Request, token, name s
 	}
 	id, err := s.putCeremony(c)
 	return Ceremony{ID: id, Options: options}, err
+}
+
+// beginSetupEntry 校验初始化入口并把入口信息记进仪式：token 非空 = 首次初始化（尚无所有者、令牌有效，生成新用户句柄）；
+// 为空 = 恢复流程（恢复会话 Cookie + CSRF 头，所有者已存在）。返回注册 Passkey 所用的用户。
+func (s *Service) beginSetupEntry(ctx context.Context, r *http.Request, token string, c *ceremony) (*waUser, error) {
+	if token != "" {
+		_, _, exists, err := loadOwner(ctx, s.st.Q)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, newErr(http.StatusConflict, "conflict", ErrAlreadyInitialized.Error())
+		}
+		if c.TokenHash, err = checkSetupToken(s.dataDir, token); err != nil {
+			return nil, err
+		}
+		c.Handle = make([]byte, 32)
+		_, _ = rand.Read(c.Handle)
+		return &waUser{handle: c.Handle, display: defaultOwner}, nil
+	}
+	ws, err := s.recoverySession(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	u, _, exists, err := loadOwner(ctx, s.st.Q)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, newErr(http.StatusConflict, "conflict", "尚未初始化")
+	}
+	c.RecoverySession = ws.IDHash
+	return u, nil
+}
+
+// finishSetupEntry 在 finish 时重新校验入口：恢复流程要求仍是发起仪式的那个恢复会话；首次初始化要求令牌未被重新生成。
+// 返回注册 Passkey 所用的用户。
+func (s *Service) finishSetupEntry(ctx context.Context, r *http.Request, c *ceremony) (*waUser, error) {
+	if c.RecoverySession == "" {
+		if cur, err := currentSetupTokenHash(s.dataDir); err != nil {
+			return nil, err
+		} else if cur != c.TokenHash {
+			return nil, newErr(http.StatusUnauthorized, "unauthorized", "初始化令牌已被重新生成")
+		}
+		return &waUser{handle: c.Handle, display: defaultOwner}, nil
+	}
+	ws, err := s.recoverySession(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	if ws.IDHash != c.RecoverySession {
+		return nil, errUnauthorized
+	}
+	u, _, exists, err := loadOwner(ctx, s.st.Q)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, newErr(http.StatusConflict, "conflict", "尚未初始化")
+	}
+	return u, nil
+}
+
+// completeSetup 在一个事务里收尾初始化：首次初始化写入所有者与 10 个恢复码，恢复流程删除恢复会话；
+// 再由 write 写入凭据（返回需要吊销的其它会话），最后按 via 签发完整网页会话。
+// 事务提交后作废初始化令牌（首次）或广播吊销（恢复会话与 write 吊销的会话）。
+func (s *Service) completeSetup(ctx context.Context, r *http.Request, c *ceremony, via sessionAuth, write func(q *db.Queries) ([]string, error)) (SetupResult, error) {
+	var res SetupResult
+	initial := c.RecoverySession == ""
+	if initial {
+		res.RecoveryCodes = newRecoveryCodes()
+	}
+	now := time.Now().UnixMilli()
+	var revoked []string
+	err := s.st.Tx(ctx, func(q *db.Queries) error {
+		if initial {
+			if _, err := q.GetOwner(ctx); err == nil {
+				return newErr(http.StatusConflict, "conflict", ErrAlreadyInitialized.Error())
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err := q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: defaultOwner, UserHandle: c.Handle, CreatedAt: now}); err != nil {
+				return err
+			}
+			if err := replaceRecoveryCodes(ctx, q, res.RecoveryCodes, now); err != nil {
+				return err
+			}
+		} else if err := q.DeleteWebSession(ctx, c.RecoverySession); err != nil {
+			return err
+		}
+		var err error
+		if revoked, err = write(q); err != nil {
+			return err
+		}
+		res.Cookie, res.Expires, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL, via)
+		return err
+	})
+	if err != nil {
+		return SetupResult{}, err
+	}
+	if initial {
+		consumeSetupToken(s.dataDir, c.TokenHash)
+	} else {
+		s.revocations.publish(KindWeb, c.RecoverySession)
+	}
+	for _, h := range revoked {
+		s.revocations.publish(KindWeb, h)
+	}
+	return res, nil
 }
 
 // recoverySession 要求请求带未过期的恢复会话 Cookie 与 CSRF 头。
@@ -299,30 +393,9 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 	if err != nil {
 		return SetupResult{}, err
 	}
-	var user *waUser
-	if c.RecoverySession != "" {
-		ws, err := s.recoverySession(ctx, r)
-		if err != nil {
-			return SetupResult{}, err
-		}
-		if ws.IDHash != c.RecoverySession {
-			return SetupResult{}, errUnauthorized
-		}
-		u, _, exists, err := loadOwner(ctx, s.st.Q)
-		if err != nil {
-			return SetupResult{}, err
-		}
-		if !exists {
-			return SetupResult{}, newErr(http.StatusConflict, "conflict", "尚未初始化")
-		}
-		user = u
-	} else {
-		if cur, err := currentSetupTokenHash(s.dataDir); err != nil {
-			return SetupResult{}, err
-		} else if cur != c.TokenHash {
-			return SetupResult{}, newErr(http.StatusUnauthorized, "unauthorized", "初始化令牌已被重新生成")
-		}
-		user = &waUser{handle: c.Handle, display: defaultOwner}
+	user, err := s.finishSetupEntry(ctx, r, c)
+	if err != nil {
+		return SetupResult{}, err
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(credential)
 	if err != nil {
@@ -339,43 +412,9 @@ func (s *Service) FinishSetup(ctx context.Context, r *http.Request, ceremonyID s
 	if err != nil {
 		return SetupResult{}, err
 	}
-	var res SetupResult
-	initial := c.RecoverySession == ""
-	if initial {
-		res.RecoveryCodes = newRecoveryCodes()
-	}
-	now := row.CreatedAt
-	err = s.st.Tx(ctx, func(q *db.Queries) error {
-		if initial {
-			if _, err := q.GetOwner(ctx); err == nil {
-				return newErr(http.StatusConflict, "conflict", ErrAlreadyInitialized.Error())
-			} else if !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if err := q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: defaultOwner, UserHandle: c.Handle, CreatedAt: now}); err != nil {
-				return err
-			}
-			if err := replaceRecoveryCodes(ctx, q, res.RecoveryCodes, now); err != nil {
-				return err
-			}
-		} else if err := q.DeleteWebSession(ctx, c.RecoverySession); err != nil {
-			return err
-		}
-		if err := q.CreatePasskey(ctx, row); err != nil {
-			return err
-		}
-		res.Cookie, res.Expires, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL, cred.ID)
-		return err
+	return s.completeSetup(ctx, r, c, sessionAuth{passkeyID: cred.ID}, func(q *db.Queries) ([]string, error) {
+		return nil, q.CreatePasskey(ctx, row)
 	})
-	if err != nil {
-		return SetupResult{}, err
-	}
-	if initial {
-		consumeSetupToken(s.dataDir, c.TokenHash)
-	} else {
-		s.revocations.publish(KindWeb, c.RecoverySession)
-	}
-	return res, nil
 }
 
 // BeginLogin 开始可发现凭据登录。
@@ -445,7 +484,7 @@ func (s *Service) FinishLogin(ctx context.Context, r *http.Request, ceremonyID s
 		}); err != nil {
 			return err
 		}
-		tok, exp, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL, cred.ID)
+		tok, exp, err = createSession(ctx, q, sessionKindFull, r.UserAgent(), SessionTTL, sessionAuth{passkeyID: cred.ID})
 		return err
 	})
 	return tok, exp, err

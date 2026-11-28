@@ -119,7 +119,7 @@ func (s *Service) RenamePasskey(ctx context.Context, p Principal, id, name strin
 }
 
 // DeletePasskey 删除一把 Passkey，并吊销用它登录的其它会话（当前会话保留）。
-// 要求 5 分钟内的 Passkey 验证；最后一把不能删（409 last_passkey）。
+// 要求 5 分钟内的验证；未启用密码登录时最后一把不能删（409 last_passkey），至少保留一种登录方式。
 func (s *Service) DeletePasskey(ctx context.Context, p Principal, id string) error {
 	if err := requireOwnerSession(p); err != nil {
 		return err
@@ -143,7 +143,13 @@ func (s *Service) DeletePasskey(ctx context.Context, p Principal, id string) err
 			return err
 		}
 		if n <= 1 {
-			return newErr(http.StatusConflict, "last_passkey", "不能删除最后一把 Passkey")
+			o, err := q.GetOwner(ctx)
+			if err != nil {
+				return err
+			}
+			if o.PasswordHash == nil {
+				return newErr(http.StatusConflict, "last_passkey", "不能删除最后一把 Passkey：请先设置密码登录")
+			}
 		}
 		if _, err := q.DeletePasskey(ctx, raw); err != nil {
 			return err

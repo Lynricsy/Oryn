@@ -22,12 +22,12 @@ Linux 运行时依赖：WebKitGTK 4.1、GTK 3、librsvg，托盘需要 `libayata
 
 1. 在连接页填服务器地址，例如 `oryn.example.com`。不写协议时按 `https://` 处理，路径部分会被忽略。只有 `localhost`、`127.0.0.1`、`[::1]` 可以用 `http://`，但 Linux 上实际仍需 HTTPS，原因见 [deploy.md](deploy.md)。
 2. App 在**系统浏览器**里打开 `<服务器>/pair`，连接页上显示配对码（如 `ABCD-EFGH`，10 分钟内有效）。
-3. 在浏览器里用 Passkey 登录，输入配对码并批准。App 自动收到设备令牌，存入系统凭据库（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），随后进入 Web UI。
+3. 在浏览器里登录（Passkey，或密码 + 验证码），输入配对码并批准。App 自动收到设备令牌，存入系统凭据库（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），随后进入 Web UI。
 
 也可以从命令行预填地址：`oryn-desktop --server https://oryn.example.com`。
 
 - **Linux 没有 Secret Service 时**：令牌写入 `~/.config/com.lynricsy.oryn/credentials.json`，权限 0600，与 CLI 的 `~/.config/oryn/credentials.json` 是同一种做法。连接页和「设置 → 桌面应用」会提示这一点。之后这台机器一直使用文件存储，不再尝试凭据库。
-- **App 里不能批准其它设备的配对**：App 的会话由设备令牌换来，服务器拒绝它签发新设备。要批准配对，请在浏览器里用 Passkey 登录。
+- **App 里不能批准其它设备的配对**：App 的会话由设备令牌换来，服务器拒绝它签发新设备。要批准配对，请在浏览器里登录（Passkey，或密码 + 验证码）。
 - **吊销**：在任何一端的「设置 → 设备」里吊销这台桌面设备后，App 删除本地令牌并回到连接页。
 - **更换服务器**：「设置 → 桌面应用 → 更换服务器…」或托盘菜单。确认后 App 会尽量在服务器上吊销自己，删除本地令牌，然后重启。
 

@@ -9,6 +9,17 @@ INSERT INTO owner (id, display_name, user_handle, created_at) VALUES (1, @displa
 -- name: UpdateOwnerDisplayName :exec
 UPDATE owner SET display_name = @display_name WHERE id = 1;
 
+-- name: SetOwnerPassword :exec
+-- Replaces password + TOTP together; resets the replay guard because the TOTP secret is new.
+UPDATE owner SET password_hash = @password_hash, totp_secret_enc = @totp_secret_enc, totp_last_step = 0 WHERE id = 1;
+
+-- name: ClearOwnerPassword :exec
+UPDATE owner SET password_hash = NULL, totp_secret_enc = NULL, totp_last_step = 0 WHERE id = 1;
+
+-- name: UseTotpStep :execrows
+-- Accepts a TOTP time step only once: 0 rows = the step (or a later one) was already used.
+UPDATE owner SET totp_last_step = @step WHERE id = 1 AND totp_last_step < @step;
+
 -- name: CreatePasskey :exec
 INSERT INTO passkeys (id, public_key, sign_count, transports, credential, name, created_at)
 VALUES (@id, @public_key, @sign_count, @transports, @credential, @name, @created_at);
@@ -51,8 +62,9 @@ SELECT CAST(COALESCE(MAX(created_at), 0) AS INTEGER) AS generated_at FROM recove
 
 -- name: CreateWebSession :exec
 -- verified_at / passkey_id: set when the session was created by a passkey ceremony (login / setup), NULL otherwise.
-INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, verified_at, passkey_id)
-VALUES (@id_hash, @kind, @created_at, @expires_at, @last_seen_at, @user_agent, sqlc.narg(verified_at), sqlc.narg(passkey_id));
+-- via_password = 1: created by password + TOTP login / setup (verified_at set, passkey_id NULL).
+INSERT INTO web_sessions (id_hash, kind, created_at, expires_at, last_seen_at, user_agent, verified_at, passkey_id, via_password)
+VALUES (@id_hash, @kind, @created_at, @expires_at, @last_seen_at, @user_agent, sqlc.narg(verified_at), sqlc.narg(passkey_id), @via_password);
 
 -- name: GetWebSession :one
 -- App sessions (device_id set) are treated as gone once their device is revoked or missing,
@@ -75,6 +87,9 @@ UPDATE web_sessions SET verified_at = @verified_at WHERE id_hash = @id_hash;
 
 -- name: DeleteWebSessionsByPasskey :many
 DELETE FROM web_sessions WHERE passkey_id = @passkey_id AND id_hash <> @keep_id_hash RETURNING id_hash;
+
+-- name: DeleteWebSessionsByPassword :many
+DELETE FROM web_sessions WHERE via_password = 1 AND id_hash <> @keep_id_hash RETURNING id_hash;
 
 -- name: DeleteExpiredWebSessions :execrows
 DELETE FROM web_sessions WHERE expires_at <= @now;

@@ -890,6 +890,9 @@ type Owner struct {
 	GenerativeUi             int64   `json:"generativeUi"`
 	AiConsentAt              *int64  `json:"aiConsentAt"`
 	AiConsentRecipients      string  `json:"aiConsentRecipients"`
+	PasswordHash             *string `json:"passwordHash"`
+	TotpSecretEnc            []byte  `json:"totpSecretEnc"`
+	TotpLastStep             int64   `json:"totpLastStep"`
 }
 
 type OwnerMemoryChunk struct {
@@ -1606,13 +1609,14 @@ type UsageRecord struct {
 }
 
 type WebSession struct {
-	IDHash     string  `json:"idHash"`
-	Kind       string  `json:"kind"`
-	CreatedAt  int64   `json:"createdAt"`
-	ExpiresAt  int64   `json:"expiresAt"`
-	LastSeenAt int64   `json:"lastSeenAt"`
-	UserAgent  string  `json:"userAgent"`
-	DeviceID   *string `json:"deviceId"`
-	VerifiedAt *int64  `json:"verifiedAt"`
-	PasskeyID  []byte  `json:"passkeyId"`
+	IDHash      string  `json:"idHash"`
+	Kind        string  `json:"kind"`
+	CreatedAt   int64   `json:"createdAt"`
+	ExpiresAt   int64   `json:"expiresAt"`
+	LastSeenAt  int64   `json:"lastSeenAt"`
+	UserAgent   string  `json:"userAgent"`
+	DeviceID    *string `json:"deviceId"`
+	VerifiedAt  *int64  `json:"verifiedAt"`
+	PasskeyID   []byte  `json:"passkeyId"`
+	ViaPassword int64   `json:"viaPassword"`
 }

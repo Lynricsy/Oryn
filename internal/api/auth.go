@@ -169,6 +169,7 @@ func (s *Server) me(ctx context.Context, p auth.Principal) (apigen.Me, error) {
 	o, err := s.Store.Q.GetOwner(ctx)
 	if err == nil {
 		me.DisplayName, me.CreatedAt = o.DisplayName, o.CreatedAt
+		me.PasswordEnabled = new(o.PasswordHash != nil)
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return me, err
 	}

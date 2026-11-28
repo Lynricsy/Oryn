@@ -313,7 +313,8 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("settings", opDeny, deny(denyHuman), "authSetupBegin", "authSetupFinish", "authLoginBegin", "authLoginFinish", "authRecovery",
 		"authLogout", "createAppSession", "devicePairStart", "getDevicePairing", "devicePairApprove", "devicePairPoll", "patchOpsSettings",
 		"listPasskeys", "addPasskeyBegin", "addPasskeyFinish", "renamePasskey", "deletePasskey", "reauthBegin", "reauthFinish",
-		"getRecoveryCodeStatus", "regenerateRecoveryCodes")
+		"getRecoveryCodeStatus", "regenerateRecoveryCodes", "authPasswordSetupBegin", "authPasswordSetupFinish", "authPasswordLogin",
+		"passwordReauth", "setPasswordBegin", "setPasswordFinish", "deletePassword")
 	// AI 数据共享同意（App Store 5.1.2(i)）只能由主人本人在界面上给出或撤回，助手只读
 	set("settings", opDeny, deny(denyHuman), "putAiDataConsent", "deleteAiDataConsent")
 
