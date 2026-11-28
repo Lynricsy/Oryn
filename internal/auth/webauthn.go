@@ -316,7 +316,8 @@ func (s *Service) finishSetupEntry(ctx context.Context, r *http.Request, c *cere
 	return u, nil
 }
 
-// completeSetup 在一个事务里收尾初始化：首次初始化写入所有者与 10 个恢复码，恢复流程删除恢复会话；
+// completeSetup 在一个事务里收尾初始化：首次初始化写入所有者与 10 个恢复码；恢复流程消耗恢复会话——
+// 只有恰好删到这一行（未过期、仍是恢复会话）才继续，被另一场仪式抢先用掉时不改凭据、不签发会话。
 // 再由 write 写入凭据（返回需要吊销的其它会话），最后按 via 签发完整网页会话。
 // 事务提交后作废初始化令牌（首次）或广播吊销（恢复会话与 write 吊销的会话）。
 func (s *Service) completeSetup(ctx context.Context, r *http.Request, c *ceremony, via sessionAuth, write func(q *db.Queries) ([]string, error)) (SetupResult, error) {
@@ -340,8 +341,10 @@ func (s *Service) completeSetup(ctx context.Context, r *http.Request, c *ceremon
 			if err := replaceRecoveryCodes(ctx, q, res.RecoveryCodes, now); err != nil {
 				return err
 			}
-		} else if err := q.DeleteWebSession(ctx, c.RecoverySession); err != nil {
+		} else if n, err := q.ConsumeRecoverySession(ctx, db.ConsumeRecoverySessionParams{IDHash: c.RecoverySession, Now: now}); err != nil {
 			return err
+		} else if n != 1 {
+			return newErr(http.StatusUnauthorized, "unauthorized", "恢复会话已用过或已过期")
 		}
 		var err error
 		if revoked, err = write(q); err != nil {

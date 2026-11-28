@@ -18,6 +18,24 @@ func (q *Queries) ClearOwnerPassword(ctx context.Context) error {
 	return err
 }
 
+const consumeRecoverySession = `-- name: ConsumeRecoverySession :execrows
+DELETE FROM web_sessions WHERE id_hash = ?1 AND kind = 'recovery' AND expires_at > ?2
+`
+
+type ConsumeRecoverySessionParams struct {
+	IDHash string `json:"idHash"`
+	Now    int64  `json:"now"`
+}
+
+// Deletes an unexpired recovery session exactly once: 0 rows = already consumed by another ceremony, expired, or not a recovery session.
+func (q *Queries) ConsumeRecoverySession(ctx context.Context, arg ConsumeRecoverySessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, consumeRecoverySession, arg.IDHash, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countPasskeys = `-- name: CountPasskeys :one
 SELECT COUNT(*) FROM passkeys
 `
@@ -540,12 +558,18 @@ func (q *Queries) UseRecoveryCode(ctx context.Context, arg UseRecoveryCodeParams
 }
 
 const useTotpStep = `-- name: UseTotpStep :execrows
-UPDATE owner SET totp_last_step = ?1 WHERE id = 1 AND totp_last_step < ?1
+UPDATE owner SET totp_last_step = ?1 WHERE id = 1 AND totp_last_step < ?1 AND totp_secret_enc = ?2
 `
 
-// Accepts a TOTP time step only once: 0 rows = the step (or a later one) was already used.
-func (q *Queries) UseTotpStep(ctx context.Context, step int64) (int64, error) {
-	result, err := q.db.ExecContext(ctx, useTotpStep, step)
+type UseTotpStepParams struct {
+	Step          int64  `json:"step"`
+	TotpSecretEnc []byte `json:"totpSecretEnc"`
+}
+
+// Accepts a TOTP time step only once, and only while the TOTP secret is still the ciphertext that was verified
+// (it changes on every set; NULL once disabled): 0 rows = step already used, or the credentials were rotated / cleared.
+func (q *Queries) UseTotpStep(ctx context.Context, arg UseTotpStepParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, useTotpStep, arg.Step, arg.TotpSecretEnc)
 	if err != nil {
 		return 0, err
 	}

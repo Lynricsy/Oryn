@@ -202,7 +202,7 @@ func storePassword(ctx context.Context, q *db.Queries, cred passwordCredential, 
 	if err := q.SetOwnerPassword(ctx, db.SetOwnerPasswordParams{PasswordHash: &cred.hash, TotpSecretEnc: cred.secretEnc}); err != nil {
 		return nil, err
 	}
-	if _, err := q.UseTotpStep(ctx, cred.step); err != nil {
+	if _, err := q.UseTotpStep(ctx, db.UseTotpStepParams{Step: cred.step, TotpSecretEnc: cred.secretEnc}); err != nil {
 		return nil, err
 	}
 	return q.DeleteWebSessionsByPassword(ctx, keep)
@@ -236,31 +236,44 @@ func (s *Service) FinishPasswordSetup(ctx context.Context, r *http.Request, enro
 	})
 }
 
-// checkPassword 校验密码与验证码，并在事务里用掉命中的时间步；任何一项不对、未启用或验证码已用过都返回 errBadPassword。
-// then 在同一事务里执行（签发会话或记下验证时间）。
-func (s *Service) checkPassword(ctx context.Context, password, code string, then func(q *db.Queries) error) error {
+// passwordCheck 是事务外校验通过的结果：命中的时间步，以及当时读到的 TOTP 密文。
+// 密文每次设置都会变（随机 nonce），关闭后为 NULL，因此它就是凭据版本。
+type passwordCheck struct {
+	step      int64
+	secretEnc []byte
+}
+
+// verifyPasswordLogin 在事务外校验密码与验证码（Argon2id 较慢，不占着事务）。
+// 任何一项不对或未启用都返回 errBadPassword；两项都算完再判定，不让响应区分是哪一项错。
+func (s *Service) verifyPasswordLogin(ctx context.Context, password, code string) (passwordCheck, error) {
 	o, err := s.st.Q.GetOwner(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		return errBadPassword
+		return passwordCheck{}, errBadPassword
 	}
 	if err != nil {
-		return err
+		return passwordCheck{}, err
 	}
 	if o.PasswordHash == nil || len(o.TotpSecretEnc) == 0 || utf8.RuneCountInString(password) > passwordMaxRunes {
-		return errBadPassword
+		return passwordCheck{}, errBadPassword
 	}
 	key, err := s.box.Open(totpAAD, o.TotpSecretEnc)
 	if err != nil {
-		return fmt.Errorf("解密 TOTP 密钥: %w", err)
+		return passwordCheck{}, fmt.Errorf("解密 TOTP 密钥: %w", err)
 	}
-	// 两项都算完再判定，不让响应区分是哪一项错
 	pwOK := verifyPassword(*o.PasswordHash, password)
 	step, codeOK := matchTOTP(key, code, time.Now())
 	if !pwOK || !codeOK {
-		return errBadPassword
+		return passwordCheck{}, errBadPassword
 	}
+	return passwordCheck{step: step, secretEnc: o.TotpSecretEnc}, nil
+}
+
+// consumePasswordCheck 在事务里用掉命中的时间步，条件是凭据仍是校验时那一版：
+// 校验之后被重设或关闭（即便时间步因此归零）也一律 errBadPassword，旧凭据不能在吊销之后签出会话。
+// then 在同一事务里执行（签发会话或记下验证时间）。
+func (s *Service) consumePasswordCheck(ctx context.Context, c passwordCheck, then func(q *db.Queries) error) error {
 	return s.st.Tx(ctx, func(q *db.Queries) error {
-		n, err := q.UseTotpStep(ctx, step)
+		n, err := q.UseTotpStep(ctx, db.UseTotpStepParams{Step: c.step, TotpSecretEnc: c.secretEnc})
 		if err != nil {
 			return err
 		}
@@ -269,6 +282,15 @@ func (s *Service) checkPassword(ctx context.Context, password, code string, then
 		}
 		return then(q)
 	})
+}
+
+// checkPassword 校验密码与验证码并用掉命中的时间步，再在同一事务里执行 then。
+func (s *Service) checkPassword(ctx context.Context, password, code string, then func(q *db.Queries) error) error {
+	c, err := s.verifyPasswordLogin(ctx, password, code)
+	if err != nil {
+		return err
+	}
+	return s.consumePasswordCheck(ctx, c, then)
 }
 
 // LoginWithPassword 用密码 + 验证码登录，签发完整网页会话（此刻记为一次验证），返回 Cookie 值与过期时间。

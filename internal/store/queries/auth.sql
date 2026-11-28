@@ -17,8 +17,9 @@ UPDATE owner SET password_hash = @password_hash, totp_secret_enc = @totp_secret_
 UPDATE owner SET password_hash = NULL, totp_secret_enc = NULL, totp_last_step = 0 WHERE id = 1;
 
 -- name: UseTotpStep :execrows
--- Accepts a TOTP time step only once: 0 rows = the step (or a later one) was already used.
-UPDATE owner SET totp_last_step = @step WHERE id = 1 AND totp_last_step < @step;
+-- Accepts a TOTP time step only once, and only while the TOTP secret is still the ciphertext that was verified
+-- (it changes on every set; NULL once disabled): 0 rows = step already used, or the credentials were rotated / cleared.
+UPDATE owner SET totp_last_step = @step WHERE id = 1 AND totp_last_step < @step AND totp_secret_enc = @totp_secret_enc;
 
 -- name: CreatePasskey :exec
 INSERT INTO passkeys (id, public_key, sign_count, transports, credential, name, created_at)
@@ -90,6 +91,10 @@ DELETE FROM web_sessions WHERE passkey_id = @passkey_id AND id_hash <> @keep_id_
 
 -- name: DeleteWebSessionsByPassword :many
 DELETE FROM web_sessions WHERE via_password = 1 AND id_hash <> @keep_id_hash RETURNING id_hash;
+
+-- name: ConsumeRecoverySession :execrows
+-- Deletes an unexpired recovery session exactly once: 0 rows = already consumed by another ceremony, expired, or not a recovery session.
+DELETE FROM web_sessions WHERE id_hash = @id_hash AND kind = 'recovery' AND expires_at > @now;
 
 -- name: DeleteExpiredWebSessions :execrows
 DELETE FROM web_sessions WHERE expires_at <= @now;
