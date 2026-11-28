@@ -14,8 +14,8 @@
  * 网页胶囊顶上。原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
  * `tone="rail"`：iPhone Duo 竖栏（`Rail.tsx`）里的版本：同样四项竖着排成一根玻璃胶囊，跟在竖栏的页头按钮下面；
  * 此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。底栏原本是「换侧栏里的列表」：手机下沉侧栏收着时
- * 点竖栏的一项 = 先切到该分区（主区照常跳到它上次停留的页面），再展开侧栏露出那个分区的列表；侧栏开着时与侧栏里的底栏
- * 一样（换分区，再点当前分区收起）。列侧栏常驻（内屏横放）时侧栏本来就看得见，也与侧栏里的底栏一样。
+ * 点竖栏的一项 = 先展开侧栏、再切到该分区（主区照常跳到它上次停留的页面），等同于打开侧栏后点侧栏里的底栏；
+ * 侧栏开着时与侧栏里的底栏一样（换分区，再点当前分区收起）。列侧栏常驻（内屏横放）时侧栏本来就看得见，也与侧栏里的底栏一样。
  */
 import {
 	type ReactNode,
@@ -25,6 +25,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useAssistantIdentity } from "../../api/identity-queries";
 import { host, type NativeTabBarSpec } from "../../lib/host";
