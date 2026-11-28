@@ -128,8 +128,12 @@ probe() { jq -sc --arg e "$1" 'map(select(.event == $e)) | sort_by(.nav, .seq)' 
 last_layout() { probe layout | jq -e --argjson s "$1" 'last | .info.sink == $s and ((.info.w < 600) == $s)'; }
 # last_sink <true|false>：壳的最后一条 sink.set
 last_sink() { ev sink.set | tail -1 | jq -e --argjson o "$1" '.on == $o'; }
-# 竖栏下外屏的原生页头只剩标题胶囊：最后一条 header.set 开着、没有侧栏钮（它在竖栏顶上）、有标题
-header_titled() { ev header.set | tail -1 | jq -e '.on and .lead == null and .title != null'; }
+# 竖栏下外屏的原生页头只剩标题胶囊：最后一条 header.set 开着、没有侧栏钮（它在竖栏顶上）、有标题，
+# 且最后一条 header.show 已淡入（set 成功只代表挂上，原生页头初始隐藏）
+header_titled() {
+  ev header.set | tail -1 | jq -e '.on and .lead == null and .title != null' >/dev/null &&
+    ev header.show | tail -1 | jq -e '.alpha == 1'
+}
 # rail_side：壳的最后一条 rail 竖排在某一侧，且竖栏矩形不空
 rail_side() { ev rail | tail -1 | jq -e '(.side == "left" or .side == "right") and .frame.width > 0 and .frame.height > 0'; }
 # rail_note <姿态>：最后一条 rail 原文进 Step Summary

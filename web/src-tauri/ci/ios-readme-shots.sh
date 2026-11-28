@@ -98,8 +98,11 @@ web_rail() {
 }
 # native_rail <最少操作数>：壳最后一条 rail.set 是原生竖栏的内容，没被遮挡，页头操作至少这么多个
 native_rail() { last_is rail.set ".key != null and .covered == false and (.actions | length) >= $1"; }
-# Duo 外屏：竖栏模式下原生页头不接管（侧栏开关挪进竖栏），等壳报告竖栏、原生竖栏带着视图钮就位
-ready_duo_outer() { last_is rail '.side != null' && web_rail && native_rail 1; }
+# Duo 外屏：竖栏接管侧栏开关，原生页头只剩标题胶囊（lead 为 null）且已淡入；壳报告竖栏、原生竖栏带着视图钮就位
+ready_duo_outer() {
+  last_is header.set '.on and .key == $k and .lead == null and .title != null' && last_is header.show '.alpha == 1' &&
+    last_is rail '.side != null' && web_rail && native_rail 1
+}
 # Duo 内屏横放：列侧栏布局，且竖栏带着页头操作（会话树、更多，非双段时还有信息面板）
 ready_duo_inner() { ready_inner && last_is rail '.side != null' && web_rail && native_rail 2; }
 
