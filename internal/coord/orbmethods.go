@@ -155,8 +155,8 @@ func (s *Service) pullRelation(ctx context.Context, c, t db.Thread) (apigen.Link
 // maxThreadList 是 thread.list 一次列出的线程上限。
 const maxThreadList = 100
 
-// onThreadList 列出调用方可以 thread.pull 的线程：SQL 先按亲属 / 项目 / Space 取候选，再逐个按 pullRelation 过滤掉
-// runner 与全自动 orb 上的线程。
+// onThreadList 列出调用方可以 thread.pull 的线程：SQL 在 LIMIT 之前就按 pull 规则排除 runner 与全自动 orb 上的平级线程
+// （否则较新的禁入线程会把可取的挤出前 100 条），再逐个按 pullRelation 复核。
 func (s *Service) onThreadList(ctx context.Context, orbID string, params json.RawMessage) (any, error) {
 	var p apigen.LinkCtlThreadListParams
 	if err := decodeParams(params, &p); err != nil {
@@ -166,8 +166,12 @@ func (s *Service) onThreadList(ctx context.Context, orbID string, params json.Ra
 	if err != nil {
 		return nil, err
 	}
+	auto, err := s.automationThread(ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.st.Q.ListThreadPullCandidates(ctx, db.ListThreadPullCandidatesParams{ID: c.ID, ParentID: derefStr(c.ParentThreadID),
-		ProjectID: derefStr(c.ProjectID), SpaceID: derefStr(c.SpaceID), Lim: maxThreadList})
+		Siblings: !auto, ProjectID: derefStr(c.ProjectID), SpaceID: derefStr(c.SpaceID), Lim: maxThreadList})
 	if err != nil {
 		return nil, err
 	}

@@ -557,27 +557,34 @@ func (q *Queries) ListThreadLabels(ctx context.Context, threadID string) ([]stri
 const listThreadPullCandidates = `-- name: ListThreadPullCandidates :many
 SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads
 WHERE kind = 'work' AND archived_at IS NULL AND hidden = 0 AND orb_id IS NOT NULL AND id <> CAST(?1 AS TEXT)
+  AND cwd IS NULL AND orb_id NOT IN (SELECT o.id FROM orbs o WHERE o.kind = 'runner')
   AND (parent_thread_id = CAST(?1 AS TEXT) OR id = CAST(?2 AS TEXT)
-       OR project_id = CAST(?3 AS TEXT) OR space_id = CAST(?4 AS TEXT))
+       OR (CAST(?3 AS BOOLEAN)
+           AND orb_id NOT IN (SELECT o.id FROM orbs o WHERE o.automation)
+           AND (project_id = CAST(?4 AS TEXT) OR space_id = CAST(?5 AS TEXT))))
 ORDER BY COALESCE(last_message_at, updated_at) DESC, id
-LIMIT CAST(?5 AS INTEGER)
+LIMIT CAST(?6 AS INTEGER)
 `
 
 type ListThreadPullCandidatesParams struct {
 	ID        string `json:"id"`
 	ParentID  string `json:"parentId"`
+	Siblings  bool   `json:"siblings"`
 	ProjectID string `json:"projectId"`
 	SpaceID   string `json:"spaceId"`
 	Lim       int64  `json:"lim"`
 }
 
-// Work threads an orb thread may pull from (`oryn thread list`): unarchived, visible, with an orb, other than @id, and
-// @id's children, its parent, or in @project_id / @space_id (” = none); most recent activity first. The service
-// drops runner and automation threads afterwards.
+// Work threads an orb thread may pull from (`oryn thread list`), with the pull rule applied before LIMIT so excluded
+// threads cannot push allowed ones out: unarchived, visible, with an orb, other than @id, not on a runner (no cwd, orb
+// kind not 'runner' = orbs.KindRunner); @id's children or its parent (” = none), or, when @siblings (the caller is not
+// on an automation orb), threads in @project_id / @space_id (” = none) whose orb is not an automation orb. Most recent
+// activity first. The service re-checks each row with the same rule.
 func (q *Queries) ListThreadPullCandidates(ctx context.Context, arg ListThreadPullCandidatesParams) ([]Thread, error) {
 	rows, err := q.db.QueryContext(ctx, listThreadPullCandidates,
 		arg.ID,
 		arg.ParentID,
+		arg.Siblings,
 		arg.ProjectID,
 		arg.SpaceID,
 		arg.Lim,

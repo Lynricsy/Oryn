@@ -102,6 +102,40 @@ func TestOnThreadList(t *testing.T) {
 	assert.Equal(t, CodeForbidden, ctlCode(t, err), "调用方不属于发起 link 的 orb")
 }
 
+// thread.list 的 100 条上限作用在过滤之后：更新的 runner / 全自动 orb 上的平级线程再多，也挤不掉可取的父线程。
+// 调用方自己在全自动 orb 上时只列亲属。
+func TestOnThreadListLimitAfterRules(t *testing.T) {
+	e := newEnv(t, true)
+	alpha := e.project("alpha")
+	parent := e.threadOn(e.newOrb(), "", "", "")
+	x := e.newOrb()
+	caller := e.threadOn(x, parent.ID, alpha, "")
+	auto := e.newOrb()
+	require.NoError(t, e.st.Q.SetOrbAutomation(e.ctx, db.SetOrbAutomationParams{Automation: true, ID: auto}))
+	_, runnerOrb, err := e.orbs.AddRunner("laptop", []apigen.RunnerDir{{Path: "/w/app", Name: "app"}}, nil)
+	require.NoError(t, err)
+	for i := 0; i <= maxThreadList; i++ {
+		e.threadOn([]string{auto, runnerOrb}[i%2], "", alpha, "")
+	}
+	_, err = e.st.DB.ExecContext(e.ctx, `UPDATE threads SET last_message_at = 100 WHERE orb_id IN (?, ?)`, auto, runnerOrb)
+	require.NoError(t, err)
+
+	out, err := e.c.onThreadList(e.ctx, x, raw(apigen.LinkCtlThreadListParams{ThreadID: caller.ID}))
+	require.NoError(t, err)
+	list := out.(apigen.LinkCtlThreadListResult).Threads
+	require.Len(t, list, 1)
+	assert.Equal(t, parent.ID, list[0].ID)
+	assert.Equal(t, apigen.ThreadRelationParent, list[0].Relation)
+
+	// 全自动 orb 上的线程：同项目的平级（这里是 caller）不列，只列亲属
+	autoCaller := e.threadOn(auto, parent.ID, alpha, "")
+	out, err = e.c.onThreadList(e.ctx, auto, raw(apigen.LinkCtlThreadListParams{ThreadID: autoCaller.ID}))
+	require.NoError(t, err)
+	list = out.(apigen.LinkCtlThreadListResult).Threads
+	require.Len(t, list, 1)
+	assert.Equal(t, parent.ID, list[0].ID)
+}
+
 // thread.pull：在对方 orb 上 /sync/prepare（have 原样转交），有 bundle 时把字节原样写到
 // 调用方 orb 的 bundlePath（不覆盖）；对象已齐时不写文件。
 func TestOnThreadPull(t *testing.T) {

@@ -57,14 +57,19 @@ SELECT id, title, created_at, cwd, kind FROM threads WHERE orb_id = @orb_id AND 
 -- name: CountWorkingThreadsByOrb :one
 SELECT COUNT(*) FROM threads WHERE orb_id = @orb_id AND state = 'working';
 
--- Work threads an orb thread may pull from (`oryn thread list`): unarchived, visible, with an orb, other than @id, and
--- @id's children, its parent, or in @project_id / @space_id ('' = none); most recent activity first. The service
--- drops runner and automation threads afterwards.
+-- Work threads an orb thread may pull from (`oryn thread list`), with the pull rule applied before LIMIT so excluded
+-- threads cannot push allowed ones out: unarchived, visible, with an orb, other than @id, not on a runner (no cwd, orb
+-- kind not 'runner' = orbs.KindRunner); @id's children or its parent ('' = none), or, when @siblings (the caller is not
+-- on an automation orb), threads in @project_id / @space_id ('' = none) whose orb is not an automation orb. Most recent
+-- activity first. The service re-checks each row with the same rule.
 -- name: ListThreadPullCandidates :many
 SELECT * FROM threads
 WHERE kind = 'work' AND archived_at IS NULL AND hidden = 0 AND orb_id IS NOT NULL AND id <> CAST(@id AS TEXT)
+  AND cwd IS NULL AND orb_id NOT IN (SELECT o.id FROM orbs o WHERE o.kind = 'runner')
   AND (parent_thread_id = CAST(@id AS TEXT) OR id = CAST(@parent_id AS TEXT)
-       OR project_id = CAST(@project_id AS TEXT) OR space_id = CAST(@space_id AS TEXT))
+       OR (CAST(@siblings AS BOOLEAN)
+           AND orb_id NOT IN (SELECT o.id FROM orbs o WHERE o.automation)
+           AND (project_id = CAST(@project_id AS TEXT) OR space_id = CAST(@space_id AS TEXT))))
 ORDER BY COALESCE(last_message_at, updated_at) DESC, id
 LIMIT CAST(@lim AS INTEGER);
 
