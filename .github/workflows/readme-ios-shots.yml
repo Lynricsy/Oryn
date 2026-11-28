@@ -28,13 +28,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 确认 Xcode ≥ 27（iOS 27 SDK，与 mobile.yml 一致）
-        shell: bash
-        run: |
-          set -euo pipefail
-          v=$(xcodebuild -version | awk 'NR==1{print $2}')
-          echo "Xcode $v" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [[ ${v%%.*} -lt 27 ]]; then echo "::error::需要 Xcode 27+，当前 $v"; exit 1; fi
+      - name: 确认 iOS SDK ≥ 27.1（与 mobile.yml 一致）
+        run: bash web/src-tauri/ci/require-ios-sdk.sh 27.1
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
