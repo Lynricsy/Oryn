@@ -92,5 +92,5 @@ New Worktree 在仓库旁执行 `git worktree add`（`<repo>-<name>`，同名分
 | 托管仓库强推保护 | 无 | 无（但有 30 天 saved ref） |
 | 跨线程消息来源标注与授权约束 | 标注来源，并要求未经主人同意不得并入对方改动 | `coord/tools.go` 的 `sourceLine` 标注「sent by an agent, not typed by the owner」，没有并入改动的约束 |
 | 派工时预先裁决语义冲突 | 协调者自发 | `internal/coord` 里没有分支、推送、合并相关指引 |
-| 集成线程 + 拉取别人改动的工具 | `download_thread_changes` | 没有对应工具 |
+| 集成线程 + 拉取别人改动的工具 | `download_thread_changes`：任一线程一次取回另一线程整份改动（取自服务端快照，源 orb 不在也行） | 只有全局助手能中转：`get_thread_changes` 列出改动 → 逐个 `fetch_thread_file` 存进文件库 → `put_thread_file` 或 `create_thread` 的 `files` 放进集成线程（`coord/filetools.go:101-117`，读文件时会唤醒源 orb）；工作线程和 Space 协调者没有这些工具 |
 | 汇总交付状态 | `list_space_threads.produced.landedSinceLatestRequest` | 线程有「已交付」标记；Space 侧是否汇总未核对 |
