@@ -188,18 +188,23 @@ run() {
 
 # sim_shot <文件> <秒>：限时截图。CI 机器卡顿时 simctl 截图曾阻塞 3 分钟以上；超时就按进程组终止（pg_timeout）、
 # 丢掉没写完的图片，返回 1。截图先写到旁边的临时文件，成功才改名，失败时不会留下半张图或旧图冒充。
+# 经 sim_run 跑：失败时把它的 [sim] 标记（真实退出码，124 才是超时，与耗时）和截图命令的 stderr 末尾打到 stderr；
+# 成功时不打，免得每轮截图都刷屏
 sim_shot() {
-  local f=$1 secs=$2 tmp="${1%.png}.part.png" ok
+  local f=$1 secs=$2 tmp="${1%.png}.part.png" err="${1%.png}.err" ok
   rm -f "$tmp"
   if [[ -n $duoctl ]]; then
-    pg_timeout "$secs" "$duoctl" -d "$udid" screenshot "$tmp" >/dev/null 2>&1 && ok=1
+    sim_run "$secs" "$duoctl" -d "$udid" screenshot "$tmp" >/dev/null 2>"$err" && ok=1
   else
-    pg_timeout "$secs" xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>&1 && ok=1
+    sim_run "$secs" xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>"$err" && ok=1
   fi
   if [[ -n ${ok:-} ]]; then
+    rm -f "$err"
     mv "$tmp" "$f"
     return 0
   fi
+  tail -8 "$err" >&2 || true
+  rm -f "$err"
   rm -f "$tmp"
   return 1
 }
