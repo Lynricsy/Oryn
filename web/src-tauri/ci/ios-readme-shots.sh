@@ -124,7 +124,7 @@ capture_when() {
 
 # shoot <文件名> <路径> <就绪谓词>：冷启动 App 打开 <路径>，就绪后截图
 shoot() {
-  sim_run 60 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+  app_stop
   rm -f "$log"
   SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" SIMCTL_CHILD_ORYN_E2E_URL="$origin$2" \
     sim_run 120 xcrun simctl launch "$udid" "$bundle" >/dev/null

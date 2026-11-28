@@ -138,24 +138,47 @@ sim_run() {
   return "$rc"
 }
 
-# app_sample <文件>：对本台模拟器（$udid）里正在跑的 Oryn 进程采样 3 秒（macOS sample，模拟器里的 App 是宿主进程），
-# 存进产物并打印主线程栈的开头；用于 App 卡住（没有事件、网页没加载、截图超时）时看主线程停在哪。
+# app_pid：本台模拟器（$udid）里正在跑的 Oryn 进程号（模拟器里的 App 是宿主进程），没有时输出空。
 # 进程按可执行文件路径里的设备目录（CoreSimulator/Devices/<UDID>/…/Oryn.app/Oryn）认，同一台机器上别的模拟器
-# （上一步没关掉的、并行的）里的 Oryn 不会被采到；同一台里有多个时取最新的（pgrep -n）
-app_sample() {
+# （上一步没关掉的、并行的）里的 Oryn 不会被认到；同一台里有多个时取最新的（pgrep -n）
+app_pid() { pgrep -n -f "/Devices/${udid}/.*/Oryn\.app/Oryn( |$)" || true; }
+
+# app_stop：结束本台模拟器里的 Oryn，确认进程真的没了才返回。CI 上见过 simctl terminate 卡满 60 秒、App 仍在：
+# 随后的 simctl launch 只是把旧实例拉回前台（还停在上一张图的页面），就绪事件永远等不到。terminate 后仍在就记下
+# 进程状态（ps 的 stat / wchan，分辨卡在退出还是被挂起），再从宿主机直接 SIGKILL
+app_stop() {
   local pid
-  pid=$(pgrep -n -f "/Devices/${udid}/.*/Oryn\.app/Oryn( |$)") || true
+  sim_run 60 xcrun simctl terminate "$udid" "$bundle" >/dev/null || true
+  pid=$(app_pid)
+  [[ -z $pid ]] && return 0
+  echo "--- terminate 之后 Oryn 仍在：pid ${pid}，$(ps -o stat=,wchan=,etime= -p "$pid" 2>/dev/null)；SIGKILL" >&2
+  kill -9 "$pid" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  echo "::warning::Oryn（pid ${pid}）SIGKILL 10 秒后仍在：$(ps -o stat=,wchan= -p "$pid" 2>/dev/null)" >&2
+}
+
+# app_sample <文件>：对本台模拟器里正在跑的 Oryn（app_pid）采样 3 秒（macOS sample），存进产物并打印主线程栈的开头；
+# 用于 App 卡住（没有事件、网页没加载、截图超时）时看主线程停在哪。采不到时打出 sample 的退出码与报错、进程状态
+app_sample() {
+  local pid err="${1%.txt}.err"
+  pid=$(app_pid)
   if [[ -z $pid ]]; then
     echo "--- 模拟器 ${udid} 里没有在跑的 Oryn 进程" >&2
     return 0
   fi
-  echo "--- 采样 pid ${pid}：$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-200)"
+  echo "--- 采样 pid ${pid}（$(ps -o stat=,wchan=,etime= -p "$pid" 2>/dev/null)）：$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-200)"
   rm -f "$1"
-  pg_timeout 60 sample "$pid" 3 -file "$1" >/dev/null 2>&1 || true
+  sim_run 60 sample "$pid" 3 -file "$1" >/dev/null 2>"$err" || true
   if [[ ! -s $1 ]]; then
-    echo "--- Oryn（pid ${pid}）采样失败：没有生成 $(basename "$1")" >&2
+    echo "--- Oryn（pid ${pid}）采样失败：没有生成 $(basename "$1")；进程现在 $(ps -o stat=,wchan= -p "$pid" 2>/dev/null || echo 已退出)" >&2
+    tail -6 "$err" >&2 || true
+    rm -f "$err"
     return 0
   fi
+  rm -f "$err"
   echo "--- Oryn（pid ${pid}）主线程采样，全文在 $(basename "$1")"
   grep -A40 -m1 "com.apple.main-thread" "$1" 2>/dev/null | head -40 || true
 }
@@ -165,7 +188,7 @@ app_sample() {
 run() {
   local name=$1 event=$2
   shift 2
-  xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+  app_stop
   rm -f "$log"
   env SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" "$@" xcrun simctl launch "$udid" "$bundle"
   for _ in $(seq 1 90); do
