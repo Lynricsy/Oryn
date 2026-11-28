@@ -463,6 +463,7 @@ const MODE_COMMANDS: Record<string, true> = {
 	guided_goal: true,
 	set_agents_paused: true,
 	set_fast_mode: true,
+	set_ultrafast_mode: true,
 	set_slow_mode: true,
 	set_prewalk: true,
 };

@@ -706,7 +706,7 @@ func (s *Service) cancelQueued(t *thread, p *pendingCmd) bool {
 var coordinatorCommands = map[string]bool{
 	"prompt": true, "steer": true, "follow_up": true, "abort": true, "abort_and_prompt": true, "abort_and_deliver_queue": true, "abort_and_restore_queue": true, "resume": true,
 	"queue_edit": true, "queue_remove": true, "queue_move": true, "queue_clear": true, "promote_queued_message": true,
-	"set_model": true, "oryn_select_model": true, "set_thinking_level": true, "set_fast_mode": true, "set_slow_mode": true,
+	"set_model": true, "oryn_select_model": true, "set_thinking_level": true, "set_fast_mode": true, "set_ultrafast_mode": true, "set_slow_mode": true,
 	"switch_leaf": true, "navigate_tree": true, "abort_branch_summary": true, "set_label": true, "set_entry_label": true,
 	"compact": true, "clear_context": true, "retry": true, "set_session_name": true,
 }

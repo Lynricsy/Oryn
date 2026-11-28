@@ -570,6 +570,7 @@ const COORDINATOR_RPCS: Record<string, true> = {
 	set_model: true,
 	set_thinking_level: true,
 	set_fast_mode: true,
+	set_ultrafast_mode: true,
 	set_slow_mode: true,
 	switch_leaf: true,
 	navigate_tree: true,

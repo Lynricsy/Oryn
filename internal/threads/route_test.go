@@ -54,6 +54,8 @@ func TestRouteSessionSwitchCommands(t *testing.T) {
 	assert.True(t, coordinatorAllowed("resume"))
 	assert.True(t, coordinatorAllowed("abort_and_deliver_queue"))
 	assert.True(t, coordinatorAllowed("abort_and_restore_queue"))
+	// 速度菜单的「极速」档在助手对话里也要能切
+	assert.True(t, coordinatorAllowed("set_ultrafast_mode"))
 }
 
 // prompt 正文里会换会话文件的内置斜杠命令（omp 在 RPC 里直接执行）按 omp 的解析规则拦下，cmdType 报出被拦的命令。
