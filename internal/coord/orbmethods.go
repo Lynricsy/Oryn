@@ -93,6 +93,60 @@ func (s *Service) relative(ctx context.Context, caller db.Thread, targetID strin
 	return t, nil
 }
 
+// pullSource 校验 thread.pull 的目标：亲属线程，或与调用方同一项目、同一 Space 的工作线程（集成线程收拢平级线程的
+// 改动）；否则 forbidden。平级互取有两条例外：全自动 orb 上的线程（入口可能由不可信输入驱动）只能与亲属互取；
+// 跑在 runner 上的线程一律不作目标（不把主人机器上的未提交内容搬进 orb）→ runner_unsupported。
+func (s *Service) pullSource(ctx context.Context, c db.Thread, targetID string) (db.Thread, error) {
+	denied := ctlErr(CodeForbidden, "only threads of the same project or Space, and this thread's parent and children, can be pulled from")
+	t, err := s.st.Q.GetThread(ctx, targetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return db.Thread{}, denied
+	}
+	if err != nil {
+		return db.Thread{}, err
+	}
+	if t.Kind != threads.KindWork || t.ID == c.ID {
+		return db.Thread{}, denied
+	}
+	kin := (t.ParentThreadID != nil && *t.ParentThreadID == c.ID) || (c.ParentThreadID != nil && *c.ParentThreadID == t.ID)
+	if !kin {
+		sameProject := c.ProjectID != nil && t.ProjectID != nil && *c.ProjectID == *t.ProjectID
+		sameSpace := c.SpaceID != nil && t.SpaceID != nil && *c.SpaceID == *t.SpaceID
+		if !sameProject && !sameSpace {
+			return db.Thread{}, denied
+		}
+		for _, x := range []db.Thread{c, t} {
+			auto, err := s.automationThread(ctx, x)
+			if err != nil {
+				return db.Thread{}, err
+			}
+			if auto {
+				return db.Thread{}, ctlErr(CodeForbidden, "threads started by automation can only pull from, and be pulled by, their parent and children")
+			}
+		}
+	}
+	runner, err := s.isRunnerThread(ctx, t)
+	if err != nil {
+		return db.Thread{}, err
+	}
+	if runner {
+		return db.Thread{}, ctlErr(threads.CodeRunnerUnsupported, t.ID+" runs on a runner; its changes cannot be pulled into an orb")
+	}
+	return t, nil
+}
+
+// automationThread 报告线程所在 orb 是否标为全自动（M18 D3）；没有 orb 时为假。
+func (s *Service) automationThread(ctx context.Context, t db.Thread) (bool, error) {
+	if t.OrbID == nil {
+		return false, nil
+	}
+	o, err := s.st.Q.GetOrb(ctx, *t.OrbID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return o.Automation, err
+}
+
 func decodeParams(params json.RawMessage, v any) error {
 	if err := json.Unmarshal(params, v); err != nil {
 		return ctlErr("invalid_params", err.Error())
@@ -241,7 +295,7 @@ func (s *Service) onThreadGet(ctx context.Context, orbID string, params json.Raw
 	return s.threadInfo(ctx, p.Target)
 }
 
-// onThreadPull 把亲属线程仓库的改动取到调用方 orb：在目标 orb 上 /sync/prepare（快照未提交改动、按调用方的 have
+// onThreadPull 把可取线程（见 pullSource）仓库的改动取到调用方 orb：在目标 orb 上 /sync/prepare（快照未提交改动、按调用方的 have
 // 打包缺少的对象），有 bundle 时把它原样写到调用方 orb 的 bundlePath（不覆盖），由调用方自己 fetch。目标 orb 只多出
 // refs/oryn/sync/* 与悬空的快照提交，工作区、index 与分支不变。
 func (s *Service) onThreadPull(ctx context.Context, orbID string, params json.RawMessage) (any, error) {
@@ -253,7 +307,7 @@ func (s *Service) onThreadPull(ctx context.Context, orbID string, params json.Ra
 	if err != nil {
 		return nil, err
 	}
-	t, err := s.relative(ctx, c, p.Target)
+	t, err := s.pullSource(ctx, c, p.Target)
 	if err != nil {
 		return nil, err
 	}

@@ -9,10 +9,55 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Lynricsy/Oryn/internal/apigen"
+	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/orbs"
+	"github.com/Lynricsy/Oryn/internal/store/db"
+	"github.com/Lynricsy/Oryn/internal/threads"
 )
 
-// thread.pull：只能取父子线程的改动；在对方 orb 上 /sync/prepare（have 原样转交），有 bundle 时把字节原样写到
+// thread.pull 的目标范围：亲属，或同一项目 / 同一 Space 的平级工作线程；跨项目、全自动 orb 上的平级线程、
+// runner 线程、协调对话与自己都不行。
+func TestThreadPullSources(t *testing.T) {
+	e := newEnv(t, true)
+	alpha, beta := e.project("alpha"), e.project("beta")
+	sp := e.space("S", "")
+	caller := e.threadOn(e.newOrb(), "", alpha, sp.ID)
+	auto := e.newOrb()
+	require.NoError(t, e.st.Q.SetOrbAutomation(e.ctx, db.SetOrbAutomationParams{Automation: true, ID: auto}))
+	_, runnerOrb, err := e.orbs.AddRunner("laptop", []apigen.RunnerDir{{Path: "/w/app", Name: "app"}}, nil)
+	require.NoError(t, err)
+	runner := ids.Thread()
+	require.NoError(t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{ID: runner, Kind: threads.KindWork, OrbID: &runnerOrb, ProjectID: &alpha,
+		TitleSource: "auto", State: threads.StateIdle, SessionDir: "x", CreatedAt: 1, UpdatedAt: 1, Cwd: new("/w/app")}))
+
+	ok := map[string]string{
+		"同项目平级":         e.threadOn(e.newOrb(), "", alpha, "").ID,
+		"同 Space 平级":    e.threadOn(e.newOrb(), "", beta, sp.ID).ID,
+		"全自动 orb 上的子线程": e.threadOn(auto, caller.ID, alpha, "").ID,
+	}
+	for name, id := range ok {
+		_, err := e.c.pullSource(e.ctx, caller, id)
+		assert.NoError(t, err, name)
+	}
+	denied := map[string]string{
+		"别的项目":         e.threadOn(e.newOrb(), "", beta, "").ID,
+		"都没有项目":        e.threadOn(e.newOrb(), "", "", "").ID,
+		"全自动 orb 上的平级": e.threadOn(auto, "", alpha, "").ID,
+		"自己":           caller.ID,
+		"协调对话":         e.spaceChat(sp).ID,
+		"不存在":          "T-missing",
+	}
+	for name, id := range denied {
+		_, err := e.c.pullSource(e.ctx, caller, id)
+		assert.Equal(t, CodeForbidden, ctlCode(t, err), name)
+	}
+	_, err = e.c.pullSource(e.ctx, caller, runner)
+	assert.Equal(t, threads.CodeRunnerUnsupported, ctlCode(t, err), "runner 线程")
+	_, err = e.c.pullSource(e.ctx, e.threadOn(auto, "", alpha, ""), caller.ID)
+	assert.Equal(t, CodeForbidden, ctlCode(t, err), "全自动 orb 上的线程不能取平级")
+}
+
+// thread.pull：在对方 orb 上 /sync/prepare（have 原样转交），有 bundle 时把字节原样写到
 // 调用方 orb 的 bundlePath（不覆盖）；对象已齐时不写文件。
 func TestOnThreadPull(t *testing.T) {
 	e := newEnv(t, true)

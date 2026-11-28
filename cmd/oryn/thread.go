@@ -709,7 +709,7 @@ var threadPullOpts struct{ json bool }
 
 var threadPullCmd = &cobra.Command{
 	Use:   "pull <id>",
-	Short: "orb 内：把父线程或自己开的子线程仓库里的改动取进当前仓库的 refs/oryn/threads/<id>/{head,snapshot}（不动工作区）",
+	Short: "orb 内：把父子线程或同项目 / 同 Space 线程仓库里的改动取进当前仓库的 refs/oryn/threads/<id>/{head,snapshot}（不动工作区）",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, err := os.Getwd()

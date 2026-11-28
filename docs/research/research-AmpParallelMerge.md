@@ -102,5 +102,5 @@ New Worktree 在仓库旁执行 `git worktree add`（`<repo>-<name>`，同名分
 | 托管仓库强推保护 | 无：主人与线程凭据都能强推、删除 main | 无（但有 30 天 saved ref） | 暂不做 |
 | 跨线程消息来源标注与授权约束 | 标注来源，并要求未经主人同意不得并入对方改动 | `coord/tools.go` 的 `sourceLine` 只标注来源 | orb 与 Runner 指引：他人改动只有自己派出或主人同意才并入 |
 | 派工时预先裁决语义冲突 | 协调者自发 | `internal/coord` 里没有相关指引 | 协调者与助手提示：写明彼此改动与合并后行为；主人没说就不写交付方式 |
-| 集成线程 + 拉取别人改动的工具 | `download_thread_changes`：任一线程取回另一线程改动文件的最终内容（服务端快照，源 orb 不在也行） | 只有全局助手能按文件中转（`get_thread_changes` → `fetch_thread_file` → `put_thread_file`） | `oryn thread pull <id>`：只限父子线程，git bundle 取回对方已提交与未提交的改动到 `refs/oryn/threads/<id>/{head,snapshot}`，保留合并基；源 orb 会被唤醒 |
+| 集成线程 + 拉取别人改动的工具 | `download_thread_changes`：任一线程取回另一线程改动文件的最终内容（服务端快照，源 orb 不在也行） | 只有全局助手能按文件中转（`get_thread_changes` → `fetch_thread_file` → `put_thread_file`） | `oryn thread pull <id>`：父子线程与同项目 / 同 Space 的线程（Runner 线程与全自动入口的平级线程除外），git bundle 取回对方已提交与未提交的改动到 `refs/oryn/threads/<id>/{head,snapshot}`，保留合并基；源 orb 会被唤醒 |
 | 汇总交付状态 | `list_space_threads.produced.landedSinceLatestRequest` | 线程有「已交付」标记；Space 侧是否汇总未核对 | 未改 |

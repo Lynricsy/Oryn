@@ -17178,7 +17178,7 @@ components:
         `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
         `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
         `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-        （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属线程仓库的改动，见 `LinkCtlThreadPullParams`；
+        （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属或同项目 / 同 Space 线程仓库的改动，见 `LinkCtlThreadPullParams`；
         只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
         `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
         `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
@@ -18298,7 +18298,9 @@ components:
     LinkCtlThreadPullParams:
       type: object
       description: |
-        orbd→orynd 请求：把亲属线程（规则同 `thread.send`）仓库里的改动取到调用方 orb，由 orb 内 `oryn thread pull` 发出。
+        orbd→orynd 请求：把目标线程仓库里的改动取到调用方 orb，由 orb 内 `oryn thread pull` 发出。目标须是调用方的父线程、
+        直接子线程，或同一项目 / 同一 Space 的工作线程；平级互取时任一方在全自动 orb 上 → `forbidden`；目标跑在 runner 上
+        → `runner_unsupported`。
         控制面对目标 orb 调 `POST /sync/prepare`（`have` 原样转交；目标冻结或停机时先唤醒），需要传对象时把
         `GET /sync/bundle` 的字节以 `PUT /fs/file`（不覆盖）写到调用方 orb 的 `bundlePath`，由调用方自己 `git fetch`。
         结果 `LinkCtlThreadPullResult`；目标没有 orb 回 `no_orb`，其余错误码与 `/sync/prepare`、`/fs/file` 相同。
