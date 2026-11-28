@@ -426,6 +426,10 @@ jobs:
       - name: 确认 iOS SDK ≥ 27.1（27：App Store 要求，ITMS-90725；27.1：iPhone Duo 铺满整块屏）
         run: bash web/src-tauri/ci/require-ios-sdk.sh 27.1
 
+      # 模拟器脚本公共部分的自测（不启动模拟器，约 20 秒）：App 停不下来时 app_stop 必须报错、冷启动不得继续
+      - name: 模拟器脚本自测（ios-sim.sh）
+        run: bash web/src-tauri/ci/ios-sim-test.sh
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: web/package.json

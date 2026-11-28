@@ -513,7 +513,7 @@ thread=T-0193a1b2-0000-7000-8000-00000000a001
 events=header-events.jsonl
 xlog="$out/xcodebuild-header.log"
 # 底栏测试留下的 App 先停掉，事件日志从头记
-app_stop
+app_stop || exit 1
 rm -f "$log"
 TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/t/$thread" TEST_RUNNER_E2E_LOG="$log" TEST_RUNNER_E2E_WAIT_SCALE="$wait_scale" \
   xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/HeaderE2ETests -parallel-testing-enabled NO \
@@ -728,7 +728,7 @@ echo >>"$summary"
 echo "### iOS 可替换图标端到端（设置页点选 + 系统提示）" >>"$summary"
 events=appicon-events.jsonl
 xlog="$out/xcodebuild-appicon.log"
-app_stop
+app_stop || exit 1
 rm -f "$log"
 TEST_RUNNER_E2E_SYNC="$sync" TEST_RUNNER_E2E_URL="$origin/settings/appearance" TEST_RUNNER_E2E_LOG="$log" TEST_RUNNER_E2E_WAIT_SCALE="$wait_scale" \
   xcodebuild test-without-building "${xcb[@]}" -only-testing:OrynE2E/AppIconE2ETests -parallel-testing-enabled NO \

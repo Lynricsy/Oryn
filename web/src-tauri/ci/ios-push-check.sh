@@ -220,7 +220,11 @@ round() {
   mark=$(wc -l <"$plog" | tr -d ' ')
   round_start=$(date '+%Y-%m-%d %H:%M:%S')
 
-  app_stop
+  if ! app_stop; then
+    note "- 上一次的 App 没能退出（SIGKILL 后仍在），本轮不装包、不跑探测"
+    round_core=0
+    return 0
+  fi
   xcrun simctl install "$udid" "$app"
   local data
   data=$(xcrun simctl get_app_container "$udid" "$bundle" data)
@@ -283,10 +287,16 @@ round() {
   fi
 
   # P3 NSE（App 已退出）
-  app_stop
-  sleep 2
-  xcrun simctl push "$udid" "$bundle" "$here/ios-push/notify.apns"
-  if wait_log 60 'nse\.received'; then
+  # App 没退出时不发：拉起的会是还在前台的旧实例，NSE 的结果没有意义
+  local pushed=""
+  if app_stop; then
+    sleep 2
+    xcrun simctl push "$udid" "$bundle" "$here/ios-push/notify.apns"
+    pushed=1
+  else
+    note "- NSE：App 没能退出（SIGKILL 后仍在），P3 不发推送"
+  fi
+  if [[ -n $pushed ]] && wait_log 60 'nse\.received'; then
     round_nse=0
     wait_log 30 'nse\.(content parsed|decrypted ok=false|keys found=false|payload ok=false|expired)' || true
     sleep 1
@@ -303,7 +313,7 @@ round() {
     show 'nse\.keys'
     show 'nse\.decrypted'
     show 'nse\.content'
-  else
+  elif [[ -n $pushed ]]; then
     note "- NSE：$((60 * wait_scale)) 秒内没有 nse.received（模拟器没有为 simctl push 调起 Notification Service Extension）"
   fi
 
