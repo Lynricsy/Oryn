@@ -314,6 +314,7 @@ function ShareView({
 	const entries = useThread(key, (s) => s.entries);
 	const leaf = useThread(key, (s) => s.leafEntryId);
 	const liveMessage = useThread(key, (s) => s.liveMessage);
+	const landing = useThread(key, (s) => s.landing);
 	const liveTools = useThread(key, (s) => s.liveTools);
 	const liveToolOrder = useThread(key, (s) => s.liveToolOrder);
 	const title = useThread(key, (s) => s.thread?.title) ?? share.title;
@@ -399,12 +400,13 @@ function ShareView({
 				entries,
 				leafEntryId: leaf,
 				liveMessage,
+				landing,
 				liveTools,
 				liveToolOrder,
 				// 分享页不显示站内提示（重试、缓存预热等）
 				notices: [],
 			}),
-		[entries, leaf, liveMessage, liveTools, liveToolOrder],
+		[entries, leaf, liveMessage, landing, liveTools, liveToolOrder],
 	);
 	const agentFaces = identity?.agents;
 	// 视图（M33）：只读——显示已有作答、控件禁用；HTML 视图的帧走公开端点，离开页面时统一关帧

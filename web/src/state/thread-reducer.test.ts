@@ -921,6 +921,34 @@ describe("注入消息落盘为 custom_message：实时副本不重影", () => {
 			),
 		).toBe(true);
 	});
+
+	it("助手消息说完紧跟注入消息、条目还没到：助手消息不从转录里消失，条目到了原位接替", () => {
+		const reply = {
+			role: "assistant",
+			content: [{ type: "text", text: "最终回答" }],
+			timestamp: TS - 5,
+		};
+		const advisor = { ...delivery, customType: "advisor" };
+		let s = frames(initialThreadState(TID), [
+			{ type: "message_start", message: reply },
+			{ type: "message_end", message: reply },
+			{ type: "message_start", message: advisor },
+		]);
+		const keys = (st: ThreadViewState) =>
+			buildTranscript(st).items.map((i) => i.key);
+		expect(keys(s)).toEqual([`live-${TS - 5}`, `live-${TS}`]);
+
+		s = frames(s, [{ type: "message_end", message: advisor }]);
+		const replyEntry = msgEntry("a1", reply);
+		s = applyEntries(s, { entries: [replyEntry] });
+		expect(s.landing).toEqual([]);
+		expect(keys(s)).toEqual([`e${replyEntry.seq}`, `live-${TS}`]);
+
+		const advisorEntry = { ...customEntry("advisor", TS), parentId: "a1" };
+		s = applyEntries(s, { entries: [advisorEntry] });
+		expect(s.liveMessage).toBeNull();
+		expect(keys(s)).toEqual([`e${replyEntry.seq}`, `e${advisorEntry.seq}`]);
+	});
 });
 
 describe("thinking_level_changed 兼容 auto 动态解析与切回具体档位", () => {

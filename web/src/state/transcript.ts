@@ -362,7 +362,8 @@ export function buildTranscript(
 		| "liveTools"
 		| "liveToolOrder"
 		| "notices"
-	>,
+	> &
+		Partial<Pick<ThreadViewState, "landing">>,
 ): TranscriptModel {
 	const items: TranscriptItem[] = [];
 	const branches = activeBranch(s.entries, s.leafEntryId).filter(
@@ -427,12 +428,15 @@ export function buildTranscript(
 
 	const lastSeq =
 		s.entries.length > 0 ? (s.entries[s.entries.length - 1]?.seq ?? 0) : 0;
-	const live = s.liveMessage;
-	if (
-		live &&
-		!hiddenMessage(live.message) &&
-		!s.entries.some((e) => entryCoversMessage(e, live))
-	) {
+	// 在途消息：等条目接替的已结束消息（landing）在前，正在进行的一条在后；行键与在途时相同，交接不重挂载
+	const landing = s.landing ?? [];
+	const inflight = s.liveMessage ? [...landing, s.liveMessage] : landing;
+	for (const live of inflight) {
+		if (
+			hiddenMessage(live.message) ||
+			s.entries.some((e) => entryCoversMessage(e, live))
+		)
+			continue;
 		items.push({
 			kind: "message",
 			key: `live-${live.messageId ?? live.timestamp ?? "m"}`,

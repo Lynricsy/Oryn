@@ -232,6 +232,12 @@ export interface ThreadViewState {
 	windowStart: number;
 	leafEntryId?: string;
 	liveMessage: LiveMessage | null;
+	/**
+	 * 被下一条 `message_start` 顶替、落盘条目还没到的已结束消息（按到达顺序）。帧与条目经两条路送达
+	 * （stdout 与会话文件 tail），助手刚说完就紧跟注入消息（顾问建议、迟到诊断等）时，条目往往晚于新消息的帧；
+	 * 留在这里继续渲染，条目到了再接替，转录不会先塌掉一整条再长回来。
+	 */
+	landing: LiveMessage[];
 	liveTools: Record<string, LiveTool>;
 	liveToolOrder: string[];
 	/** `live.reset` 之后、下一个 `message_start` 之前为真。 */
@@ -295,6 +301,7 @@ export function initialThreadState(threadId: string): ThreadViewState {
 		transcriptRev: null,
 		windowStart: 0,
 		liveMessage: null,
+		landing: [],
 		liveTools: {},
 		liveToolOrder: [],
 		liveSuppressed: false,
@@ -488,12 +495,26 @@ export function mergeEntries(
 	}
 	let next: ThreadViewState = { ...s, entries };
 	const toolIds = new Set<string>();
+	// 条目按落盘顺序到达：盖住第 i 条在途消息时，它之前的已结束消息要么已被盖住，要么不会再落盘，一并清掉
+	const inflight = s.liveMessage ? [...s.landing, s.liveMessage] : s.landing;
+	let covered = -1;
 	for (const e of incoming) {
-		if (next.liveMessage && entryCoversMessage(e, next.liveMessage))
-			next = { ...next, liveMessage: null };
+		for (let i = inflight.length - 1; i > covered; i--) {
+			const m = inflight[i];
+			if (m && entryCoversMessage(e, m)) {
+				covered = i;
+				break;
+			}
+		}
 		const tid = toolResultIdOf(e);
 		if (tid) toolIds.add(tid);
 	}
+	if (covered >= 0)
+		next = {
+			...next,
+			landing: s.landing.slice(covered + 1),
+			liveMessage: covered >= s.landing.length ? null : s.liveMessage,
+		};
 	return removeTools(next, toolIds);
 }
 
@@ -762,8 +783,23 @@ export function applyFrame(
 		case "turn_start":
 		case "turn_end":
 			return s;
-		case "message_start":
-			return { ...s, liveMessage: startLiveMessage(f), liveSuppressed: false };
+		case "message_start": {
+			// 被顶替的上一条：已结束、可能进转录（toolResult 不渲染；没有时间戳认不出接替它的条目）、条目还没到的留到 landing
+			const prev = s.liveMessage;
+			const landing =
+				prev?.ended &&
+				prev.role !== "toolResult" &&
+				prev.timestamp !== undefined &&
+				!s.entries.some((e) => entryCoversMessage(e, prev))
+					? [...s.landing, prev]
+					: s.landing;
+			return {
+				...s,
+				liveMessage: startLiveMessage(f),
+				landing,
+				liveSuppressed: false,
+			};
+		}
 		case "message_update":
 			if (s.liveSuppressed) return s;
 			return {
@@ -1142,6 +1178,7 @@ export function applyLiveReset(s: ThreadViewState): ThreadViewState {
 	return {
 		...s,
 		liveMessage: null,
+		landing: [],
 		liveTools: {},
 		liveToolOrder: [],
 		liveSuppressed: true,
