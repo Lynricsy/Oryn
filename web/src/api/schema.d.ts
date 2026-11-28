@@ -13104,8 +13104,9 @@ export interface components {
          *     `terminal.gap`（orbd→orynd 通知，M3）；
          *     `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
          *     `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-         *     `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-         *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+         *     `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+         *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属线程仓库的改动，见 `LinkCtlThreadPullParams`；
+         *     只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
          *     `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
          *     `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
          *     `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
@@ -13126,7 +13127,7 @@ export interface components {
          *     runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call" | "follow.add";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "thread.pull" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call" | "follow.add";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -13836,6 +13837,34 @@ export interface components {
             /** @description 调用方线程 */
             threadId: components["schemas"]["ThreadId"];
             target: components["schemas"]["ThreadId"];
+        };
+        /**
+         * @description orbd→orynd 请求：把亲属线程（规则同 `thread.send`）仓库里的改动取到调用方 orb，由 orb 内 `oryn thread pull` 发出。
+         *     控制面对目标 orb 调 `POST /sync/prepare`（`have` 原样转交；目标冻结或停机时先唤醒），需要传对象时把
+         *     `GET /sync/bundle` 的字节以 `PUT /fs/file`（不覆盖）写到调用方 orb 的 `bundlePath`，由调用方自己 `git fetch`。
+         *     结果 `LinkCtlThreadPullResult`；目标没有 orb 回 `no_orb`，其余错误码与 `/sync/prepare`、`/fs/file` 相同。
+         */
+        LinkCtlThreadPullParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+            target: components["schemas"]["ThreadId"];
+            /** @description 调用方仓库已有的提交（HEAD、远端与本地分支等）；目标据此只打包调用方缺少的对象 */
+            have: string[];
+            /** @description 调用方 orb 内 bundle 的写入路径（绝对路径，在 `$HOME` 之内，父目录须已存在） */
+            bundlePath: string;
+        };
+        /** @description `thread.pull` 的结果：目标仓库的状态（取自 `/sync/prepare`） */
+        LinkCtlThreadPullResult: {
+            /** @description 目标仓库当前分支；分离 HEAD 时缺省 */
+            branch?: string;
+            /** @description 目标仓库的 HEAD，即已提交的工作 */
+            head: string;
+            /** @description 以 `head` 为父、含未提交改动（含未跟踪文件，遵守 `.gitignore`）的快照提交；没有未提交改动时等于 `head` */
+            snapshot: string;
+            /** @description 目标有未提交改动（`snapshot` ≠ `head`） */
+            dirty: boolean;
+            /** @description 是否写了 bundle；为假时调用方仓库已有 `head` 与 `snapshot` 的全部对象 */
+            bundled: boolean;
         };
         /** @description `schedule.get` / `schedule.delete` 的参数（M9）：只作用于调用方线程自己的线程内定时；结果分别为 `LinkCtlScheduleResult` / `LinkCtlOkResult` */
         LinkCtlScheduleParams: {

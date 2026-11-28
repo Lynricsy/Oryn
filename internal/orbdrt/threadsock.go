@@ -20,21 +20,25 @@ const (
 	threadWaitMax     = 86400 * time.Second
 	// ctlForwardTimeout 是单次转发的 ctl 请求上限。
 	ctlForwardTimeout = 30 * time.Second
+	// threadPullTimeout 是 thread.pull 的上限：控制面要唤醒目标 orb、在那里快照与打包（各至多 5 分钟），再把 bundle 写过来。
+	threadPullTimeout = 15 * time.Minute
 )
 
-// sockToCtl 把 orbd.sock 的方法名映射到 ctl 方法与其参数类型的解码器。
+// sockToCtl 把 orbd.sock 的方法名映射到 ctl 方法、其参数类型的解码器与转发上限（0 = ctlForwardTimeout）。
 var sockToCtl = map[string]struct {
-	method apigen.LinkCtlMethod
-	decode func(json.RawMessage) (any, error)
+	method  apigen.LinkCtlMethod
+	decode  func(json.RawMessage) (any, error)
+	timeout time.Duration
 }{
-	orbsock.MethodThreadNew:      {apigen.MethodThreadCreate, decodeAs[apigen.LinkCtlThreadCreateParams]},
-	orbsock.MethodThreadSend:     {apigen.MethodThreadSend, decodeAs[apigen.LinkCtlThreadSendParams]},
-	orbsock.MethodThreadGet:      {apigen.MethodThreadGet, decodeAs[apigen.LinkCtlThreadGetParams]},
-	orbsock.MethodScheduleGet:    {apigen.MethodScheduleGet, decodeAs[apigen.LinkCtlScheduleParams]},
-	orbsock.MethodScheduleSet:    {apigen.MethodSchedulePut, decodeAs[apigen.LinkCtlSchedulePutParams]},
-	orbsock.MethodScheduleDelete: {apigen.MethodScheduleDelete, decodeAs[apigen.LinkCtlScheduleParams]},
-	orbsock.MethodScheduleEnable: {apigen.MethodScheduleEnable, decodeAs[apigen.LinkCtlScheduleEnableParams]},
-	orbsock.MethodFollowAdd:      {apigen.MethodFollowAdd, decodeAs[apigen.LinkCtlFollowAddParams]},
+	orbsock.MethodThreadNew:      {apigen.MethodThreadCreate, decodeAs[apigen.LinkCtlThreadCreateParams], 0},
+	orbsock.MethodThreadSend:     {apigen.MethodThreadSend, decodeAs[apigen.LinkCtlThreadSendParams], 0},
+	orbsock.MethodThreadGet:      {apigen.MethodThreadGet, decodeAs[apigen.LinkCtlThreadGetParams], 0},
+	orbsock.MethodThreadPull:     {apigen.MethodThreadPull, decodeAs[apigen.LinkCtlThreadPullParams], threadPullTimeout},
+	orbsock.MethodScheduleGet:    {apigen.MethodScheduleGet, decodeAs[apigen.LinkCtlScheduleParams], 0},
+	orbsock.MethodScheduleSet:    {apigen.MethodSchedulePut, decodeAs[apigen.LinkCtlSchedulePutParams], 0},
+	orbsock.MethodScheduleDelete: {apigen.MethodScheduleDelete, decodeAs[apigen.LinkCtlScheduleParams], 0},
+	orbsock.MethodScheduleEnable: {apigen.MethodScheduleEnable, decodeAs[apigen.LinkCtlScheduleEnableParams], 0},
+	orbsock.MethodFollowAdd:      {apigen.MethodFollowAdd, decodeAs[apigen.LinkCtlFollowAddParams], 0},
 }
 
 func decodeAs[T any](raw json.RawMessage) (any, error) {
@@ -45,7 +49,7 @@ func decodeAs[T any](raw json.RawMessage) (any, error) {
 	return v, nil
 }
 
-// handleThreadSock 处理线程、定时与跟进登记的九个方法；ok=false 表示不是这类方法。
+// handleThreadSock 处理线程、定时与跟进登记的十个方法；ok=false 表示不是这类方法。
 func (r *Runtime) handleThreadSock(ctx context.Context, method string, params json.RawMessage) (any, bool, error) {
 	if method == orbsock.MethodThreadWait {
 		var p orbsock.ThreadWaitParams
@@ -63,7 +67,11 @@ func (r *Runtime) handleThreadSock(ctx context.Context, method string, params js
 	if err != nil {
 		return nil, true, err
 	}
-	res, err := r.ctlForward(ctx, m.method, p)
+	timeout := m.timeout
+	if timeout == 0 {
+		timeout = ctlForwardTimeout
+	}
+	res, err := r.ctlForwardFor(ctx, m.method, p, timeout)
 	return res, true, err
 }
 

@@ -705,6 +705,28 @@ var threadWaitCmd = &cobra.Command{
 	},
 }
 
+var threadPullOpts struct{ json bool }
+
+var threadPullCmd = &cobra.Command{
+	Use:   "pull <id>",
+	Short: "orb 内：把父线程或自己开的子线程仓库里的改动取进当前仓库的 refs/oryn/threads/<id>/{head,snapshot}（不动工作区）",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		res, err := threadPull(cmd.Context(), dir, args[0])
+		if err != nil {
+			return err
+		}
+		if threadPullOpts.json {
+			return printJSON(res)
+		}
+		return printThreadPull(os.Stdout, args[0], res)
+	},
+}
+
 func init() {
 	f := threadNewCmd.Flags()
 	f.StringVar(&threadNewOpts.project, "project", "", "项目名")
@@ -744,7 +766,8 @@ func init() {
 	threadForkCmd.Flags().BoolVar(&threadForkOpts.json, "json", false, "以 JSON 输出新线程")
 	threadWaitCmd.Flags().DurationVar(&threadWaitOpts.timeout, "timeout", defaultWaitTimeout, "最长等待时间（上限 24h）")
 	threadWaitCmd.Flags().BoolVar(&threadWaitOpts.json, "json", false, "以 JSON 输出线程信息")
-	threadCmd.AddCommand(threadNewCmd, threadListCmd, threadShowCmd, threadSendCmd, threadArchiveCmd, threadWaitCmd,
+	threadPullCmd.Flags().BoolVar(&threadPullOpts.json, "json", false, "以 JSON 输出对方仓库的状态")
+	threadCmd.AddCommand(threadNewCmd, threadListCmd, threadShowCmd, threadSendCmd, threadArchiveCmd, threadWaitCmd, threadPullCmd,
 		threadRPCCmd, threadAbortCmd, threadForkCmd)
 	root.AddCommand(threadCmd)
 }

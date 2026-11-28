@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -172,6 +175,139 @@ func threadWait(ctx context.Context, target string, timeout time.Duration, asJSO
 		return exitWaitError
 	}
 	return exitWaitIdle
+}
+
+// ---- orb 内取亲属线程的改动 ----
+
+const (
+	// pullRefPrefix 是 `oryn thread pull` 写入的 ref 前缀：refs/oryn/threads/<id>/head 与 .../snapshot。
+	pullRefPrefix = "refs/oryn/threads/"
+	// maxPullHave 与 orbd /sync/prepare 接受的 have 上限一致。
+	maxPullHave = 256
+)
+
+var pullShaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// threadPull 把亲属线程（父线程或自己开的子线程）仓库的改动取进 dir 所在仓库：控制面在对方 orb 上把工作区快照成提交、
+// 按本仓库已有的提交打包缺少的对象并写到本仓库 git 目录下的临时文件，这里 fetch 后写
+// refs/oryn/threads/<target>/head（对方已提交的工作）与 .../snapshot（另含未提交改动；没有时同 head）。
+// 不动工作区、index 与当前分支；同一线程再取一次覆盖这两个 ref。
+func threadPull(ctx context.Context, dir, target string) (apigen.LinkCtlThreadPullResult, error) {
+	var res apigen.LinkCtlThreadPullResult
+	if !inOrb() {
+		return res, usageErr("`oryn thread pull` 只能在 orb 内使用；本机取线程的改动用 `oryn sync`")
+	}
+	caller, err := callerThread()
+	if err != nil {
+		return res, err
+	}
+	top, err := gitIn(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return res, usageErr("%s 不在 git 仓库里", dir)
+	}
+	ns := pullRefPrefix + target + "/"
+	if _, err := gitIn(ctx, top, "check-ref-format", ns+"head"); err != nil {
+		return res, usageErr("线程 id %q 无效", target)
+	}
+	gitDir, err := gitIn(ctx, top, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return res, err
+	}
+	have, err := pullHave(ctx, top, ns)
+	if err != nil {
+		return res, err
+	}
+	tmp, err := os.MkdirTemp(gitDir, "oryn-pull-")
+	if err != nil {
+		return res, err
+	}
+	defer os.RemoveAll(tmp)
+	bundle := filepath.Join(tmp, "changes.bundle")
+	p := apigen.LinkCtlThreadPullParams{ThreadID: caller, Target: target, Have: have, BundlePath: bundle}
+	if err := sockCall(ctx, orbsock.MethodThreadPull, p, &res, nil); err != nil {
+		var se *orbsock.Error
+		if errors.As(err, &se) && se.Code == "sync_no_common" {
+			return res, sockErr(fmt.Errorf("%w\n提示：两边的仓库没有共同的提交；先 `git fetch origin`，或确认当前目录是同一个项目的仓库", err))
+		}
+		return res, sockErr(err)
+	}
+	if !pullShaRe.MatchString(res.Head) || !pullShaRe.MatchString(res.Snapshot) {
+		return res, fmt.Errorf("控制面返回的提交无效（head %q，snapshot %q）", res.Head, res.Snapshot)
+	}
+	if res.Bundled {
+		// 带 fsck 取进临时命名空间再按返回的 sha 落到最终 ref：bundle 里没有的 ref（对象本地已有）也能对上
+		cmd := exec.CommandContext(ctx, "git", "-C", top, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+			"fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--quiet", bundle, "+refs/oryn/sync/*:"+ns+"fetch/*")
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return res, fmt.Errorf("git fetch bundle 失败: %w\n%s", err, strings.TrimSpace(string(out)))
+		}
+		for _, ref := range []string{ns + "fetch/head", ns + "fetch/snapshot"} {
+			_, _ = gitIn(ctx, top, "update-ref", "-d", ref)
+		}
+	}
+	for _, c := range []string{res.Head, res.Snapshot} {
+		if _, err := gitIn(ctx, top, "cat-file", "-e", c+"^{commit}"); err != nil {
+			return res, fmt.Errorf("本仓库缺少对方的提交 %s", c[:7])
+		}
+	}
+	if res.Snapshot != res.Head {
+		if parents, err := gitIn(ctx, top, "rev-parse", res.Snapshot+"^@"); err != nil || parents != res.Head {
+			return res, fmt.Errorf("快照 %s 不是 head %s 的直接子提交", res.Snapshot[:7], res.Head[:7])
+		}
+	}
+	for ref, sha := range map[string]string{ns + "head": res.Head, ns + "snapshot": res.Snapshot} {
+		if _, err := gitIn(ctx, top, "update-ref", ref, sha); err != nil {
+			return res, fmt.Errorf("写 %s 失败: %w", ref, err)
+		}
+	}
+	return res, nil
+}
+
+// pullHave 列出本仓库已有、对方可能也有的提交（去重，至多 maxPullHave）：HEAD、上次取回的 ref、远端分支、本地分支。
+func pullHave(ctx context.Context, top, ns string) ([]string, error) {
+	have := []string{}
+	seen := map[string]bool{}
+	add := func(sha string) {
+		if pullShaRe.MatchString(sha) && !seen[sha] && len(have) < maxPullHave {
+			seen[sha] = true
+			have = append(have, sha)
+		}
+	}
+	if head, err := gitIn(ctx, top, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err == nil {
+		add(head)
+	}
+	refs, err := gitIn(ctx, top, "for-each-ref", "--sort=-committerdate", "--format=%(objectname)",
+		strings.TrimSuffix(ns, "/"), "refs/remotes", "refs/heads")
+	if err != nil {
+		return nil, fmt.Errorf("列出本仓库的分支失败: %w", err)
+	}
+	for sha := range strings.SplitSeq(refs, "\n") {
+		add(sha)
+	}
+	return have, nil
+}
+
+// printThreadPull 打印取回的 ref 与下一步可用的 git 命令。
+func printThreadPull(w io.Writer, target string, res apigen.LinkCtlThreadPullResult) error {
+	ns := pullRefPrefix + target + "/"
+	from := "分离的 HEAD"
+	if res.Branch != nil {
+		from = "分支 " + *res.Branch
+	}
+	fmt.Fprintf(w, "已取回线程 %s 的改动（%s）：\n", target, from)
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(tw, "  %shead\t%s\t已提交的工作\n", ns, res.Head[:7])
+	if res.Dirty {
+		fmt.Fprintf(tw, "  %ssnapshot\t%s\t另含未提交的改动（一个快照提交）\n", ns, res.Snapshot[:7])
+	} else {
+		fmt.Fprintf(tw, "  %ssnapshot\t%s\t没有未提交的改动，同 head\n", ns, res.Snapshot[:7])
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "看改了什么：git log --oneline HEAD..%[1]shead；git diff HEAD...%[1]ssnapshot\n并入：git merge %[1]shead（或 cherry-pick）；未提交的部分在 snapshot 上\n", ns)
+	return err
 }
 
 // ---- orb 内的线程内定时 ----

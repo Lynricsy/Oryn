@@ -185,9 +185,11 @@ type orbRequest struct {
 	body         io.Reader
 	// size 是请求体长度（body 非空时；<0 = 未知）
 	size int64
+	// wait 是等 orb 唤醒的时长（0 = fileOrbWait）
+	wait time.Duration
 }
 
-// orbDo 向线程 t 的 orb 发一次 orbd 本机 API 请求：先确认 orb 可用（必要时唤醒，至多 fileOrbWait），Runner 线程带
+// orbDo 向线程 t 的 orb 发一次 orbd 本机 API 请求：先确认 orb 可用（必要时唤醒，至多 r.wait），Runner 线程带
 // 工作目录头。非 2xx 应答转成 orbd 给的错误码；成功时调用方负责关闭 Body。
 func (s *Service) orbDo(ctx context.Context, m Machines, t db.Thread, r orbRequest) (*http.Response, error) {
 	return s.orbDoAt(ctx, m, *t.OrbID, t.Cwd, r)
@@ -196,10 +198,17 @@ func (s *Service) orbDo(ctx context.Context, m Machines, t db.Thread, r orbReque
 // orbDoAt 同 orbDo，按 orb id 与工作目录（空 = 不带工作目录头）发请求。
 func (s *Service) orbDoAt(ctx context.Context, m Machines, orbID string, cwd *string, r orbRequest) (*http.Response, error) {
 	feature := orbs.FeatureFS
-	if strings.HasPrefix(r.path, "/git/") {
+	switch {
+	case strings.HasPrefix(r.path, "/git/"):
 		feature = orbs.FeatureGit
+	case strings.HasPrefix(r.path, "/sync/"):
+		feature = orbs.FeatureSync
 	}
-	if err := m.EnsureUsable(ctx, orbID, feature, true, fileOrbWait); err != nil {
+	wait := r.wait
+	if wait == 0 {
+		wait = fileOrbWait
+	}
+	if err := m.EnsureUsable(ctx, orbID, feature, true, wait); err != nil {
 		return nil, err
 	}
 	u := url.URL{Scheme: "http", Host: "orbd", Path: r.path, RawQuery: r.query.Encode()}

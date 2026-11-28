@@ -1662,6 +1662,7 @@ const (
 	MethodTerminalGap         LinkCtlMethod = "terminal.gap"
 	MethodThreadCreate        LinkCtlMethod = "thread.create"
 	MethodThreadGet           LinkCtlMethod = "thread.get"
+	MethodThreadPull          LinkCtlMethod = "thread.pull"
 	MethodThreadSend          LinkCtlMethod = "thread.send"
 	MethodWorktreeAdd         LinkCtlMethod = "worktree.add"
 	MethodWorktreeRemove      LinkCtlMethod = "worktree.remove"
@@ -1763,6 +1764,8 @@ func (e LinkCtlMethod) Valid() bool {
 	case MethodThreadCreate:
 		return true
 	case MethodThreadGet:
+		return true
+	case MethodThreadPull:
 		return true
 	case MethodThreadSend:
 		return true
@@ -8074,8 +8077,9 @@ type LinkCtlLibrarySyncResult struct {
 // `terminal.gap`（orbd→orynd 通知，M3）；
 // `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 // `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属线程仓库的改动，见 `LinkCtlThreadPullParams`；
+// 只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 // `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 // `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
 // `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
@@ -8109,8 +8113,9 @@ type LinkCtlNotification struct {
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+	// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属线程仓库的改动，见 `LinkCtlThreadPullParams`；
+	// 只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
 	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
@@ -8237,8 +8242,9 @@ type LinkCtlRequest struct {
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-	// `thread.create`、`thread.send`、`thread.get`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
-	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
+	// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属线程仓库的改动，见 `LinkCtlThreadPullParams`；
+	// 只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
 	// `omphome.apply`（orynd→orbd 请求，M13，参数 `LinkCtlOmpHomeApplyParams`，结果 `LinkCtlOkResult`；只在 hello 含 `omphome-apply` 时发送）；
@@ -8553,6 +8559,44 @@ type LinkCtlThreadInfo struct {
 
 	// URL 线程在 Web 上的地址（`<public_url>/t/<id>`）
 	URL string `json:"url"`
+}
+
+// LinkCtlThreadPullParams orbd→orynd 请求：把亲属线程（规则同 `thread.send`）仓库里的改动取到调用方 orb，由 orb 内 `oryn thread pull` 发出。
+// 控制面对目标 orb 调 `POST /sync/prepare`（`have` 原样转交；目标冻结或停机时先唤醒），需要传对象时把
+// `GET /sync/bundle` 的字节以 `PUT /fs/file`（不覆盖）写到调用方 orb 的 `bundlePath`，由调用方自己 `git fetch`。
+// 结果 `LinkCtlThreadPullResult`；目标没有 orb 回 `no_orb`，其余错误码与 `/sync/prepare`、`/fs/file` 相同。
+type LinkCtlThreadPullParams struct {
+	// BundlePath 调用方 orb 内 bundle 的写入路径（绝对路径，在 `$HOME` 之内，父目录须已存在）
+	BundlePath string `json:"bundlePath"`
+
+	// Have 调用方仓库已有的提交（HEAD、远端与本地分支等）；目标据此只打包调用方缺少的对象
+	Have []string `json:"have"`
+
+	// Target `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	Target ThreadID `json:"target"`
+
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlThreadPullResult `thread.pull` 的结果：目标仓库的状态（取自 `/sync/prepare`）
+type LinkCtlThreadPullResult struct {
+	// Branch 目标仓库当前分支；分离 HEAD 时缺省
+	Branch *string `json:"branch,omitempty"`
+
+	// Bundled 是否写了 bundle；为假时调用方仓库已有 `head` 与 `snapshot` 的全部对象
+	Bundled bool `json:"bundled"`
+
+	// Dirty 目标有未提交改动（`snapshot` ≠ `head`）
+	Dirty bool `json:"dirty"`
+
+	// Head 目标仓库的 HEAD，即已提交的工作
+	Head string `json:"head"`
+
+	// Snapshot 以 `head` 为父、含未提交改动（含未跟踪文件，遵守 `.gitignore`）的快照提交；没有未提交改动时等于 `head`
+	Snapshot string `json:"snapshot"`
 }
 
 // LinkCtlThreadSendParams orbd→orynd 请求（M9）：以自动化身份向 `target` 追加一条消息（正文前加来源头行）；结果 `LinkCtlOkResult`。

@@ -1,10 +1,15 @@
 package coord
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -24,13 +29,16 @@ const (
 	maxDepth          = 3
 	maxAgentThreads   = 30
 	agentThreadWindow = time.Hour
+	// threadPullWait 是 thread.pull 等目标 orb 唤醒的时长：停机的 orb 冷启动比冻结的久。
+	threadPullWait = 2 * time.Minute
 )
 
-// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` / `oryn follow add` 经 orbd.sock 转来的九个 ctl 请求。
+// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` / `oryn follow add` 经 orbd.sock 转来的十个 ctl 请求。
 func (s *Service) registerOrbMethods(handle func(method string, fn orbs.RequestFunc)) {
 	handle(string(apigen.MethodThreadCreate), s.onThreadCreate)
 	handle(string(apigen.MethodThreadSend), s.onThreadSend)
 	handle(string(apigen.MethodThreadGet), s.onThreadGet)
+	handle(string(apigen.MethodThreadPull), s.onThreadPull)
 	handle(string(apigen.MethodScheduleGet), s.onScheduleGet)
 	handle(string(apigen.MethodSchedulePut), s.onSchedulePut)
 	handle(string(apigen.MethodScheduleDelete), s.onScheduleDelete)
@@ -231,6 +239,59 @@ func (s *Service) onThreadGet(ctx context.Context, orbID string, params json.Raw
 		return nil, err
 	}
 	return s.threadInfo(ctx, p.Target)
+}
+
+// onThreadPull 把亲属线程仓库的改动取到调用方 orb：在目标 orb 上 /sync/prepare（快照未提交改动、按调用方的 have
+// 打包缺少的对象），有 bundle 时把它原样写到调用方 orb 的 bundlePath（不覆盖），由调用方自己 fetch。目标 orb 只多出
+// refs/oryn/sync/* 与悬空的快照提交，工作区、index 与分支不变。
+func (s *Service) onThreadPull(ctx context.Context, orbID string, params json.RawMessage) (any, error) {
+	var p apigen.LinkCtlThreadPullParams
+	if err := decodeParams(params, &p); err != nil {
+		return nil, err
+	}
+	c, err := s.caller(ctx, orbID, p.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.relative(ctx, c, p.Target)
+	if err != nil {
+		return nil, err
+	}
+	if !path.IsAbs(p.BundlePath) {
+		return nil, ctlErr("invalid_params", "bundlePath must be an absolute path")
+	}
+	if t.OrbID == nil {
+		return nil, ctlErr(CodeNoOrb, "thread "+t.ID+" has no orb (it never started, or its orb was deleted)")
+	}
+	m, err := s.machinesOr()
+	if err != nil {
+		return nil, asCtlErr(err)
+	}
+	body, err := json.Marshal(apigen.OrbSyncPrepareRequest{Have: p.Have})
+	if err != nil {
+		return nil, err
+	}
+	var st apigen.OrbSyncState
+	if err := s.orbJSON(ctx, m, t, orbRequest{method: http.MethodPost, path: "/sync/prepare",
+		body: bytes.NewReader(body), size: int64(len(body)), wait: threadPullWait}, &st); err != nil {
+		return nil, asCtlErr(err)
+	}
+	res := apigen.LinkCtlThreadPullResult{Branch: st.Branch, Head: st.Head, Snapshot: st.Snapshot, Dirty: st.Dirty}
+	if st.Bundle == nil {
+		return res, nil
+	}
+	src, err := s.orbDo(ctx, m, t, orbRequest{method: http.MethodGet, path: "/sync/bundle", query: url.Values{"id": {st.Bundle.ID}}})
+	if err != nil {
+		return nil, asCtlErr(err)
+	}
+	defer src.Body.Close()
+	var e apigen.FsEntry
+	if err := s.orbJSON(ctx, m, c, orbRequest{method: http.MethodPut, path: "/fs/file", query: writeQuery(p.BundlePath, false),
+		body: io.LimitReader(src.Body, st.Bundle.Size), size: st.Bundle.Size}, &e); err != nil {
+		return nil, asCtlErr(err)
+	}
+	res.Bundled = true
+	return res, nil
 }
 
 // ownSchedule 返回调用方线程上的线程内定时（没有 → nil）。

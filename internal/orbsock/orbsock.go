@@ -57,10 +57,13 @@ const (
 	// thread.wait 由 orbd 轮询 thread.get 直到 settled（ThreadWaitParams → LinkCtlThreadInfo，超时回 CodeTimeout）；
 	// schedule.get / schedule.delete（LinkCtlScheduleParams）、schedule.set → schedule.put（LinkCtlSchedulePutParams）、
 	// schedule.enable（LinkCtlScheduleEnableParams），结果均为 LinkCtlScheduleResult。
+	// thread.pull → thread.pull（LinkCtlThreadPullParams → LinkCtlThreadPullResult）：控制面把亲属线程仓库的 bundle 写到
+	// bundlePath，由调用方（`oryn thread pull`）自己 fetch。
 	MethodThreadNew      = "thread.new"
 	MethodThreadSend     = "thread.send"
 	MethodThreadGet      = "thread.get"
 	MethodThreadWait     = "thread.wait"
+	MethodThreadPull     = "thread.pull"
 	MethodScheduleGet    = "schedule.get"
 	MethodScheduleSet    = "schedule.set"
 	MethodScheduleDelete = "schedule.delete"
