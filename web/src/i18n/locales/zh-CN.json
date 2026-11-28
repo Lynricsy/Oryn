@@ -1371,10 +1371,21 @@
 		}
 	},
 	"auth": {
+		"confirmPassword": "确认密码",
 		"createPasskey": "创建 Passkey",
+		"finishSetup": "完成设置",
 		"loginTitle": "登录",
 		"loginWithPasskey": "使用 Passkey 登录",
+		"loginWithPassword": "登录",
+		"newPassword": "密码",
 		"passkeyName": "Passkey 名称",
+		"password": "密码",
+		"passwordMismatch": "两次输入的密码不一致",
+		"passwordRule": "至少 8 个字符",
+		"passwordSetupHint": "为这台 Oryn 设置所有者密码，并在验证器 App 里添加两步验证。",
+		"passwordTooShort": "密码至少需要 8 个字符",
+		"rePasswordHint": "恢复码已验证。设置新的密码，并在验证器 App 里重新添加 Oryn。",
+		"rePasswordTitle": "重设密码与验证器",
 		"reRegisterHint": "恢复码已验证。为这台设备注册一个新的 Passkey。",
 		"reRegisterTitle": "重新注册 Passkey",
 		"recover": "用恢复码登录",
@@ -1384,6 +1395,14 @@
 		"savedContinue": "已保存，继续",
 		"setupHint": "为这台 Oryn 注册所有者 Passkey。",
 		"setupTitle": "初始化 Oryn",
+		"startPasswordSetup": "开始设置",
+		"totpCode": "验证码",
+		"totpManual": "无法扫码？在 App 里手动输入密钥：",
+		"totpQrLabel": "验证器二维码",
+		"totpScanHint": "先用验证器 App（Google Authenticator、1Password、Microsoft Authenticator 等）扫描二维码添加 Oryn，再填写下面的密码和 App 上显示的 6 位验证码。",
+		"usePasskeyInstead": "改用 Passkey",
+		"usePassword": "用密码登录",
+		"usePasswordInstead": "改用密码 + 验证器",
 		"useRecoveryCode": "改用恢复码"
 	},
 	"errors": {
@@ -1439,8 +1458,9 @@
 		"box_changes": "box 上这个应用有未提交的改动：在 box 上的线程里提交并推送，或用 --discard-box-changes 重新部署",
 		"release_too_large": "release 超过 512 MiB，改用 source: false 加 artifacts 只发构建产物",
 		"app_unavailable": "这个应用暂时不可用，过几秒再试",
-		"reauth_required": "需要先用 Passkey 验证身份，5 分钟内有效",
-		"last_passkey": "这是最后一把 Passkey，不能删除"
+		"reauth_required": "需要先验证身份，5 分钟内有效",
+		"last_passkey": "这是最后一把 Passkey，不能删除",
+		"last_login_method": "这是唯一的登录方式，不能关闭。请先添加一把 Passkey"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",
@@ -2903,8 +2923,27 @@
 			"verifyBody": "这项操作需要先用 Passkey 验证一次，5 分钟内有效。",
 			"verifyAction": "用 Passkey 验证",
 			"browserOnlyTitle": "在浏览器里管理",
-			"browserOnly": "新增、删除 Passkey 和重新生成恢复码需要在浏览器里操作",
+			"browserOnly": "新增、删除 Passkey，设置密码登录和重新生成恢复码需要在浏览器里操作",
+			"browserOnlyAdd": "新增 Passkey 需要在浏览器里操作",
+			"empty": "还没有 Passkey",
+			"emptyHint": "目前用密码 + 验证器登录",
 			"openInBrowser": "在浏览器中打开"
+		},
+		"password": {
+			"title": "密码登录",
+			"rowTitle": "密码 + 验证器",
+			"enabled": "已启用：登录时输入密码和验证器 App 上的 6 位验证码",
+			"disabled": "未启用",
+			"setup": "设置",
+			"reset": "重设",
+			"disable": "关闭",
+			"setupTitle": "设置密码登录",
+			"resetTitle": "重设密码登录",
+			"finish": "完成",
+			"disableConfirm": "关闭密码登录？",
+			"disableBody": "密码和验证器都会删除，用密码登录的其它浏览器会立即退出。",
+			"verifyBody": "这项操作需要先验证身份，5 分钟内有效。",
+			"verifyAction": "验证"
 		},
 		"recovery": {
 			"title": "恢复码",

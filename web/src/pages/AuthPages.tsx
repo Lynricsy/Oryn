@@ -1,8 +1,10 @@
 /**
- * 认证页：`/setup`（首次初始化 / 恢复后重新注册 Passkey，展示 10 个恢复码）、`/login`（可发现凭据登录、恢复码）、
+ * 认证页：`/setup`（首次初始化 / 恢复后重新设置登录方式，展示 10 个恢复码）、`/login`（可发现凭据登录、密码 + TOTP、恢复码）、
  * `/pair`（批准 CLI / 原生 App 的设备配对码）。WebAuthn 仪式：begin 返回 `{ceremonyId, options}`，finish 回传。
+ * 密码 + TOTP 是 Passkey 之外的另一种登录方式：浏览器不支持 WebAuthn 时直接展示它。
  */
 import {
+	browserSupportsWebAuthn,
 	type PublicKeyCredentialCreationOptionsJSON,
 	type PublicKeyCredentialRequestOptionsJSON,
 	startAuthentication,
@@ -12,10 +14,16 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { api, unwrap } from "../api/client";
+import { api, type Schemas, unwrap } from "../api/client";
 import { qk, useMe } from "../api/queries";
 import { AuthCard } from "../components/AuthCard";
 import { PairApproval } from "../components/PairApproval";
+import {
+	isTotpCode,
+	PasswordEnrollFields,
+	TotpCodeInput,
+	usePasswordEnrollForm,
+} from "../components/PasswordTotp";
 import { CopyButton } from "../components/ui/CopyButton";
 import {
 	Button,
@@ -29,6 +37,25 @@ import { unwrapOptions } from "../lib/webauthn";
 /** 初始化令牌放在 URL 片段（`/setup#token=ost_…`），不进反代访问日志。 */
 export function setupTokenFromHash(hash: string): string | undefined {
 	return new URLSearchParams(hash.replace(/^#/, "")).get("token") || undefined;
+}
+
+/** 次要入口（改用另一种方式）的文字按钮 */
+function SwitchLink({
+	onClick,
+	children,
+}: {
+	onClick: () => void;
+	children: ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			className="text-muted text-xs hover:text-fg"
+			onClick={onClick}
+		>
+			{children}
+		</button>
+	);
 }
 
 export function SetupPage(): ReactNode {
@@ -45,15 +72,41 @@ export function SetupPage(): ReactNode {
 			window.location.pathname + window.location.search,
 		);
 	}, []);
+	const [webauthn] = useState(() => browserSupportsWebAuthn());
+	const [method, setMethod] = useState<"passkey" | "password">(() =>
+		webauthn ? "passkey" : "password",
+	);
 	const [name, setName] = useState(() => navigator.platform || "Passkey");
+	const [enrollment, setEnrollment] = useState<
+		Schemas["TotpEnrollment"] | null
+	>(null);
+	const form = usePasswordEnrollForm();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<unknown>(null);
 	const [codes, setCodes] = useState<string[] | null>(null);
 
-	const register = async () => {
+	const attempt = async (fn: () => Promise<void>) => {
 		setBusy(true);
 		setError(null);
 		try {
+			await fn();
+		} catch (e) {
+			setError(e);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	/** 两种方式完成后相同：首次初始化展示恢复码，恢复流程回首页。 */
+	const finished = async (res: Schemas["AuthSetupFinishResponse"]) => {
+		await qc.invalidateQueries({ queryKey: qk.me });
+		if (res.recoveryCodes && res.recoveryCodes.length > 0)
+			setCodes(res.recoveryCodes);
+		else navigate("/");
+	};
+
+	const register = () =>
+		attempt(async () => {
 			const begin = await unwrap(
 				api.POST("/api/v1/auth/setup/begin", {
 					body: { ...(token ? { token } : {}), name },
@@ -64,23 +117,45 @@ export function SetupPage(): ReactNode {
 					begin.options,
 				),
 			});
-			const res = await unwrap(
-				api.POST("/api/v1/auth/setup/finish", {
-					body: {
-						ceremonyId: begin.ceremonyId,
-						credential: credential as unknown as Record<string, unknown>,
-					},
-				}),
+			await finished(
+				await unwrap(
+					api.POST("/api/v1/auth/setup/finish", {
+						body: {
+							ceremonyId: begin.ceremonyId,
+							credential: credential as unknown as Record<string, unknown>,
+						},
+					}),
+				),
 			);
-			await qc.invalidateQueries({ queryKey: qk.me });
-			if (res.recoveryCodes && res.recoveryCodes.length > 0)
-				setCodes(res.recoveryCodes);
-			else navigate("/");
-		} catch (e) {
-			setError(e);
-		} finally {
-			setBusy(false);
-		}
+		});
+
+	const beginPassword = () =>
+		attempt(async () => {
+			setMethod("password");
+			setEnrollment(
+				await unwrap(
+					api.POST("/api/v1/auth/password/setup/begin", {
+						body: token ? { token } : {},
+					}),
+				),
+			);
+		});
+
+	const finishPassword = () => {
+		if (!enrollment || !form.valid) return;
+		void attempt(async () => {
+			await finished(
+				await unwrap(
+					api.POST("/api/v1/auth/password/setup/finish", {
+						body: {
+							enrollmentId: enrollment.enrollmentId,
+							password: form.password,
+							code: form.code,
+						},
+					}),
+				),
+			);
+		});
 	};
 
 	if (codes) {
@@ -107,6 +182,58 @@ export function SetupPage(): ReactNode {
 		);
 	}
 
+	if (method === "password") {
+		return (
+			<AuthCard
+				title={token ? t("auth.setupTitle") : t("auth.rePasswordTitle")}
+			>
+				<p className="mb-4 text-muted text-sm">
+					{token ? t("auth.passwordSetupHint") : t("auth.rePasswordHint")}
+				</p>
+				<div className="flex flex-col gap-3">
+					{enrollment ? (
+						<form
+							className="flex flex-col gap-3"
+							onSubmit={(e) => {
+								e.preventDefault();
+								finishPassword();
+							}}
+						>
+							<PasswordEnrollFields enrollment={enrollment} form={form} />
+							<Button
+								type="submit"
+								variant="primary"
+								disabled={busy || !form.valid}
+							>
+								{busy ? <Spinner /> : t("auth.finishSetup")}
+							</Button>
+						</form>
+					) : (
+						<Button
+							variant="primary"
+							disabled={busy}
+							onClick={() => void beginPassword()}
+						>
+							{busy ? <Spinner /> : t("auth.startPasswordSetup")}
+						</Button>
+					)}
+					{webauthn && (
+						<SwitchLink
+							onClick={() => {
+								setMethod("passkey");
+								setEnrollment(null);
+								setError(null);
+							}}
+						>
+							{t("auth.usePasskeyInstead")}
+						</SwitchLink>
+					)}
+					<ErrorText error={error} />
+				</div>
+			</AuthCard>
+		);
+	}
+
 	return (
 		<AuthCard title={token ? t("auth.setupTitle") : t("auth.reRegisterTitle")}>
 			<p className="mb-4 text-muted text-sm">
@@ -123,6 +250,9 @@ export function SetupPage(): ReactNode {
 				>
 					{busy ? <Spinner /> : t("auth.createPasskey")}
 				</Button>
+				<SwitchLink onClick={() => void beginPassword()}>
+					{t("auth.usePasswordInstead")}
+				</SwitchLink>
 				<ErrorText error={error} />
 			</div>
 		</AuthCard>
@@ -154,14 +284,34 @@ export function LoginPage(): ReactNode {
 	const navigate = useNavigate();
 	const qc = useQueryClient();
 	const next = params.get("next") || "/";
-	const [busy, setBusy] = useState(false);
+	const [webauthn] = useState(() => browserSupportsWebAuthn());
+	const [pending, setPending] = useState<
+		"passkey" | "password" | "recovery" | null
+	>(null);
 	const [error, setError] = useState<unknown>(null);
+	const [passwordOpen, setPasswordOpen] = useState(!webauthn);
+	const [password, setPassword] = useState("");
+	const [code, setCode] = useState("");
 	const [recovery, setRecovery] = useState<string | null>(null);
+	const busy = pending !== null;
 
-	const login = async () => {
-		setBusy(true);
+	const attempt = async (
+		kind: "passkey" | "password" | "recovery",
+		fn: () => Promise<void>,
+	) => {
+		setPending(kind);
 		setError(null);
 		try {
+			await fn();
+		} catch (e) {
+			setError(e);
+		} finally {
+			setPending(null);
+		}
+	};
+
+	const login = () =>
+		attempt("passkey", async () => {
 			const begin = await unwrap(api.POST("/api/v1/auth/login/begin"));
 			const credential = await startAuthentication({
 				optionsJSON: unwrapOptions<PublicKeyCredentialRequestOptionsJSON>(
@@ -178,49 +328,102 @@ export function LoginPage(): ReactNode {
 			);
 			await qc.invalidateQueries({ queryKey: qk.me });
 			goAfterLogin(next, navigate);
-		} catch (e) {
-			setError(e);
-		} finally {
-			setBusy(false);
-		}
+		});
+
+	const passwordValid = password !== "" && isTotpCode(code);
+	const submitPassword = () => {
+		if (!passwordValid) return;
+		void attempt("password", async () => {
+			try {
+				await unwrap(
+					api.POST("/api/v1/auth/password/login", {
+						body: { password, code },
+					}),
+				);
+			} catch (e) {
+				// 同一个验证码只能用一次：失败后清空，等验证器 App 上的下一个
+				setCode("");
+				throw e;
+			}
+			await qc.invalidateQueries({ queryKey: qk.me });
+			goAfterLogin(next, navigate);
+		});
 	};
 
-	const submitRecovery = async () => {
+	const submitRecovery = () => {
 		if (!recovery?.trim()) return;
-		setBusy(true);
-		setError(null);
-		try {
+		void attempt("recovery", async () => {
 			await unwrap(
 				api.POST("/api/v1/auth/recovery", { body: { code: recovery.trim() } }),
 			);
 			navigate("/setup");
-		} catch (e) {
-			setError(e);
-		} finally {
-			setBusy(false);
-		}
+		});
 	};
+
+	const passkeyButton = webauthn && (
+		<Button
+			variant={passwordOpen ? "secondary" : "primary"}
+			disabled={busy}
+			onClick={() => void login()}
+		>
+			{pending === "passkey" ? <Spinner /> : t("auth.loginWithPasskey")}
+		</Button>
+	);
 
 	return (
 		<AuthCard title={t("auth.loginTitle")} blink>
 			<div className="flex flex-col gap-3">
-				<Button variant="primary" disabled={busy} onClick={() => void login()}>
-					{busy && recovery === null ? <Spinner /> : t("auth.loginWithPasskey")}
-				</Button>
+				{passwordOpen ? (
+					<>
+						<form
+							className="flex flex-col gap-3"
+							onSubmit={(e) => {
+								e.preventDefault();
+								submitPassword();
+							}}
+						>
+							<Field label={t("auth.password")}>
+								<TextInput
+									type="password"
+									autoFocus
+									autoComplete="current-password"
+									value={password}
+									onChange={(e) => setPassword(e.target.value)}
+								/>
+							</Field>
+							<TotpCodeInput value={code} onChange={setCode} />
+							<Button
+								type="submit"
+								variant="primary"
+								disabled={busy || !passwordValid}
+							>
+								{pending === "password" ? (
+									<Spinner />
+								) : (
+									t("auth.loginWithPassword")
+								)}
+							</Button>
+						</form>
+						{passkeyButton}
+					</>
+				) : (
+					<>
+						{passkeyButton}
+						<SwitchLink onClick={() => setPasswordOpen(true)}>
+							{t("auth.usePassword")}
+						</SwitchLink>
+					</>
+				)}
 				{recovery === null ? (
-					<button
-						type="button"
-						className="text-muted text-xs hover:text-fg"
-						onClick={() => setRecovery("")}
-					>
+					<SwitchLink onClick={() => setRecovery("")}>
 						{t("auth.useRecoveryCode")}
-					</button>
+					</SwitchLink>
 				) : (
 					<form
 						className="flex flex-col gap-2"
 						onSubmit={(e) => {
 							e.preventDefault();
-							void submitRecovery();
+							submitRecovery();
 						}}
 					>
 						<Field label={t("auth.recoveryCode")}>
@@ -231,7 +434,7 @@ export function LoginPage(): ReactNode {
 							/>
 						</Field>
 						<Button type="submit" disabled={busy || !recovery.trim()}>
-							{t("auth.recover")}
+							{pending === "recovery" ? <Spinner /> : t("auth.recover")}
 						</Button>
 					</form>
 				)}

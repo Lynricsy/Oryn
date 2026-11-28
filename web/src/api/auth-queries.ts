@@ -1,7 +1,8 @@
 /**
- * 设置 → 账户与设备里的 Passkey 管理与恢复码：列表、恢复码状态的查询，以及重新验证、增删改、重新生成。
+ * 设置 → 账户与设备里的 Passkey 管理、密码登录与恢复码：列表、恢复码状态的查询，以及重新验证、增删改、重新生成。
  * WebAuthn 仪式与登录页一致：begin 返回 `{ceremonyId, options}`，交给浏览器后把凭据回传 finish。
  * 系统的 Passkey 提示必须由用户的一次点击直接触发（Safari 缺少用户手势会拒绝），所以这里的函数只在点击回调里调。
+ * 重新验证（Passkey 或密码 + TOTP）的有效期由列表里的 `reauthValidUntil` 给出，两种方式效果相同。
  */
 import {
 	type PublicKeyCredentialCreationOptionsJSON,
@@ -53,6 +54,38 @@ export async function reauth(
 	);
 	await qc.invalidateQueries({ queryKey: passkeyKeys.list });
 	return res;
+}
+
+/** 用密码 + TOTP 验证码重新验证当前会话（与 Passkey 验证效果相同），之后列表里的 `reauthValidUntil` 随之刷新。 */
+export async function passwordReauth(
+	qc: QueryClient,
+	credentials: Schemas["PasswordCredentials"],
+): Promise<Schemas["ReauthResult"]> {
+	const res = await unwrap(
+		api.POST("/api/v1/auth/password/reauth", { body: credentials }),
+	);
+	await qc.invalidateQueries({ queryKey: passkeyKeys.list });
+	return res;
+}
+
+/** 开始设置或重设密码登录（需要已在 5 分钟内验证过）：生成待登记的 TOTP 密钥。 */
+export function beginPasswordEnroll(): Promise<Schemas["TotpEnrollment"]> {
+	return unwrap(api.POST("/api/v1/auth/password/begin"));
+}
+
+/** 完成设置密码登录：同时替换密码与 TOTP；用密码登录的其它会话由服务端立即吊销。 */
+export async function finishPasswordEnroll(
+	qc: QueryClient,
+	body: Schemas["PasswordEnrollFinishRequest"],
+): Promise<void> {
+	await unwrap(api.POST("/api/v1/auth/password/finish", { body }));
+	await qc.invalidateQueries({ queryKey: qk.me });
+}
+
+/** 关闭密码登录（需要已在 5 分钟内验证过）；没有 Passkey 时服务端回 409 `last_login_method`。 */
+export async function disablePassword(qc: QueryClient): Promise<void> {
+	await unwrap(api.DELETE("/api/v1/auth/password"));
+	await qc.invalidateQueries({ queryKey: qk.me });
 }
 
 /** 追加一把 Passkey（需要已在 5 分钟内验证过）。 */

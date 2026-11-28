@@ -1371,10 +1371,21 @@
 		}
 	},
 	"auth": {
+		"confirmPassword": "Confirm password",
 		"createPasskey": "Create passkey",
+		"finishSetup": "Finish setup",
 		"loginTitle": "Sign in",
 		"loginWithPasskey": "Sign in with a passkey",
+		"loginWithPassword": "Sign in",
+		"newPassword": "Password",
 		"passkeyName": "Passkey name",
+		"password": "Password",
+		"passwordMismatch": "The passwords don't match",
+		"passwordRule": "At least 8 characters",
+		"passwordSetupHint": "Set the owner password for this Oryn and add two-step verification in an authenticator app.",
+		"passwordTooShort": "Use at least 8 characters",
+		"rePasswordHint": "Recovery code accepted. Set a new password and add Oryn to your authenticator app again.",
+		"rePasswordTitle": "Reset password and authenticator",
 		"reRegisterHint": "Recovery code accepted. Register a new passkey for this device.",
 		"reRegisterTitle": "Register a new passkey",
 		"recover": "Recover",
@@ -1384,6 +1395,14 @@
 		"savedContinue": "Saved, continue",
 		"setupHint": "Register the owner passkey for this Oryn.",
 		"setupTitle": "Set up Oryn",
+		"startPasswordSetup": "Get started",
+		"totpCode": "Verification code",
+		"totpManual": "Can't scan? Enter this key in the app:",
+		"totpQrLabel": "Authenticator QR code",
+		"totpScanHint": "Scan the QR code with an authenticator app (Google Authenticator, 1Password, Microsoft Authenticator, and so on) to add Oryn, then enter your password and the 6-digit code the app shows.",
+		"usePasskeyInstead": "Use a passkey instead",
+		"usePassword": "Sign in with a password",
+		"usePasswordInstead": "Use a password and authenticator instead",
 		"useRecoveryCode": "Use a recovery code"
 	},
 	"errors": {
@@ -1439,8 +1458,9 @@
 		"box_changes": "The box has uncommitted changes in this app. Commit and push them from a thread on the box, or redeploy with --discard-box-changes.",
 		"release_too_large": "The release is larger than 512 MiB. Ship build output with source: false and artifacts instead.",
 		"app_unavailable": "This app isn't available right now. Try again in a few seconds.",
-		"reauth_required": "Verify with a passkey first. The check lasts 5 minutes.",
-		"last_passkey": "This is your last passkey, so it can't be deleted."
+		"reauth_required": "Verify it's you first. The check lasts 5 minutes.",
+		"last_passkey": "This is your last passkey, so it can't be deleted.",
+		"last_login_method": "This is your only sign-in method, so it can't be turned off. Add a passkey first."
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",
@@ -2903,8 +2923,27 @@
 			"verifyBody": "This needs a quick passkey check first. It stays valid for 5 minutes.",
 			"verifyAction": "Verify with passkey",
 			"browserOnlyTitle": "Manage in a browser",
-			"browserOnly": "Adding or deleting passkeys and regenerating recovery codes only works in a browser",
+			"browserOnly": "Adding or deleting passkeys, setting up password sign-in, and regenerating recovery codes only work in a browser",
+			"browserOnlyAdd": "Adding passkeys only works in a browser",
+			"empty": "No passkeys yet",
+			"emptyHint": "You sign in with a password and authenticator",
 			"openInBrowser": "Open in browser"
+		},
+		"password": {
+			"title": "Password sign-in",
+			"rowTitle": "Password + authenticator",
+			"enabled": "On: sign in with your password and the 6-digit code from your authenticator app",
+			"disabled": "Off",
+			"setup": "Set up",
+			"reset": "Reset",
+			"disable": "Turn off",
+			"setupTitle": "Set up password sign-in",
+			"resetTitle": "Reset password sign-in",
+			"finish": "Done",
+			"disableConfirm": "Turn off password sign-in?",
+			"disableBody": "Your password and authenticator are removed, and other browsers signed in with the password are signed out immediately.",
+			"verifyBody": "This needs a quick check first. It stays valid for 5 minutes.",
+			"verifyAction": "Verify"
 		},
 		"recovery": {
 			"title": "Recovery codes",

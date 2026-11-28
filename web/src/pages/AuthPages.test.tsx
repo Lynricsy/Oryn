@@ -1,14 +1,24 @@
+import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ParseKeys } from "i18next";
+import type { ReactNode } from "react";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../i18n";
 import {
 	fullPage,
 	goAfterLogin,
+	LoginPage,
 	SetupPage,
 	setupTokenFromHash,
 } from "./AuthPages";
+
+vi.mock("@simplewebauthn/browser", () => ({
+	browserSupportsWebAuthn: vi.fn(() => true),
+	startAuthentication: vi.fn(async () => ({ id: "assertion" })),
+	startRegistration: vi.fn(async () => ({ id: "attestation" })),
+}));
 
 describe("初始化令牌走 URL 片段（L3）", () => {
 	afterEach(() => window.history.replaceState(null, "", "/"));

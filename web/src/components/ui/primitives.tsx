@@ -1009,9 +1009,10 @@ const FRIENDLY_CODES = [
 	"box_changes",
 	"release_too_large",
 	"app_unavailable",
-	// Passkey 管理（设置→账户）
+	// Passkey 与密码登录管理（设置→账户）
 	"reauth_required",
 	"last_passkey",
+	"last_login_method",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

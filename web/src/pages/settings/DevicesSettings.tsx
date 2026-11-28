@@ -6,7 +6,6 @@
  * 二维码只在浏览器与桌面壳里出现（手机自己不用扫自己）。
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useBrowserRelayClients } from "../../api/browser-relay-queries";
 import { api, type Schemas, unwrap } from "../../api/client";
@@ -16,6 +15,7 @@ import { useAsync } from "../../components/settings/useAsync";
 import { Badge } from "../../components/ui/data";
 import type { IconName } from "../../components/ui/icons";
 import { Button, ErrorText, Spinner } from "../../components/ui/primitives";
+import { QrCode } from "../../components/ui/QrCode";
 import {
 	Group,
 	GroupList,
@@ -27,7 +27,7 @@ import {
 import { confirmAction } from "../../lib/confirm";
 import { formatRelative } from "../../lib/format";
 import { host } from "../../lib/host";
-import { pairUri, qrModules } from "../../lib/pair-qr";
+import { pairUri } from "../../lib/pair-qr";
 
 /** 行说明里的分隔点 */
 const SEP = (
@@ -38,37 +38,17 @@ const SEP = (
 
 /**
  * 「用手机扫码连接」的二维码：内容 `oryn://pair?server=<本站 origin>`，手机 App 连接页扫码后只填服务器地址。
- * 二维码要高对比才扫得出：浅色主题用纸面底 + 正文色码，深色主题反过来（正文色作底、纸面色作码），始终浅底深码。
  */
 function PairQr() {
 	const { t } = useTranslation();
 	const origin = window.location.origin;
-	const uri = pairUri(origin);
-	const qr = useMemo(() => qrModules(uri), [uri]);
 	return (
 		<div className="flex flex-col items-start gap-2">
-			<div className="shrink-0 rounded-[12px] bg-panel p-3 text-fg ring-1 ring-border [[data-theme=dark]_&]:bg-fg [[data-theme=dark]_&]:text-panel">
-				<svg
-					data-testid="pair-qr"
-					data-qr-payload={uri}
-					role="img"
-					aria-label={t("devices.pairQr.label", { server: origin })}
-					viewBox={`0 0 ${qr.size} ${qr.size}`}
-					shapeRendering="crispEdges"
-					className="block h-36 w-36"
-				>
-					{qr.runs.map((r) => (
-						<rect
-							key={`${r.x},${r.y}`}
-							x={r.x}
-							y={r.y}
-							width={r.w}
-							height={1}
-							fill="currentColor"
-						/>
-					))}
-				</svg>
-			</div>
+			<QrCode
+				text={pairUri(origin)}
+				label={t("devices.pairQr.label", { server: origin })}
+				testId="pair-qr"
+			/>
 			<p className="break-all font-mono text-[12.5px] text-muted">{origin}</p>
 		</div>
 	);
