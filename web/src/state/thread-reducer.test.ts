@@ -967,6 +967,26 @@ describe("注入消息落盘为 custom_message：实时副本不重影", () => {
 			[`e${advisorEntry.seq}`, advisorKey],
 		]);
 	});
+
+	it("同一毫秒相继的两条注入消息（customType 不同、都没有 messageId）落盘后仍是两个行键", () => {
+		const advisor = { ...delivery, customType: "advisor" };
+		const late = { ...delivery, customType: "lsp-late-diagnostics" };
+		let s = frames(initialThreadState(TID), [
+			{ type: "message_start", message: advisor },
+			{ type: "message_end", message: advisor },
+			{ type: "message_start", message: late },
+			{ type: "message_end", message: late },
+		]);
+		const first = customEntry("advisor", TS);
+		const second = {
+			...customEntry("lsp-late-diagnostics", TS),
+			parentId: first.entryId,
+		};
+		s = applyEntries(s, { entries: [first, second] });
+		const rows = keys(s);
+		expect(rows.map(([k]) => k)).toEqual([`e${first.seq}`, `e${second.seq}`]);
+		expect(new Set(rows.map(([, rowKey]) => rowKey)).size).toBe(2);
+	});
 });
 
 describe("thinking_level_changed 兼容 auto 动态解析与切回具体档位", () => {
