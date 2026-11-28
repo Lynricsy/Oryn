@@ -135,16 +135,24 @@ sim_run() {
   return "$rc"
 }
 
-# app_sample <文件>：对正在跑的 Oryn 进程采样 3 秒（macOS sample，模拟器里的 App 是宿主进程），存进产物并打印主线程栈的开头；
-# 用于 App 卡住（没有事件、网页没加载）时看主线程停在哪
+# app_sample <文件>：对本台模拟器（$udid）里正在跑的 Oryn 进程采样 3 秒（macOS sample，模拟器里的 App 是宿主进程），
+# 存进产物并打印主线程栈的开头；用于 App 卡住（没有事件、网页没加载、截图超时）时看主线程停在哪。
+# 进程按可执行文件路径里的设备目录（CoreSimulator/Devices/<UDID>/…/Oryn.app/Oryn）认，同一台机器上别的模拟器
+# （上一步没关掉的、并行的）里的 Oryn 不会被采到；同一台里有多个时取最新的（pgrep -n）
 app_sample() {
   local pid
-  pid=$(pgrep -f '/Oryn\.app/Oryn$' | head -1) || true
+  pid=$(pgrep -n -f "/Devices/${udid}/.*/Oryn\.app/Oryn( |$)") || true
   if [[ -z $pid ]]; then
-    echo "--- 没有在跑的 Oryn 进程" >&2
+    echo "--- 模拟器 ${udid} 里没有在跑的 Oryn 进程" >&2
     return 0
   fi
+  echo "--- 采样 pid ${pid}：$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-200)"
+  rm -f "$1"
   pg_timeout 60 sample "$pid" 3 -file "$1" >/dev/null 2>&1 || true
+  if [[ ! -s $1 ]]; then
+    echo "--- Oryn（pid ${pid}）采样失败：没有生成 $(basename "$1")" >&2
+    return 0
+  fi
   echo "--- Oryn（pid ${pid}）主线程采样，全文在 $(basename "$1")"
   grep -A40 -m1 "com.apple.main-thread" "$1" 2>/dev/null | head -40 || true
 }
