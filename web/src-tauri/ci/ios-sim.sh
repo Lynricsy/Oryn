@@ -216,5 +216,9 @@ shot_settled() {
   done
   rm -f "$f"
   echo "::error::$(basename "$f") 截图 10 轮内没有稳定下来（顶部差异 ${top}，底部差异 ${bottom}）"
+  # 截图一直超时（差异是 -）时分清是 App 主线程卡住，还是模拟器 / 宿主机整体卡住：采 App 主线程，再看宿主机最忙的进程
+  app_sample "${f%.png}-sample.txt"
+  echo "--- 宿主机最忙的进程"
+  pg_timeout 30 top -l 1 -o cpu -n 12 -stats pid,command,cpu,mem 2>/dev/null | tail -14 || true
   return 1
 }
