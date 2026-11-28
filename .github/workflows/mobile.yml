@@ -560,7 +560,13 @@ jobs:
         shell: bash
         env:
           APP: ${{ steps.app.outputs.path }}
+        # 摘要与端到端一样先写进产物目录、退出时再并回 Actions 摘要：推送步骤挂住被取消时，提前上传的产物里也有失败原因
         run: |
+          mkdir -p ios-shot/duo
+          step_summary="$GITHUB_STEP_SUMMARY"
+          export GITHUB_STEP_SUMMARY="$PWD/ios-shot/duo/summary.md"
+          : > "$GITHUB_STEP_SUMMARY"
+          trap 'cat "$GITHUB_STEP_SUMMARY" >> "$step_summary"' EXIT
           rm -f ios-shot/duo/.complete
           bash web/src-tauri/ci/ios-duo-check.sh "$APP" web/dist-e2e ios-shot/duo
           [[ -f ios-shot/duo/.complete ]] || { echo "::error::iPhone Duo 折叠往返没有跑完全部断言"; exit 1; }
