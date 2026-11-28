@@ -293,7 +293,21 @@ export function SectionTabBar({
 								tabIndex={hidden ? -1 : undefined}
 								aria-current={on ? "true" : undefined}
 								title={t("sections.tabTitle", { label, keys })}
-								onClick={() => switchSection(key, { toggleSink: true })}
+								onClick={() => {
+									// 先展开再导航：侧栏的历史标记要压在原页面上、新页面压在标记之上（flushSync 让打开时
+									// 压标记的副作用在导航前跑完）。反过来的话标记落在新页面那条记录上，分区页的重定向
+									// （`/assistant` → `/assistant/<id>`，replace）会把它连同标记一起改写掉。
+									if (
+										rail &&
+										isSinkLayout() &&
+										!uiStore.getState().sidebarOpen
+									) {
+										flushSync(() => uiStore.getState().setSidebar(true));
+										switchSection(key);
+										return;
+									}
+									switchSection(key, { toggleSink: true });
+								}}
 								className={`relative z-10 flex min-h-11 min-w-0 flex-col items-center justify-center gap-0.5 rounded-full text-2xs leading-none transition-colors duration-150 ${on ? "font-semibold text-accent-ink" : "font-medium text-muted hover:text-fg"}`}
 							>
 								<span className="relative inline-flex">
