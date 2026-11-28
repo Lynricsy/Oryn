@@ -64,6 +64,21 @@ check "run() 先请求了 simctl terminate" 'grep -q "simctl terminate" "$t/call
 check "run() 没有调 simctl launch" '! grep -q "simctl launch" "$t/calls"'
 unset -f kill
 
+# 4. header_titled_in：淡入要晚于最近一次撤掉；矩形更新重发 set 不要求再淡入
+h=$t/header.jsonl
+on='{"event":"header.set","on":true,"key":"T-1","lead":null,"title":{"x":0}}'
+off='{"event":"header.set","on":false,"key":null,"lead":null,"title":null}'
+shown='{"event":"header.show","alpha":1,"ms":120}'
+printf '%s\n' "$on" "$shown" >"$h"
+check "挂上后淡入 → 就绪" 'header_titled_in "$h" T-1'
+check "key 不是给定线程 → 未就绪" '! header_titled_in "$h" T-2'
+printf '%s\n' "$on" "$shown" "$off" "$on" >"$h"
+check "再次挂上、还没淡入：不吃上一次的 alpha 1" '! header_titled_in "$h"'
+printf '%s\n' "$on" "$shown" "$off" "$on" "$shown" "$on" "not json" >"$h"
+check "重挂后淡入，之后只是矩形更新 → 就绪（非 JSON 行忽略）" 'header_titled_in "$h"'
+printf '%s\n' '{"event":"header.set","on":true,"key":"T-1","lead":{"x":0},"title":{"x":0}}' "$shown" >"$h"
+check "带侧栏钮（没进竖栏）→ 未就绪" '! header_titled_in "$h"'
+
 if ((failures > 0)); then
   echo "${failures} 项失败" >&2
   exit 1

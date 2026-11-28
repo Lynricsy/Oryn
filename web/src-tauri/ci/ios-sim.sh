@@ -115,6 +115,22 @@ pg_timeout() {
 # 超时连同它派生的 simctl 子进程一起结束，调用方按失败处理（以前没有限时，卡住时整步挂到 runner 被回收也没有日志）
 duo() { pg_timeout "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
 
+# header_titled_in <事件日志> [线程 id]：竖栏下原生页头只剩标题胶囊、且这一次挂上之后已淡入。
+# 最后一条 header.set 开着、没有侧栏钮（lead 为 null）、有标题（给了线程 id 时 key 还得是它）；
+# 最后一条 header.show 是 alpha 1，且排在最近一次 header.set(on:false) 之后：撤掉页头不发 show、重挂初始隐藏，
+# 只看最后一条 show 会吃到上一次挂着时的淡入。不要求晚于每次 set(on:true)：矩形更新会重发 set、不重发 show。
+header_titled_in() {
+  jq -nRe --arg k "${2-}" '
+    [inputs | fromjson? | select(.event == "header.set" or .event == "header.show")] as $h
+    | ($h | map(.event == "header.set" and .on == false) | rindex(true)) as $off
+    | ($h | map(.event == "header.show") | rindex(true)) as $show
+    | ($h | map(select(.event == "header.set")) | last) as $set
+    | $set != null and $set.on and $set.lead == null and $set.title != null
+      and ($k == "" or $set.key == $k)
+      and $show != null and ($off == null or $show > $off) and $h[$show].alpha == 1
+  ' "$1" >/dev/null 2>&1
+}
+
 # sim_drop <udid>：收尾时关掉并删除模拟器，每条 simctl 限时 60 秒（pg_timeout，超时返回 124），前后打 [cleanup] 标记：
 # 清理卡住时 EXIT trap 不会拖住整步（Actions 才能封存日志、上传产物），日志里也看得到停在哪一条、结果如何
 sim_drop() {
