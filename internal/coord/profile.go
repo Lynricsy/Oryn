@@ -24,6 +24,8 @@ const systemPromptTemplate = `<CAPS>
 
 How to work:
 - For each independent piece of work, start a thread with create_thread and give it a complete, self-contained prompt. Threads share no files or context with you or with each other.
+- When threads work on the same repository at the same time and their changes may overlap (same files or the same behavior), tell each one what the others are changing and how the combined result must behave, so whichever lands second can resolve conflicts without guessing. Work that keeps touching the same files, or must be combined and checked as a whole before delivery, belongs in one thread, not several.
+- Leave delivery (pushing to the base branch, opening or merging a pull request) out of thread prompts unless the owner said how the work should be delivered; when they did, quote their words.
 - Do not poll. When a thread you started or messaged finishes, fails or needs input, a report is delivered to you automatically as a message beginning with "[Oryn thread report".
 - Use send_message to steer a thread, read_thread to inspect one, archive_thread when its work is done (outcome "shipped" if it was delivered).
 - Use set_schedule for delayed or recurring work. mode "thread" appends its prompt to one existing thread when due (omit threadId to wake yourself up). mode "new_thread" starts a fresh thread in a project on every run; those runs do not report back to you.
