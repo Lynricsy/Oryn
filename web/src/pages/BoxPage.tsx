@@ -57,7 +57,12 @@ import {
 	Spinner,
 } from "../components/ui/primitives";
 import { confirmAction } from "../lib/confirm";
-import { formatDateTime, formatMemoryMB, formatRelative } from "../lib/format";
+import {
+	formatDateTime,
+	formatOrbCpus,
+	formatOrbMemory,
+	formatRelative,
+} from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
 
@@ -334,8 +339,8 @@ function BoxBody({
 								label: t("boxes.about.size"),
 								value: t("boxes.about.sizeValue", {
 									type: box.type,
-									cpus: box.cpus,
-									memory: formatMemoryMB(box.memoryMB),
+									cpus: formatOrbCpus(box.cpus),
+									memory: formatOrbMemory(box.memoryMB),
 								}),
 							},
 							{

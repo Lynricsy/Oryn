@@ -87,6 +87,37 @@ export function formatMemoryMB(mb: number): string {
 	return `${Number((mb / 1024).toFixed(1))} GB`;
 }
 
+/** 核数（可为小数）：整数原样，否则至多一位小数。 */
+export function formatCpus(n: number): string {
+	return Number.isInteger(n) ? String(n) : Number(n.toFixed(1)).toString();
+}
+
+/** orb 规格的核数：0 表示不限（不限资源的 docker 类型，或 runner / 协调 orb）。 */
+export function formatOrbCpus(cpus: number): string {
+	return cpus > 0
+		? i18n.t("panel.cores", { n: formatCpus(cpus) })
+		: i18n.t("panel.cpuUnlimited");
+}
+
+/** orb 规格的内存（MiB）：0 表示不限。 */
+export function formatOrbMemory(mb: number): string {
+	return mb > 0 ? formatMemoryMB(mb) : i18n.t("panel.memoryUnlimited");
+}
+
+/** orb 规格的紧凑写法 `4C / 8 GB`：为 0 的一项写「不限」，两项都为 0 时合成一句。 */
+export function formatOrbSpec(cpus: number, memoryMB: number): string {
+	if (cpus <= 0 && memoryMB <= 0) return i18n.t("panel.resourcesUnlimited");
+	const cpu = cpus > 0 ? `${formatCpus(cpus)}C` : i18n.t("panel.cpuUnlimited");
+	return `${cpu} / ${formatOrbMemory(memoryMB)}`;
+}
+
+/** 配额读数后补「· N 台不限」：不限资源的 orb 没有配额可加，单独点明台数。 */
+export function withUnlimitedCount(text: string, n: number): string {
+	return n > 0
+		? i18n.t("providers.overview.node.withUnlimited", { text, n })
+		: text;
+}
+
 /** 计数按界面语言分组（如 48,200）。 */
 export function formatCount(n: number): string {
 	return new Intl.NumberFormat(i18n.language).format(n);

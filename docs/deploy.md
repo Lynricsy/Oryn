@@ -218,6 +218,19 @@ sudo install -m 0644 deploy/systemd/oryn-provider.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now oryn-provider
 ```
 
+`types` 里的 `cpus` / `memory` 就是 `docker run --cpus` / `--memory` 的值（`memory` 的写法同 docker：`512m`、`4g`、`1.5g`，至少 `6m`）。`cpus: 0` 表示不限 CPU，`memory: "0"`（或省略）表示不限内存，此时 provider 不传对应参数，容器可用满宿主机的 CPU 与内存；界面上显示为「CPU 不限」「内存不限」，Provider 总览的配额读数另行标出运行中不限资源的 orb 台数。写了 `types` 就会整个替换默认的 `small` / `medium` / `large`，`default_type` 必须是表里的类型，例如在默认三档之外加一档：
+
+```yaml
+  types:
+    small: {cpus: 2, memory: "4g"}
+    medium: {cpus: 4, memory: "8g"}
+    large: {cpus: 8, memory: "16g"}
+    unlimited: {cpus: 0, memory: "0"}
+  default_type: medium
+```
+
+不限资源的 orb 会与宿主机上的其他 orb、orynd 争抢 CPU 与内存，只建议在独占或可信的宿主上使用。进程数由全 provider 的 `docker.pids_limit` 另行限制（缺省 4096，`0` = 不限）；`--shm-size` 固定为 1g。firecracker 类型必须给定 vCPU 数与内存，不支持不限。
+
 provider 放在另一台主机时，`url` 与 `orb_url` 都写主域名（`https://oryn.example.com`），orb 经反代建立 link。
 
 停机 orb 的只读预览：docker 与 firecracker provider 会在 hello 里声明 `offlineFs`，文件面板在 orb 停机时就不再唤醒它，而是由 provider 读取停机 orb 的磁盘：docker 用 `docker cp` 读已退出的容器，firecracker 在用户态解析 VM 的基础盘与可写盘（不挂载）。要用上这个功能，控制面与 provider 都要升级到同一版本；旧版 provider 不声明 `offlineFs`，文件面板会提示「唤醒后可浏览」。provider 回传文件时用的是 `POST /provider/v1/fs/{id}/reply`，请求体可能很大。provider 经反代连控制面时，这个路径不能缓冲请求体，也不能限制请求体大小，第 3 节示例里的 `proxy_request_buffering off` 与 `client_max_body_size 600m` 已满足；超过 600MiB 的文件无法在停机时预览。

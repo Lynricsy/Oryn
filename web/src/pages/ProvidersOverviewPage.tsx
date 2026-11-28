@@ -13,7 +13,6 @@ import {
 	WindowControls,
 } from "../components/layout/WindowControls";
 import {
-	formatCpus,
 	OrbDistributionBar,
 	ProviderCard,
 	StackedResourceBar,
@@ -34,9 +33,11 @@ import {
 } from "../components/ui/primitives";
 import {
 	formatBytes,
+	formatCpus,
 	formatMemoryMB,
 	formatPercent,
 	formatRelative,
+	withUnlimitedCount,
 } from "../lib/format";
 import { useBreakpoint } from "../lib/viewport";
 import { uiStore, useSidebarShown, useSidebarToggleShown } from "../state/ui";
@@ -142,12 +143,14 @@ export function ProvidersOverviewPage(): ReactNode {
 	const hasHostCpu = Boolean(summary && summary.host.cpuCores > 0);
 	const hasOrbDisk = Boolean(summary && summary.host.orbDiskReportedCount > 0);
 
-	// 全局内存：Orb 实时内存 vs 宿主机其他内存
+	// 全局内存：Orb 实时内存 vs 宿主机其他内存；没有宿主机数据时退回按运行配额算占比，
+	// 有不限内存的 orb 在跑时配额不能当分母（它们的用量不在配额里）
 	const orbMemPct =
 		summary && hasHostMem
 			? (summary.live.memUsedMB / summary.host.memTotalMB) * 100
 			: summary &&
 					summary.allocated.runningMemoryMB > 0 &&
+					summary.allocated.runningUnlimitedMemory === 0 &&
 					summary.live.sampledOrbs > 0
 				? (summary.live.memUsedMB / summary.allocated.runningMemoryMB) * 100
 				: undefined;
@@ -170,13 +173,14 @@ export function ProvidersOverviewPage(): ReactNode {
 			? summary.host.orbDiskBytes
 			: summary.snapshots.totalBytes
 		: 0;
-	// 全局 CPU：Orb 实时 CPU 核数 vs 宿主机其他 CPU 核数
+	// 全局 CPU：Orb 实时 CPU 核数 vs 宿主机其他 CPU 核数（退回配额分母的条件同内存）
 	const orbCpuCores = summary ? summary.live.cpuPct / 100 : 0;
 	const orbCpuPct =
 		summary && hasHostCpu
 			? (orbCpuCores / summary.host.cpuCores) * 100
 			: summary &&
 					summary.allocated.runningCpus > 0 &&
+					summary.allocated.runningUnlimitedCpu === 0 &&
 					summary.live.sampledOrbs > 0
 				? (orbCpuCores / summary.allocated.runningCpus) * 100
 				: undefined;
@@ -367,7 +371,7 @@ export function ProvidersOverviewPage(): ReactNode {
 												}
 											: undefined
 									}
-									sub={
+									sub={withUnlimitedCount(
 										hasHostMem
 											? t("providers.overview.kpi.memoryHostSub", {
 													used: formatMemoryMB(summary.host.memUsedMB),
@@ -383,8 +387,9 @@ export function ProvidersOverviewPage(): ReactNode {
 													total: formatMemoryMB(
 														summary.allocated.totalMemoryMB,
 													),
-												})
-									}
+												}),
+										summary.allocated.runningUnlimitedMemory,
+									)}
 								/>
 								<SummaryKpiCard
 									testId="kpi-providers-storage"
@@ -475,7 +480,7 @@ export function ProvidersOverviewPage(): ReactNode {
 												}
 											: undefined
 									}
-									sub={
+									sub={withUnlimitedCount(
 										summary.host.cpuCores > 0
 											? t("providers.overview.kpi.cpuSub", {
 													run: formatCpus(summary.allocated.runningCpus),
@@ -485,8 +490,9 @@ export function ProvidersOverviewPage(): ReactNode {
 											: t("providers.overview.kpi.cpuSubNoHost", {
 													run: formatCpus(summary.allocated.runningCpus),
 													total: formatCpus(summary.allocated.totalCpus),
-												})
-									}
+												}),
+										summary.allocated.runningUnlimitedCpu,
+									)}
 								/>
 								<SummaryKpiCard
 									testId="kpi-providers-jobs"

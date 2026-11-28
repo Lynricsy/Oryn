@@ -8002,7 +8002,9 @@ export interface components {
             failureReason?: string;
             provider: string;
             type: string;
+            /** @description 核数配额；0 = 不限 */
             cpus: number;
+            /** @description 内存配额（MiB）；0 = 不限 */
             memoryMB: number;
             schedule?: components["schemas"]["BoxSchedule"];
             createdAt: components["schemas"]["TimestampMs"];
@@ -9687,7 +9689,9 @@ export interface components {
         };
         OrbType: {
             name: string;
+            /** @description 核数配额；0 = 不限（docker 类型 `cpus: 0`） */
             cpus: number;
+            /** @description 内存配额（MiB）；0 = 不限（docker 类型 `memory: "0"`） */
             memoryMB: number;
             /** @description 该类型 orb 的可选能力（M11a）：`docker` = orb 内可用 Docker（嵌套 Docker，由 orbd 监督 dockerd） */
             features?: string[];
@@ -9799,7 +9803,7 @@ export interface components {
             /** @description 未删除的助手电脑 orb 数 */
             computers: number;
         };
-        /** @description orb 规格配额汇总（运行中 vs 全部未删除） */
+        /** @description orb 规格配额汇总（运行中 vs 全部未删除）；不限资源的 orb 按 0 计入，另行计数 */
         ProviderResourceAllocation: {
             runningCpus: number;
             /** Format: int64 */
@@ -9807,6 +9811,10 @@ export interface components {
             totalCpus: number;
             /** Format: int64 */
             totalMemoryMB: number;
+            /** @description 运行中且不限 CPU 的 orb 数（`cpus` 为 0，不计入 runningCpus） */
+            runningUnlimitedCpu: number;
+            /** @description 运行中且不限内存的 orb 数（`memoryMB` 为 0，不计入 runningMemoryMB） */
+            runningUnlimitedMemory: number;
         };
         /** @description orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数） */
         ProviderLiveMetrics: {
@@ -9860,7 +9868,9 @@ export interface components {
             id: components["schemas"]["OrbId"];
             type: string;
             state: components["schemas"]["OrbState"];
+            /** @description 核数配额；0 = 不限 */
             cpus: number;
+            /** @description 内存配额（MiB）；0 = 不限 */
             memoryMB: number;
             projectId?: components["schemas"]["ProjectId"];
             projectName?: string;
@@ -10287,7 +10297,9 @@ export interface components {
             providerId: components["schemas"]["ProviderId"];
             providerName?: string;
             type: string;
+            /** @description 核数配额；0 = 不限（不限资源的类型，或 runner / 协调 orb） */
             cpus: number;
+            /** @description 内存配额（MiB）；0 = 不限 */
             memoryMB: number;
             image: string;
             projectId?: components["schemas"]["ProjectId"];
@@ -11313,7 +11325,9 @@ export interface components {
             start?: components["schemas"]["TimestampMs"];
             /** @description `groupBy=type` / `orb` 时给出 */
             type?: string;
+            /** @description 核数配额；0 = 不限 */
             cpus?: number;
+            /** @description 内存配额（MiB）；0 = 不限 */
             memoryMB?: number;
             /** @description 窗口内存在过的 orb 数 */
             orbs: number;

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/netip"
 	"net/url"
@@ -624,7 +625,8 @@ func validatePortalDomain(domain string, public *url.URL) error {
 	return nil
 }
 
-// DockerType 是一种 orb 规格。
+// DockerType 是一种 orb 规格。CPUs 为 0 表示不限 CPU，Memory 为空或 "0" 表示不限内存
+// （docker 驱动此时不传 `--cpus` / `--memory`）。
 type DockerType struct {
 	CPUs   float64 `yaml:"cpus"`
 	Memory string  `yaml:"memory"`
@@ -634,10 +636,46 @@ type DockerType struct {
 	NestedDocker bool `yaml:"nested_docker"`
 }
 
+// dockerMemoryMinBytes 是 docker 接受的最小内存上限（`--memory` 低于 6MiB 时 docker 拒绝创建容器）。
+const dockerMemoryMinBytes = 6 << 20
+
+// dockerMemoryRe 与 docker CLI 解析 `--memory` 的写法一致（go-units RAMInBytes）：数字、可选空格、
+// 可选单位 k/m/g/t/p（按 1024 进位）、可选 i 与 b；没有单位时是字节。
+var dockerMemoryRe = regexp.MustCompile(`^(\d+(?:\.\d+)?) ?([kKmMgGtTpP])?[iI]?[bB]?$`)
+
+// MemoryBytes 把 Memory 解析为字节数；空串与 0 返回 0（不限内存）。
+func (t DockerType) MemoryBytes() (int64, error) {
+	s := strings.TrimSpace(t.Memory)
+	if s == "" {
+		return 0, nil
+	}
+	m := dockerMemoryRe.FindStringSubmatch(s)
+	if m == nil {
+		return 0, fmt.Errorf("%q 不是 docker 的内存写法（如 4g、512m；0 = 不限）", t.Memory)
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q 不是 docker 的内存写法（如 4g、512m；0 = 不限）", t.Memory)
+	}
+	if m[2] != "" {
+		v *= math.Pow(1024, float64(strings.Index("kmgtp", strings.ToLower(m[2]))+1))
+	}
+	if v >= math.MaxInt64 {
+		return 0, fmt.Errorf("%q 超出范围", t.Memory)
+	}
+	return int64(v), nil
+}
+
+// MemoryMB 返回内存上限的 MiB 数；0 表示不限（写法无效时也是 0，加载配置时已校验）。
+func (t DockerType) MemoryMB() int {
+	b, _ := t.MemoryBytes()
+	return int(b >> 20)
+}
+
 // SysboxRuntime 是嵌套 Docker 唯一支持的容器运行时。
 const SysboxRuntime = "sysbox-runc"
 
-// validateDockerTypes 校验各类型的 runtime / nested_docker（M11a）。
+// validateDockerTypes 校验各类型的 cpus / memory 与 runtime / nested_docker（M11a）。
 func validateDockerTypes(types map[string]DockerType) []error {
 	names := make([]string, 0, len(types))
 	for name := range types {
@@ -647,6 +685,14 @@ func validateDockerTypes(types map[string]DockerType) []error {
 	var errs []error
 	for _, name := range names {
 		t := types[name]
+		if !(t.CPUs >= 0) || math.IsInf(t.CPUs, 0) {
+			errs = append(errs, fmt.Errorf("docker.types.%s.cpus %v 必须是非负数（0 = 不限）", name, t.CPUs))
+		}
+		if b, err := t.MemoryBytes(); err != nil {
+			errs = append(errs, fmt.Errorf("docker.types.%s.memory: %w", name, err))
+		} else if b > 0 && b < dockerMemoryMinBytes {
+			errs = append(errs, fmt.Errorf("docker.types.%s.memory %q 至少为 6m（0 = 不限）", name, t.Memory))
+		}
 		if t.Runtime != "" && t.Runtime != SysboxRuntime {
 			errs = append(errs, fmt.Errorf("docker.types.%s.runtime %q 无效：只接受空或 %s", name, t.Runtime, SysboxRuntime))
 		}

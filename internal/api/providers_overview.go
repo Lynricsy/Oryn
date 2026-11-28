@@ -185,6 +185,13 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 				item.Orbs.Running++
 				item.Allocated.RunningCpus += float32(o.Cpus)
 				item.Allocated.RunningMemoryMB += o.MemoryMb
+				// 不限资源的 orb 没有配额可加：单独计数，客户端据此不再用配额当分母
+				if o.Cpus == 0 {
+					item.Allocated.RunningUnlimitedCPU++
+				}
+				if o.MemoryMb == 0 {
+					item.Allocated.RunningUnlimitedMemory++
+				}
 			case orbs.StateRequested, orbs.StateSpawning, orbs.StateConnecting,
 				orbs.StateSettingUp, orbs.StateResuming, orbs.StateWaking:
 				item.Orbs.Starting++
@@ -334,6 +341,8 @@ func (s *Server) GetProvidersOverview(w http.ResponseWriter, r *http.Request) {
 		out.Summary.Allocated.RunningMemoryMB += item.Allocated.RunningMemoryMB
 		out.Summary.Allocated.TotalCpus += item.Allocated.TotalCpus
 		out.Summary.Allocated.TotalMemoryMB += item.Allocated.TotalMemoryMB
+		out.Summary.Allocated.RunningUnlimitedCPU += item.Allocated.RunningUnlimitedCPU
+		out.Summary.Allocated.RunningUnlimitedMemory += item.Allocated.RunningUnlimitedMemory
 		out.Summary.Live.SampledOrbs += item.Live.SampledOrbs
 		out.Summary.Live.CPUPct += item.Live.CPUPct
 		out.Summary.Live.MemUsedMB += item.Live.MemUsedMB

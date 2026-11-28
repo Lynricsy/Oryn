@@ -17,7 +17,8 @@ import {
 	useServiceAction,
 } from "../../api/queries";
 import {
-	formatMemoryMB,
+	formatOrbCpus,
+	formatOrbMemory,
 	formatPercent,
 	formatTokens,
 	formatUptime,
@@ -404,8 +405,8 @@ function OrbSpecs({ threadId, orb }: { threadId: string; orb: Orb }) {
 					{boxText}
 				</Spec>
 				<Spec icon="box">{orb.type}</Spec>
-				<Spec icon="cpu">{t("panel.cores", { n: orb.cpus })}</Spec>
-				<Spec icon="memory">{formatMemoryMB(orb.memoryMB)}</Spec>
+				<Spec icon="cpu">{formatOrbCpus(orb.cpus)}</Spec>
+				<Spec icon="memory">{formatOrbMemory(orb.memoryMB)}</Spec>
 			</div>
 		);
 	if (orb.kind === "runner")
@@ -429,8 +430,8 @@ function OrbSpecs({ threadId, orb }: { threadId: string; orb: Orb }) {
 	return (
 		<div className={cls}>
 			<Spec icon="box">{orb.type}</Spec>
-			<Spec icon="cpu">{t("panel.cores", { n: orb.cpus })}</Spec>
-			<Spec icon="memory">{formatMemoryMB(orb.memoryMB)}</Spec>
+			<Spec icon="cpu">{formatOrbCpus(orb.cpus)}</Spec>
+			<Spec icon="memory">{formatOrbMemory(orb.memoryMB)}</Spec>
 			{orb.providerName && <Spec icon="hardDrives">{orb.providerName}</Spec>}
 			{orb.nestedDocker && <DockerBadge />}
 			{orb.githubLogin && (

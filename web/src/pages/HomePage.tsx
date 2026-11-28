@@ -98,7 +98,7 @@ import {
 	Spinner,
 } from "../components/ui/primitives";
 import { releaseSplash } from "../lib/boot-splash";
-import { formatMemoryMB } from "../lib/format";
+import { formatOrbCpus, formatOrbMemory } from "../lib/format";
 import { useImeComposition } from "../lib/ime";
 import { modelSelector } from "../lib/model-picker";
 import {
@@ -960,10 +960,8 @@ export function HomePage(): ReactNode {
 															hint={ot.name}
 															trailing={
 																<>
-																	<Badge>
-																		{t("panel.cores", { n: ot.cpus })}
-																	</Badge>
-																	<Badge>{formatMemoryMB(ot.memoryMB)}</Badge>
+																	<Badge>{formatOrbCpus(ot.cpus)}</Badge>
+																	<Badge>{formatOrbMemory(ot.memoryMB)}</Badge>
 																	{typeHasDocker(ot) && <DockerBadge />}
 																	{!p.online && (
 																		<Badge tone="warn">

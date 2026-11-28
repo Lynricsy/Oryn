@@ -10232,8 +10232,8 @@ components:
         failureReason: { type: string }
         provider: { type: string }
         type: { type: string }
-        cpus: { type: number }
-        memoryMB: { type: integer }
+        cpus: { type: number, description: 核数配额；0 = 不限 }
+        memoryMB: { type: integer, description: 内存配额（MiB）；0 = 不限 }
         schedule: { $ref: '#/components/schemas/BoxSchedule' }
         createdAt: { $ref: '#/components/schemas/TimestampMs' }
         lastDeployAt: { $ref: '#/components/schemas/TimestampMs' }
@@ -12609,8 +12609,8 @@ components:
       required: [name, cpus, memoryMB]
       properties:
         name: { type: string }
-        cpus: { type: number }
-        memoryMB: { type: integer }
+        cpus: { type: number, description: '核数配额；0 = 不限（docker 类型 `cpus: 0`）' }
+        memoryMB: { type: integer, description: '内存配额（MiB）；0 = 不限（docker 类型 `memory: "0"`）' }
         features:
           type: array
           description: '该类型 orb 的可选能力（M11a）：`docker` = orb 内可用 Docker（嵌套 Docker，由 orbd 监督 dockerd）'
@@ -12753,13 +12753,19 @@ components:
           description: 未删除的助手电脑 orb 数
     ProviderResourceAllocation:
       type: object
-      description: orb 规格配额汇总（运行中 vs 全部未删除）
-      required: [runningCpus, runningMemoryMB, totalCpus, totalMemoryMB]
+      description: orb 规格配额汇总（运行中 vs 全部未删除）；不限资源的 orb 按 0 计入，另行计数
+      required: [runningCpus, runningMemoryMB, totalCpus, totalMemoryMB, runningUnlimitedCpu, runningUnlimitedMemory]
       properties:
         runningCpus: { type: number }
         runningMemoryMB: { type: integer, format: int64 }
         totalCpus: { type: number }
         totalMemoryMB: { type: integer, format: int64 }
+        runningUnlimitedCpu:
+          type: integer
+          description: 运行中且不限 CPU 的 orb 数（`cpus` 为 0，不计入 runningCpus）
+        runningUnlimitedMemory:
+          type: integer
+          description: 运行中且不限内存的 orb 数（`memoryMB` 为 0，不计入 runningMemoryMB）
     ProviderLiveMetrics:
       type: object
       description: orb 最新采样汇总（CPU / 内存仅汇总运行中 orb，网络收发汇总未删除 orb；不累加 orb 级 statfs 磁盘以免共享底盘重复计数）
@@ -12816,8 +12822,8 @@ components:
         id: { $ref: '#/components/schemas/OrbId' }
         type: { type: string }
         state: { $ref: '#/components/schemas/OrbState' }
-        cpus: { type: number }
-        memoryMB: { type: integer }
+        cpus: { type: number, description: 核数配额；0 = 不限 }
+        memoryMB: { type: integer, description: 内存配额（MiB）；0 = 不限 }
         projectId: { $ref: '#/components/schemas/ProjectId' }
         projectName: { type: string }
         threadIds:
@@ -13411,8 +13417,8 @@ components:
         providerId: { $ref: '#/components/schemas/ProviderId' }
         providerName: { type: string }
         type: { type: string }
-        cpus: { type: number }
-        memoryMB: { type: integer }
+        cpus: { type: number, description: 核数配额；0 = 不限（不限资源的类型，或 runner / 协调 orb） }
+        memoryMB: { type: integer, description: 内存配额（MiB）；0 = 不限 }
         image: { type: string }
         projectId: { $ref: '#/components/schemas/ProjectId' }
         state: { $ref: '#/components/schemas/OrbState' }
@@ -14889,8 +14895,8 @@ components:
         type:
           type: string
           description: '`groupBy=type` / `orb` 时给出'
-        cpus: { type: integer }
-        memoryMB: { type: integer }
+        cpus: { type: integer, description: 核数配额；0 = 不限 }
+        memoryMB: { type: integer, description: 内存配额（MiB）；0 = 不限 }
         orbs:
           type: integer
           description: 窗口内存在过的 orb 数

@@ -451,7 +451,13 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 	if sb != nil {
 		args = append(args, "--label", "oryn-sandbox="+string(sb.Network), "--label", "oryn-sandbox-link="+sandboxTarget)
 	}
-	args = append(args, "--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64), "--memory", typ.Memory)
+	// cpus 为 0 / memory 为空或 0 的类型不限资源：不传对应参数（docker 的缺省即不限）。
+	if typ.CPUs > 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64))
+	}
+	if typ.MemoryMB() > 0 {
+		args = append(args, "--memory", typ.Memory)
+	}
 	if d.Cfg.PidsLimit > 0 {
 		// 所有类型都限制进程数（S-P2-6）：sysbox 宿主调高了 kernel.pid_max，fork 炸弹的上限随之放大。
 		args = append(args, "--pids-limit", strconv.Itoa(d.Cfg.PidsLimit))

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -132,11 +131,12 @@ func New(cfg config.Provider) (Driver, error) {
 	return nil, fmt.Errorf("未知驱动 %q", cfg.Driver)
 }
 
-// typeInfos 把配置中的类型表转为协议形态（按名称排序）。nested_docker 的类型带特性 "docker"（M11a）。
+// typeInfos 把配置中的类型表转为协议形态（按名称排序）。nested_docker 的类型带特性 "docker"（M11a）；
+// cpus / memoryMB 为 0 表示不限。
 func typeInfos(types map[string]config.DockerType) []apigen.OrbType {
 	out := make([]apigen.OrbType, 0, len(types))
 	for name, t := range types {
-		ot := apigen.OrbType{Name: name, Cpus: float32(t.CPUs), MemoryMB: memoryMB(t.Memory)}
+		ot := apigen.OrbType{Name: name, Cpus: float32(t.CPUs), MemoryMB: t.MemoryMB()}
 		if t.NestedDocker {
 			ot.Features = []string{"docker"}
 		}
@@ -144,32 +144,6 @@ func typeInfos(types map[string]config.DockerType) []apigen.OrbType {
 	}
 	sort.Slice(out, func(i, k int) bool { return out[i].Name < out[k].Name })
 	return out
-}
-
-// memoryMB 把 docker 内存写法（"4g"、"512m"、"1024"=字节）换算为 MiB；无法解析时返回 0。
-func memoryMB(s string) int {
-	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "" {
-		return 0
-	}
-	mult := 1.0 / (1 << 20)
-	switch s[len(s)-1] {
-	case 'b':
-		s = s[:len(s)-1]
-	case 'k':
-		mult, s = 1.0/1024, s[:len(s)-1]
-	case 'm':
-		mult, s = 1, s[:len(s)-1]
-	case 'g':
-		mult, s = 1024, s[:len(s)-1]
-	case 't':
-		mult, s = 1024*1024, s[:len(s)-1]
-	}
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0
-	}
-	return int(v * mult)
 }
 
 // tailBuffer 是只保留最后 limit 字节的并发安全 Writer。

@@ -870,7 +870,10 @@ func (s *Service) insertOrb(ctx context.Context, p CreateParams, t target, pick 
 		Coordinator: p.Coordinator, BaseImageID: t.prov.BaseImageID,
 	}
 	if t.spec != nil {
-		base.Cpus = int64(math.Round(float64(t.spec.Cpus)))
+		// 0 = 不限；0.5 核这类小于 1 的配额至少记 1 核，免得取整后被当成不限
+		if t.spec.Cpus > 0 {
+			base.Cpus = max(1, int64(math.Round(float64(t.spec.Cpus))))
+		}
 		base.MemoryMb = int64(t.spec.MemoryMB)
 	}
 	if t.prj != nil {

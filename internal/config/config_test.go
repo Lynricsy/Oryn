@@ -356,6 +356,36 @@ func TestDockerTypeRuntime(t *testing.T) {
 	assert.ErrorContains(t, err, "privileged", "严格解码：未知键报错")
 }
 
+// docker 类型的资源：cpus 0 / memory 空或 0 = 不限；负数、无效写法与低于 docker 下限的内存报错。
+func TestDockerTypeResources(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "provider.yaml")
+	load := func(types string) (Provider, error) {
+		require.NoError(t, os.WriteFile(path, []byte("url: http://127.0.0.1:7600\ntoken_file: /tmp/t\ndocker:\n  default_type: free\n  types:\n"+types), 0o600))
+		return LoadProvider(path)
+	}
+
+	c, err := load("    free: {cpus: 0, memory: \"0\"}\n    bare: {}\n    half: {cpus: 0.5, memory: 1.5g}\n")
+	require.NoError(t, err)
+	assert.Equal(t, 0, c.Docker.Types["free"].MemoryMB())
+	assert.Equal(t, 0, c.Docker.Types["bare"].MemoryMB(), "省略 memory 同样不限")
+	assert.Equal(t, 1536, c.Docker.Types["half"].MemoryMB())
+
+	for mem, mb := range map[string]int{"512m": 512, "4G": 4096, "4gb": 4096, "4GiB": 4096, "1t": 1 << 20, "8388608": 8, "0g": 0} {
+		assert.Equal(t, mb, DockerType{Memory: mem}.MemoryMB(), mem)
+	}
+
+	for types, want := range map[string]string{
+		"    free: {cpus: -1, memory: 4g}\n":  "docker.types.free.cpus -1 必须是非负数",
+		"    free: {cpus: 1, memory: 4x}\n":   "docker.types.free.memory",
+		"    free: {cpus: 1, memory: -1g}\n":  "docker.types.free.memory",
+		"    free: {cpus: 1, memory: 1024}\n": "至少为 6m",
+	} {
+		_, err = load(types)
+		assert.ErrorContains(t, err, want, types)
+	}
+}
+
 // M11a 审查修复：docker.pids_limit 的默认值（4096）、0 = 不限、负数报错。
 func TestDockerPidsLimit(t *testing.T) {
 	dir := t.TempDir()

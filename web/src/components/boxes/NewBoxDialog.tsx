@@ -8,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router";
 import { useCreateBox } from "../../api/box-queries";
 import { useProviders } from "../../api/queries";
-import { formatMemoryMB } from "../../lib/format";
+import { formatOrbCpus, formatOrbMemory } from "../../lib/format";
 import { useBreakpoint } from "../../lib/viewport";
 import { uiStore } from "../../state/ui";
 import {
@@ -44,8 +44,8 @@ export function NewBoxDialog({ onClose }: { onClose: () => void }): ReactNode {
 				label: t("boxes.new.sizeOption", {
 					provider: p.name,
 					type: ot.name,
-					cpus: ot.cpus,
-					memory: formatMemoryMB(ot.memoryMB),
+					cpus: formatOrbCpus(ot.cpus),
+					memory: formatOrbMemory(ot.memoryMB),
 				}),
 			})),
 		);

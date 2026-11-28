@@ -12,10 +12,14 @@ import { qk } from "../../api/queries";
 import { confirmAction } from "../../lib/confirm";
 import {
 	formatBytes,
+	formatCpus,
 	formatMemoryMB,
+	formatOrbMemory,
+	formatOrbSpec,
 	formatPercent,
 	formatRelative,
 	formatUptime,
+	withUnlimitedCount,
 } from "../../lib/format";
 import { Badge, StatusDot, type Tone } from "../ui/data";
 import { Icon, type IconName } from "../ui/icons";
@@ -72,10 +76,6 @@ function orbMatchesFilter(
 
 function shortId(id: string): string {
 	return id.length > 16 ? `${id.slice(0, 12)}…` : id;
-}
-
-export function formatCpus(n: number): string {
-	return Number.isInteger(n) ? String(n) : Number(n.toFixed(1)).toString();
 }
 
 /** 运行 / 启动 / 冻结 / 停机 / 异常 五段状态分布条。 */
@@ -427,8 +427,7 @@ function OrbRow({
 						</span>
 						<span aria-hidden>·</span>
 						<span>
-							{orb.type} ({formatCpus(orb.cpus)}C /{" "}
-							{formatMemoryMB(orb.memoryMB)})
+							{orb.type} ({formatOrbSpec(orb.cpus, orb.memoryMB)})
 						</span>
 						{orb.projectName && orb.threadTitles[0] && (
 							<>
@@ -463,7 +462,7 @@ function OrbRow({
 						>
 							<Icon name="memory" size={12} className="text-faint" />
 							{orb.state === "ready" || orb.state === "frozen"
-								? `${formatMemoryMB(sample.memUsedMB)} / ${formatMemoryMB(sample.memLimitMB || orb.memoryMB)}`
+								? `${formatMemoryMB(sample.memUsedMB)} / ${sample.memLimitMB > 0 ? formatMemoryMB(sample.memLimitMB) : formatOrbMemory(orb.memoryMB)}`
 								: "—"}
 						</span>
 						{orb.diskBytes !== undefined ? (
@@ -604,12 +603,13 @@ export function ProviderCard({
 			? t("providers.online")
 			: t("providers.offline");
 
-	// 1) CPU 仪表：以 Orb 实时 CPU 为主角，双段条区分 Orb 占比 vs 宿主机其他进程占比
+	// 1) CPU 仪表：以 Orb 实时 CPU 为主角，双段条区分 Orb 占比 vs 宿主机其他进程占比。
+	// 没有宿主机核数时退回按运行配额算占比；有不限 CPU 的 orb 在跑时配额不能当分母（它们的用量不在配额里）。
 	const orbCpuCores = live.cpuPct / 100;
 	const hasHostCores = Boolean(hm && hm.cpuCores > 0);
 	const orbCpuHostPct = hasHostCores
 		? live.cpuPct / (hm?.cpuCores ?? 1)
-		: allocated.runningCpus > 0
+		: allocated.runningCpus > 0 && allocated.runningUnlimitedCpu === 0
 			? live.cpuPct / allocated.runningCpus
 			: undefined;
 	const otherCpuHostPct =
@@ -667,10 +667,13 @@ export function ProviderCard({
 			: []),
 		{
 			label: t("providers.overview.node.allocated"),
-			value: t("providers.overview.node.runTotal", {
-				run: `${formatCpus(allocated.runningCpus)}C`,
-				total: `${formatCpus(allocated.totalCpus)}C`,
-			}),
+			value: withUnlimitedCount(
+				t("providers.overview.node.runTotal", {
+					run: `${formatCpus(allocated.runningCpus)}C`,
+					total: `${formatCpus(allocated.totalCpus)}C`,
+				}),
+				allocated.runningUnlimitedCpu,
+			),
 		},
 	];
 
@@ -678,7 +681,9 @@ export function ProviderCard({
 	const hasHostMem = Boolean(hm && hm.memTotalMB > 0);
 	const orbMemPct = hasHostMem
 		? (live.memUsedMB / (hm?.memTotalMB ?? 1)) * 100
-		: allocated.runningMemoryMB > 0 && live.sampledOrbs > 0
+		: allocated.runningMemoryMB > 0 &&
+				allocated.runningUnlimitedMemory === 0 &&
+				live.sampledOrbs > 0
 			? (live.memUsedMB / allocated.runningMemoryMB) * 100
 			: undefined;
 	const hostMemPct = hasHostMem
@@ -720,10 +725,13 @@ export function ProviderCard({
 			: []),
 		{
 			label: t("providers.overview.node.allocated"),
-			value: t("providers.overview.node.runTotal", {
-				run: formatMemoryMB(allocated.runningMemoryMB),
-				total: formatMemoryMB(allocated.totalMemoryMB),
-			}),
+			value: withUnlimitedCount(
+				t("providers.overview.node.runTotal", {
+					run: formatMemoryMB(allocated.runningMemoryMB),
+					total: formatMemoryMB(allocated.totalMemoryMB),
+				}),
+				allocated.runningUnlimitedMemory,
+			),
 		},
 		...(hm?.limits?.maxMemoryMB
 			? [
@@ -1149,9 +1157,7 @@ export function ProviderCard({
 								className="inline-flex h-6 items-center gap-1.5 rounded-md bg-inset px-2 text-muted tabular-nums"
 							>
 								<span className="font-medium text-fg">{ot.name}</span>
-								<span>
-									{formatCpus(ot.cpus)}C / {formatMemoryMB(ot.memoryMB)}
-								</span>
+								<span>{formatOrbSpec(ot.cpus, ot.memoryMB)}</span>
 								{p.defaultType === ot.name && (
 									<Badge>{t("providers.default")}</Badge>
 								)}

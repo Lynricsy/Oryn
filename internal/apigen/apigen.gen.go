@@ -6137,7 +6137,9 @@ type BarkChannelConfig struct {
 // Box defines model for Box.
 type Box struct {
 	Apps []BoxApp `json:"apps"`
-	Cpus float32  `json:"cpus"`
+
+	// Cpus 核数配额；0 = 不限
+	Cpus float32 `json:"cpus"`
 
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt     TimestampMs `json:"createdAt"`
@@ -6149,8 +6151,10 @@ type Box struct {
 
 	// LastDeployAt UTC 毫秒时间戳
 	LastDeployAt *TimestampMs `json:"lastDeployAt,omitempty"`
-	MemoryMB     int          `json:"memoryMB"`
-	Name         string       `json:"name"`
+
+	// MemoryMB 内存配额（MiB）；0 = 不限
+	MemoryMB int    `json:"memoryMB"`
+	Name     string `json:"name"`
 
 	// OrbID `orb-<26 位小写 ULID>`（同时是容器名与 hostname）
 	//
@@ -9612,8 +9616,10 @@ type Orb struct {
 	Computer *bool `json:"computer,omitempty"`
 
 	// Coordinator 协调 orb（M9，provider `@host`，跑在控制面宿主上的协调宿主）；为 false 时省略
-	Coordinator *bool   `json:"coordinator,omitempty"`
-	Cpus        float32 `json:"cpus"`
+	Coordinator *bool `json:"coordinator,omitempty"`
+
+	// Cpus 核数配额；0 = 不限（不限资源的类型，或 runner / 协调 orb）
+	Cpus float32 `json:"cpus"`
 
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt TimestampMs `json:"createdAt"`
@@ -9654,7 +9660,9 @@ type Orb struct {
 
 	// LastUserInteractionAt UTC 毫秒时间戳
 	LastUserInteractionAt *TimestampMs `json:"lastUserInteractionAt,omitempty"`
-	MemoryMB              int          `json:"memoryMB"`
+
+	// MemoryMB 内存配额（MiB）；0 = 不限
+	MemoryMB int `json:"memoryMB"`
 
 	// NestedDocker 该 orb 的类型声明了 `docker` 特性（M11a，orb 内可用 Docker）
 	NestedDocker *bool   `json:"nestedDocker,omitempty"`
@@ -10229,6 +10237,7 @@ type OrbSnapshotKind string
 
 // OrbStat defines model for OrbStat.
 type OrbStat struct {
+	// Cpus 核数配额；0 = 不限
 	Cpus     *int  `json:"cpus,omitempty"`
 	Failures int   `json:"failures"`
 	Freezes  int   `json:"freezes"`
@@ -10238,8 +10247,10 @@ type OrbStat struct {
 	Key string `json:"key"`
 
 	// Label 项目名；`groupBy=orb` 时为它第一个线程的标题
-	Label    *string `json:"label,omitempty"`
-	MemoryMB *int    `json:"memoryMB,omitempty"`
+	Label *string `json:"label,omitempty"`
+
+	// MemoryMB 内存配额（MiB）；0 = 不限
+	MemoryMB *int `json:"memoryMB,omitempty"`
 
 	// Orbs 窗口内存在过的 orb 数
 	Orbs int `json:"orbs"`
@@ -10362,12 +10373,15 @@ type OrbTimelineSegment struct {
 
 // OrbType defines model for OrbType.
 type OrbType struct {
+	// Cpus 核数配额；0 = 不限（docker 类型 `cpus: 0`）
 	Cpus float32 `json:"cpus"`
 
 	// Features 该类型 orb 的可选能力（M11a）：`docker` = orb 内可用 Docker（嵌套 Docker，由 orbd 监督 dockerd）
 	Features []string `json:"features,omitempty"`
-	MemoryMB int      `json:"memoryMB"`
-	Name     string   `json:"name"`
+
+	// MemoryMB 内存配额（MiB）；0 = 不限（docker 类型 `memory: "0"`）
+	MemoryMB int    `json:"memoryMB"`
+	Name     string `json:"name"`
 }
 
 // OrbWhoami `GET /orb/v1/whoami` 的结果（M11b）
@@ -11572,10 +11586,12 @@ type ProviderOrbCounts struct {
 
 // ProviderOrbSummary 总览页展示的单台 orb 摘要与最新采样
 type ProviderOrbSummary struct {
-	Automation *bool   `json:"automation,omitempty"`
-	Box        *bool   `json:"box,omitempty"`
-	Computer   *bool   `json:"computer,omitempty"`
-	Cpus       float32 `json:"cpus"`
+	Automation *bool `json:"automation,omitempty"`
+	Box        *bool `json:"box,omitempty"`
+	Computer   *bool `json:"computer,omitempty"`
+
+	// Cpus 核数配额；0 = 不限
+	Cpus float32 `json:"cpus"`
 
 	// CreatedAt UTC 毫秒时间戳
 	CreatedAt TimestampMs `json:"createdAt"`
@@ -11592,8 +11608,10 @@ type ProviderOrbSummary struct {
 	// LastActivityAt UTC 毫秒时间戳
 	LastActivityAt *TimestampMs     `json:"lastActivityAt,omitempty"`
 	LatestSample   *OrbMetricSample `json:"latestSample,omitempty"`
-	MemoryMB       int              `json:"memoryMB"`
-	NestedDocker   *bool            `json:"nestedDocker,omitempty"`
+
+	// MemoryMB 内存配额（MiB）；0 = 不限
+	MemoryMB     int   `json:"memoryMB"`
+	NestedDocker *bool `json:"nestedDocker,omitempty"`
 
 	// Pool 预热池状态（M11a）：`warming` 已创建、尚未就绪；`idle` 就绪或冻结、可认领；`claimed` 已被线程认领、正在刷新
 	Pool *OrbPoolState `json:"pool,omitempty"`
@@ -11618,7 +11636,7 @@ type ProviderOrbSummary struct {
 
 // ProviderOverviewItem defines model for ProviderOverviewItem.
 type ProviderOverviewItem struct {
-	// Allocated orb 规格配额汇总（运行中 vs 全部未删除）
+	// Allocated orb 规格配额汇总（运行中 vs 全部未删除）；不限资源的 orb 按 0 计入，另行计数
 	Allocated     ProviderResourceAllocation `json:"allocated"`
 	AllowMultiple bool                       `json:"allowMultiple"`
 	BaseImageID   *string                    `json:"baseImageId,omitempty"`
@@ -11642,12 +11660,18 @@ type ProviderOverviewItem struct {
 	Version   *string               `json:"version,omitempty"`
 }
 
-// ProviderResourceAllocation orb 规格配额汇总（运行中 vs 全部未删除）
+// ProviderResourceAllocation orb 规格配额汇总（运行中 vs 全部未删除）；不限资源的 orb 按 0 计入，另行计数
 type ProviderResourceAllocation struct {
 	RunningCpus     float32 `json:"runningCpus"`
 	RunningMemoryMB int64   `json:"runningMemoryMB"`
-	TotalCpus       float32 `json:"totalCpus"`
-	TotalMemoryMB   int64   `json:"totalMemoryMB"`
+
+	// RunningUnlimitedCPU 运行中且不限 CPU 的 orb 数（`cpus` 为 0，不计入 runningCpus）
+	RunningUnlimitedCPU int `json:"runningUnlimitedCpu"`
+
+	// RunningUnlimitedMemory 运行中且不限内存的 orb 数（`memoryMB` 为 0，不计入 runningMemoryMB）
+	RunningUnlimitedMemory int     `json:"runningUnlimitedMemory"`
+	TotalCpus              float32 `json:"totalCpus"`
+	TotalMemoryMB          int64   `json:"totalMemoryMB"`
 }
 
 // ProviderSnapshotStats 项目快照数量与存储占用
@@ -11688,7 +11712,7 @@ type ProvidersOverview struct {
 
 // ProvidersSummary defines model for ProvidersSummary.
 type ProvidersSummary struct {
-	// Allocated orb 规格配额汇总（运行中 vs 全部未删除）
+	// Allocated orb 规格配额汇总（运行中 vs 全部未删除）；不限资源的 orb 按 0 计入，另行计数
 	Allocated ProviderResourceAllocation `json:"allocated"`
 
 	// Host 已上报宿主机指标的在线 provider 宿主机容量汇总

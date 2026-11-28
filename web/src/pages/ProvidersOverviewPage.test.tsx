@@ -37,6 +37,8 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 				runningMemoryMB: 8192,
 				totalCpus: 8,
 				totalMemoryMB: 16384,
+				runningUnlimitedCpu: 0,
+				runningUnlimitedMemory: 0,
 			},
 			live: {
 				sampledOrbs: 1,
@@ -131,6 +133,8 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					runningMemoryMB: 8192,
 					totalCpus: 8,
 					totalMemoryMB: 16384,
+					runningUnlimitedCpu: 0,
+					runningUnlimitedMemory: 0,
 				},
 				live: {
 					sampledOrbs: 1,
@@ -231,6 +235,8 @@ function sampleOverview(): Schemas["ProvidersOverview"] {
 					runningMemoryMB: 0,
 					totalCpus: 0,
 					totalMemoryMB: 0,
+					runningUnlimitedCpu: 0,
+					runningUnlimitedMemory: 0,
 				},
 				live: {
 					sampledOrbs: 0,
@@ -397,6 +403,40 @@ describe("Provider 总览页", () => {
 		);
 		expect(screen.getAllByTestId("provider-node-card")).toHaveLength(1);
 		expect(screen.getByText("重构算力总览页")).toBeInTheDocument();
+	});
+
+	it("有不限资源的 orb 在跑且没有宿主机数据时，不拿配额当分母，配额读数标出不限台数", async () => {
+		const base = sampleOverview();
+		overviewData = {
+			...base,
+			summary: {
+				...base.summary,
+				host: {
+					...base.summary.host,
+					cpuCores: 0,
+					cpuUsedCores: 0,
+					memTotalMB: 0,
+					memUsedMB: 0,
+				},
+				allocated: {
+					...base.summary.allocated,
+					runningUnlimitedCpu: 1,
+					runningUnlimitedMemory: 1,
+				},
+			},
+		};
+		mount();
+		const cpuKpi = await screen.findByTestId("kpi-providers-cpu");
+		const unlimited = i18n
+			.t("providers.overview.node.withUnlimited", { text: "", n: 1 })
+			.trim();
+		expect(cpuKpi).toHaveTextContent(unlimited);
+		expect(screen.getByTestId("kpi-providers-memory")).toHaveTextContent(
+			unlimited,
+		);
+		// 不限 orb 的用量不在配额里：配额分母会算出虚高占比，干脆不画占比条
+		expect(screen.queryByTestId("kpi-bar-cpu")).toBeNull();
+		expect(screen.queryByTestId("kpi-bar-memory")).toBeNull();
 	});
 
 	it("点击 orb 打开 OrbDrawer，执行冻结/唤醒触发后端接口", async () => {

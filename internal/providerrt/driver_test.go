@@ -351,19 +351,19 @@ func TestDockerInfo(t *testing.T) {
 		{Name: "small", Cpus: 2, MemoryMB: 4096},
 	}, info.Types)
 	assert.Empty(t, info.BaseImageID, "没有配置镜像 → 未知")
-	assert.Equal(t, 512, memoryMB("512m"))
-	assert.Equal(t, 1, memoryMB("1048576"))
 
 	nested := NewDocker(config.Docker{DefaultType: "small", Types: map[string]config.DockerType{
 		"small": {CPUs: 2, Memory: "4g"},
 		"dind":  {CPUs: 4, Memory: "8g", Runtime: config.SysboxRuntime, NestedDocker: true},
 		"sys":   {CPUs: 2, Memory: "4g", Runtime: config.SysboxRuntime},
+		"free":  {Memory: "0"},
 	}})
 	assert.Equal(t, []apigen.OrbType{
 		{Name: "dind", Cpus: 4, MemoryMB: 8192, Features: []string{"docker"}},
+		{Name: "free", Cpus: 0, MemoryMB: 0},
 		{Name: "small", Cpus: 2, MemoryMB: 4096},
 		{Name: "sys", Cpus: 2, MemoryMB: 4096},
-	}, nested.Info().Types, "只有 nested_docker 的类型声明 docker 特性")
+	}, nested.Info().Types, "只有 nested_docker 的类型声明 docker 特性；不限资源的类型报 0")
 }
 
 // hello 的 baseImageId：docker 驱动读基础镜像 id，成功结果缓存 60 秒，失败给空串且不缓存。
@@ -402,6 +402,7 @@ func TestDockerNestedDockerArgs(t *testing.T) {
 		"small": {CPUs: 2, Memory: "4g"},
 		"dind":  {CPUs: 4, Memory: "8g", Runtime: config.SysboxRuntime, NestedDocker: true},
 		"sys":   {CPUs: 2, Memory: "4g", Runtime: config.SysboxRuntime},
+		"free":  {CPUs: 0, Memory: "0"},
 	}})
 	spawn := func(typ string) Job {
 		return Job{Op: "spawn", OrbID: "orb-x", Spawn: &apigen.JobSpawnParams{Type: typ, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbID: "orb-x", OrynOrbToken: "oot_tok"}}}
@@ -427,6 +428,13 @@ func TestDockerNestedDockerArgs(t *testing.T) {
 	require.NoError(t, execErr(d, context.Background(), spawn("small"), newTailBuffer(1<<16)))
 	log = fd.log(t)
 	assert.Equal(t, head+"2 --memory 4g --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
+		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
+
+	// 不限资源的类型：不传 --cpus / --memory（docker 缺省即不限），其余参数不变
+	fd.set(t, "missing", false)
+	require.NoError(t, execErr(d, context.Background(), spawn("free"), newTailBuffer(1<<16)))
+	log = fd.log(t)
+	assert.Equal(t, "create --init --name orb-x --hostname orb-x --label oryn-orb=1 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
 }
 

@@ -64,9 +64,16 @@ func boxShow(ctx context.Context, a boxAPI, ref string) (apigen.Box, error) {
 	return b, err
 }
 
-// fmtSpec 返回 `type · N cpu · M GB`。
+// fmtSpec 返回 `type · N cpu · M GB`；配额为 0（不限资源的类型）时写 unlimited。
 func fmtSpec(b apigen.Box) string {
-	return fmt.Sprintf("%s · %g cpu · %s", b.Type, b.Cpus, fmtMemory(b.MemoryMB))
+	cpu, mem := "unlimited cpu", "unlimited memory"
+	if b.Cpus > 0 {
+		cpu = fmt.Sprintf("%g cpu", b.Cpus)
+	}
+	if b.MemoryMB > 0 {
+		mem = fmtMemory(b.MemoryMB)
+	}
+	return fmt.Sprintf("%s · %s · %s", b.Type, cpu, mem)
 }
 
 func fmtMemory(mb int) string {

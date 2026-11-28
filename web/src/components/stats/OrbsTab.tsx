@@ -11,7 +11,7 @@ import {
 	useOrbStats,
 	useStatsMeta,
 } from "../../api/stats-queries";
-import { formatDuration, formatMemoryMB } from "../../lib/format";
+import { formatDuration, formatOrbSpec } from "../../lib/format";
 import { useBreakpoint } from "../../lib/viewport";
 import { Legend } from "../charts/Legend";
 import { StackedBars } from "../charts/StackedBars";
@@ -141,10 +141,11 @@ export function OrbsTab({
 		share: typeSum > 0 ? g.runningMs / typeSum : 0,
 		cells: [
 			g.cpus !== undefined && g.memoryMB !== undefined
-				? `${g.cpus}C/${formatMemoryMB(g.memoryMB)}`
+				? formatOrbSpec(g.cpus, g.memoryMB)
 				: "—",
 			formatHours(g.frozenMs),
-			g.cpus !== undefined ? formatHours(g.runningMs * g.cpus) : "—",
+			// 不限 CPU 的 orb 没有核数配额，核时无从计算
+			g.cpus ? formatHours(g.runningMs * g.cpus) : "—",
 		],
 	}));
 	const orbs = list.data?.groups ?? [];

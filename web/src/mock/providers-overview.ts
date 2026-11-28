@@ -126,6 +126,8 @@ export function buildMockProvidersOverview(
 			runningMemoryMB: 0,
 			totalCpus: 0,
 			totalMemoryMB: 0,
+			runningUnlimitedCpu: 0,
+			runningUnlimitedMemory: 0,
 		},
 		live: {
 			sampledOrbs: 0,
@@ -175,6 +177,8 @@ export function buildMockProvidersOverview(
 			runningMemoryMB: 0,
 			totalCpus: 0,
 			totalMemoryMB: 0,
+			runningUnlimitedCpu: 0,
+			runningUnlimitedMemory: 0,
 		};
 		const live: Schemas["ProviderLiveMetrics"] = {
 			sampledOrbs: 0,
@@ -194,6 +198,8 @@ export function buildMockProvidersOverview(
 				counts.running++;
 				allocated.runningCpus += o.cpus;
 				allocated.runningMemoryMB += o.memoryMB;
+				if (o.cpus === 0) allocated.runningUnlimitedCpu++;
+				if (o.memoryMB === 0) allocated.runningUnlimitedMemory++;
 			} else if (
 				o.state === "requested" ||
 				o.state === "spawning" ||
@@ -349,6 +355,9 @@ export function buildMockProvidersOverview(
 		summary.allocated.runningMemoryMB += allocated.runningMemoryMB;
 		summary.allocated.totalCpus += allocated.totalCpus;
 		summary.allocated.totalMemoryMB += allocated.totalMemoryMB;
+		summary.allocated.runningUnlimitedCpu += allocated.runningUnlimitedCpu;
+		summary.allocated.runningUnlimitedMemory +=
+			allocated.runningUnlimitedMemory;
 
 		summary.live.sampledOrbs += live.sampledOrbs;
 		summary.live.cpuPct += live.cpuPct;

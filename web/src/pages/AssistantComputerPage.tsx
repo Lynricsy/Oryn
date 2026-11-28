@@ -54,7 +54,8 @@ import { copyToClipboard } from "../lib/clipboard";
 import { orbFileSource } from "../lib/file-source";
 import {
 	formatDateTime,
-	formatMemoryMB,
+	formatOrbCpus,
+	formatOrbMemory,
 	formatRelative,
 	formatUptime,
 } from "../lib/format";
@@ -342,8 +343,8 @@ function ComputerOverview({
 							{computer.type && <Spec icon="box">{computer.type}</Spec>}
 							{orb && (
 								<>
-									<Spec icon="cpu">{t("panel.cores", { n: orb.cpus })}</Spec>
-									<Spec icon="memory">{formatMemoryMB(orb.memoryMB)}</Spec>
+									<Spec icon="cpu">{formatOrbCpus(orb.cpus)}</Spec>
+									<Spec icon="memory">{formatOrbMemory(orb.memoryMB)}</Spec>
 									{orb.nestedDocker && <DockerBadge />}
 								</>
 							)}

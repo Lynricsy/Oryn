@@ -41,7 +41,11 @@ import {
 	StatusText,
 } from "../../components/ui/workbench";
 import { confirmAction } from "../../lib/confirm";
-import { formatMemoryMB, formatRelative } from "../../lib/format";
+import {
+	formatOrbCpus,
+	formatOrbMemory,
+	formatRelative,
+} from "../../lib/format";
 
 /** 新 runner 的完整启动命令（在那台机器上以普通用户运行；`--dir` 可重复）。 */
 export function runnerCommand(origin: string, token: string): string {
@@ -312,11 +316,11 @@ function ProviderRow({ provider: p }: { provider: Provider }): ReactNode {
 									<span className="font-medium text-fg">{ot.name}</span>
 									<span className="inline-flex items-center gap-1 tabular-nums">
 										<Icon name="cpu" size={11} aria-hidden />
-										{t("panel.cores", { n: ot.cpus })}
+										{formatOrbCpus(ot.cpus)}
 									</span>
 									<span className="inline-flex items-center gap-1 tabular-nums">
 										<Icon name="memory" size={11} aria-hidden />
-										{formatMemoryMB(ot.memoryMB)}
+										{formatOrbMemory(ot.memoryMB)}
 									</span>
 									{p.defaultType === ot.name && (
 										<Badge>{t("providers.default")}</Badge>
