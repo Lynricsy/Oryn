@@ -25,6 +25,7 @@ import { uiStore, useUi } from "../../state/ui";
 import { BrowserRelayChip } from "../BrowserRelayControl";
 import { boxThreadLabel } from "../boxes/box-model";
 import { PrChip } from "../github/PrChip";
+import { InRail } from "../layout/Rail";
 import { ChromeLead, WindowControls } from "../layout/WindowControls";
 import { ScheduleChip, ScheduleRunChip } from "../schedule/ScheduleChip";
 import { ScheduleDialog } from "../schedule/ScheduleDialog";
@@ -614,6 +615,7 @@ export function ThreadHeader({
 				<IconButton
 					icon={sidebarToggle ? "menu" : "sidebar"}
 					label={t("nav.sidebar")}
+					data-sidebar-toggle=""
 					onClick={() => uiStore.getState().toggleSidebar()}
 				/>
 			)}
@@ -789,32 +791,35 @@ export function ThreadHeader({
 					{error}
 				</span>
 			)}
-			<IconButton
-				icon="tree"
-				label={t("thread.tree")}
-				onClick={() => uiStore.getState().open({ kind: "tree" })}
-			/>
-			{panelToggle && (
+			{/* iPhone Duo 竖栏在时这三个进竖栏（Rail.tsx），页头只留标题与状态 */}
+			<InRail>
 				<IconButton
-					icon="panel"
-					label={t("nav.infoPanel")}
-					active={panelOpen}
-					onClick={() => uiStore.getState().setPanel(!panelOpen)}
+					icon="tree"
+					label={t("thread.tree")}
+					onClick={() => uiStore.getState().open({ kind: "tree" })}
 				/>
-			)}
-			<Menu
-				items={items}
-				trigger={(p) => (
-					<button
-						type="button"
-						aria-label={t("thread.moreActions")}
-						className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
-						{...p}
-					>
-						<Icon name="more" size={16} />
-					</button>
+				{panelToggle && (
+					<IconButton
+						icon="panel"
+						label={t("nav.infoPanel")}
+						active={panelOpen}
+						onClick={() => uiStore.getState().setPanel(!panelOpen)}
+					/>
 				)}
-			/>
+				<Menu
+					items={items}
+					trigger={(p) => (
+						<button
+							type="button"
+							aria-label={t("thread.moreActions")}
+							className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors duration-150 hover:bg-hover hover:text-fg"
+							{...p}
+						>
+							<Icon name="more" size={16} />
+						</button>
+					)}
+				/>
+			</InRail>
 			{chromeRight && <WindowControls side="right" className="ml-1" />}
 			{dialogs}
 		</header>

@@ -368,6 +368,10 @@
 	--safe-bottom: var(--rail-safe-bottom);
 	--safe-left: var(--rail-safe-left);
 }
+/* 竖栏顶上有开关侧栏（components/layout/Rail.tsx）：各页页头里的侧栏开关让位 */
+:root[data-rail] [data-sidebar-toggle] {
+	display: none;
+}
 
 html,
 body,

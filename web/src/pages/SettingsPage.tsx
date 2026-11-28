@@ -106,6 +106,7 @@ export function SettingsPage({
 						<IconButton
 							icon={bp === "expanded" ? "sidebar" : "menu"}
 							label={t("nav.sidebar")}
+							data-sidebar-toggle=""
 							onClick={() => uiStore.getState().toggleSidebar()}
 						/>
 					)

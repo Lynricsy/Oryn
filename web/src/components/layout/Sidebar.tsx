@@ -55,6 +55,7 @@ export const Sidebar = memo(function Sidebar({
 					icon="sidebar"
 					box="sm"
 					label={t("sidebar.collapse")}
+					data-sidebar-toggle=""
 					onClick={() => uiStore.getState().toggleSidebar()}
 				/>
 				<Button

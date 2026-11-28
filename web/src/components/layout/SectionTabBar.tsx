@@ -12,8 +12,8 @@
  * 头像与角标整份交给控制器（`setSpec`，内容变了才真正发）；原生浮在 WebView 之上（玻璃折射下面的侧栏列表），
  * 原生看得见时网页胶囊换成 `opacity-0` 并对读屏与 Tab 隐藏，但仍可命中（遮挡探测靠它）；被菜单、弹层盖住时原生让位、
  * 网页胶囊顶上。原生点击经 `host.onTabBar` 回来，走与网页按钮同一个 `switchSection`；卸载时撤掉原生栏。
- * `tone="rail"`：iPhone Duo 竖栏（`lib/rail.ts`，壳报告系统把工具栏竖排在一侧时）：同样四项竖着排成一根玻璃胶囊，
- * 固定在壳给的竖栏矩形里、不随侧栏开合移动；此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。
+ * `tone="rail"`：iPhone Duo 竖栏（`Rail.tsx`）里的版本：同样四项竖着排成一根玻璃胶囊，跟在竖栏的页头按钮下面；
+ * 此时侧栏里不再放底栏，原生底栏随之撤掉（竖栏是网页画的）。
  */
 import {
 	type ReactNode,
@@ -253,7 +253,7 @@ export function SectionTabBar({
 			data-tone={tone}
 			className={
 				rail
-					? "pointer-events-none fixed top-[var(--rail-y)] left-[var(--rail-x)] z-40 flex h-[var(--rail-h)] w-[var(--rail-w)] justify-center pt-1"
+					? "pointer-events-none flex shrink-0 justify-center"
 					: `pointer-events-none absolute inset-x-0 bottom-0 z-10 ${outer}`
 			}
 		>
