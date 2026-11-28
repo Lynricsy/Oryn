@@ -102,7 +102,8 @@ func TestThreadPull(t *testing.T) {
 	assert.Equal(t, base, pullGit(t, dst, nil, "rev-parse", "HEAD"), "当前分支不动")
 	assert.Empty(t, pullGit(t, dst, nil, "status", "--porcelain"), "工作区不动")
 	assert.Equal(t, ns+"head\n"+ns+"snapshot", pullGit(t, dst, nil, "for-each-ref", "--format=%(refname)", strings.TrimSuffix(ns, "/")),
-		"只留 head / snapshot，临时取回的 ref 已删")
+		"只留 head / snapshot")
+	assert.Empty(t, pullGit(t, dst, nil, "for-each-ref", "refs/oryn/pull-tmp"), "本次的临时 ref 已删")
 	left, _ := filepath.Glob(filepath.Join(dst, ".git", "oryn-pull-*"))
 	assert.Empty(t, left, "临时 bundle 目录已删")
 
@@ -120,4 +121,15 @@ func TestThreadPull(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, res2.Bundled)
 	assert.Equal(t, res.Snapshot, pullGit(t, dst, nil, "rev-parse", ns+"snapshot"))
+
+	// 发布是一个 ref 事务：snapshot 写不进去（与已有 ref 目录冲突）时 head 也保持上一次的值，临时 ref 照样清掉
+	pullGit(t, dst, nil, "update-ref", "-d", ns+"snapshot")
+	pullGit(t, dst, nil, "update-ref", ns+"snapshot/block", base)
+	require.NoError(t, os.WriteFile(filepath.Join(src, "d.txt"), []byte("more\n"), 0o644))
+	pullGit(t, src, nil, "add", "d.txt")
+	pullGit(t, src, nil, "commit", "-q", "-m", "more")
+	_, err = threadPull(ctx, dst, "T-child")
+	require.ErrorContains(t, err, "两者都未改动", "失败发生在发布这一步")
+	assert.Equal(t, srcHead, pullGit(t, dst, nil, "rev-parse", ns+"head"), "head 不能单独更新")
+	assert.Empty(t, pullGit(t, dst, nil, "for-each-ref", "refs/oryn/pull-tmp"), "失败时临时 ref 也已删")
 }

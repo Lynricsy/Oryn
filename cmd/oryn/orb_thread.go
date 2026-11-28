@@ -182,6 +182,8 @@ func threadWait(ctx context.Context, target string, timeout time.Duration, asJSO
 const (
 	// pullRefPrefix 是 `oryn thread pull` 写入的 ref 前缀：refs/oryn/threads/<id>/head 与 .../snapshot。
 	pullRefPrefix = "refs/oryn/threads/"
+	// pullTmpPrefix 下是每次 pull 独有的临时 ref（<临时目录名>/{head,snapshot}），发布后即删。
+	pullTmpPrefix = "refs/oryn/pull-tmp/"
 	// maxPullHave 与 orbd /sync/prepare 接受的 have 上限一致。
 	maxPullHave = 256
 )
@@ -223,6 +225,13 @@ func threadPull(ctx context.Context, dir, target string) (apigen.LinkCtlThreadPu
 	}
 	defer os.RemoveAll(tmp)
 	bundle := filepath.Join(tmp, "changes.bundle")
+	// 本次调用独有的临时 ref（同一目标的并发 pull 互不覆盖），结束时无论成败都删掉
+	tmpRefs := pullTmpPrefix + filepath.Base(tmp) + "/"
+	defer func() {
+		for _, ref := range []string{tmpRefs + "head", tmpRefs + "snapshot"} {
+			_, _ = gitIn(context.WithoutCancel(ctx), top, "update-ref", "-d", ref)
+		}
+	}()
 	p := apigen.LinkCtlThreadPullParams{ThreadID: caller, Target: target, Have: have, BundlePath: bundle}
 	if err := sockCall(ctx, orbsock.MethodThreadPull, p, &res, nil); err != nil {
 		var se *orbsock.Error
@@ -235,15 +244,12 @@ func threadPull(ctx context.Context, dir, target string) (apigen.LinkCtlThreadPu
 		return res, fmt.Errorf("控制面返回的提交无效（head %q，snapshot %q）", res.Head, res.Snapshot)
 	}
 	if res.Bundled {
-		// 带 fsck 取进临时命名空间再按返回的 sha 落到最终 ref：bundle 里没有的 ref（对象本地已有）也能对上
+		// 带 fsck 取进本次的临时 ref，校验后再按返回的 sha 发布：bundle 里没有的 ref（对象本地已有）也能对上
 		cmd := exec.CommandContext(ctx, "git", "-C", top, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-			"fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--quiet", bundle, "+refs/oryn/sync/*:"+ns+"fetch/*")
+			"fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--quiet", bundle, "+refs/oryn/sync/*:"+tmpRefs+"*")
 		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return res, fmt.Errorf("git fetch bundle 失败: %w\n%s", err, strings.TrimSpace(string(out)))
-		}
-		for _, ref := range []string{ns + "fetch/head", ns + "fetch/snapshot"} {
-			_, _ = gitIn(ctx, top, "update-ref", "-d", ref)
 		}
 	}
 	for _, c := range []string{res.Head, res.Snapshot} {
@@ -256,12 +262,18 @@ func threadPull(ctx context.Context, dir, target string) (apigen.LinkCtlThreadPu
 			return res, fmt.Errorf("快照 %s 不是 head %s 的直接子提交", res.Snapshot[:7], res.Head[:7])
 		}
 	}
-	for ref, sha := range map[string]string{ns + "head": res.Head, ns + "snapshot": res.Snapshot} {
-		if _, err := gitIn(ctx, top, "update-ref", ref, sha); err != nil {
-			return res, fmt.Errorf("写 %s 失败: %w", ref, err)
-		}
+	return res, publishPull(ctx, top, ns, res.Head, res.Snapshot)
+}
+
+// publishPull 在一个 ref 事务里写 ns 下的 head 与 snapshot：要么都更新，要么都不变（并发 pull 不会留下一新一旧）。
+func publishPull(ctx context.Context, top, ns, head, snapshot string) error {
+	cmd := exec.CommandContext(ctx, "git", "-C", top, "update-ref", "--stdin")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = strings.NewReader("update " + ns + "head " + head + "\nupdate " + ns + "snapshot " + snapshot + "\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("写 %shead 与 %ssnapshot 失败（两者都未改动）: %w\n%s", ns, ns, err, strings.TrimSpace(string(out)))
 	}
-	return res, nil
+	return nil
 }
 
 // pullHave 列出本仓库已有、对方可能也有的提交（去重，至多 maxPullHave）：HEAD、上次取回的 ref、远端分支、本地分支。
