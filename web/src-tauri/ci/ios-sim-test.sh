@@ -10,8 +10,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 source "$here/ios-sim.sh"
 
 t=$(mktemp -d)
+# 只用 Bash 3.2 也有的写法（macOS 的 /bin/bash）：不用负下标，空数组展开带 + 保护（3.2 的 set -u 会把空数组当未定义）
 victims=()
-trap 'for p in "${victims[@]}"; do builtin kill -9 "$p" 2>/dev/null || true; done; rm -rf "$t"' EXIT
+trap 'for p in ${victims[@]+"${victims[@]}"}; do builtin kill -9 "$p" 2>/dev/null || true; done; rm -rf "$t"' EXIT
 mkdir -p "$t/bin"
 cat >"$t/bin/xcrun" <<EOF
 #!/bin/sh
@@ -28,12 +29,13 @@ failures=0
 check() {
   if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; failures=$((failures + 1)); fi
 }
-# fake_app <UDID>：起一个可执行文件路径像模拟器 App（…/Devices/<UDID>/…/Oryn.app/Oryn）的进程，输出它的 pid
+# fake_app <UDID>：起一个可执行文件路径像模拟器 App（…/Devices/<UDID>/…/Oryn.app/Oryn）的进程，pid 放进 last_pid
 fake_app() {
   mkdir -p "$t/Devices/$1/data/Containers/Bundle/Application/X/Oryn.app"
   cp "$(type -P sleep)" "$t/Devices/$1/data/Containers/Bundle/Application/X/Oryn.app/Oryn"
   "$t/Devices/$1/data/Containers/Bundle/Application/X/Oryn.app/Oryn" 120 &
-  victims+=($!)
+  last_pid=$!
+  victims+=("$last_pid")
   sleep 0.3
 }
 
@@ -43,9 +45,9 @@ check "没有进程时 app_stop 返回 0" 'app_stop 2>/dev/null'
 
 # 2. terminate 没杀掉：SIGKILL 后确认退出、返回 0；别的模拟器里的 Oryn 不受影响
 fake_app OTHER
-other=${victims[-1]}
+other=$last_pid
 fake_app STUCK
-stuck=${victims[-1]}
+stuck=$last_pid
 udid=STUCK
 check "terminate 后仍在时 SIGKILL 并返回 0" 'app_stop 2>/dev/null'
 check "本台的 Oryn 已退出" '! builtin kill -0 "$stuck" 2>/dev/null'
