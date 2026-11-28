@@ -58,12 +58,14 @@ const (
 	// schedule.get / schedule.delete（LinkCtlScheduleParams）、schedule.set → schedule.put（LinkCtlSchedulePutParams）、
 	// schedule.enable（LinkCtlScheduleEnableParams），结果均为 LinkCtlScheduleResult。
 	// thread.pull → thread.pull（LinkCtlThreadPullParams → LinkCtlThreadPullResult）：控制面把亲属线程仓库的 bundle 写到
-	// bundlePath，由调用方（`oryn thread pull`）自己 fetch。
+	// bundlePath，由调用方（`oryn thread pull`）自己 fetch。thread.list → thread.list（LinkCtlThreadListParams →
+	// LinkCtlThreadListResult）：列出可以 thread.pull 的线程。
 	MethodThreadNew      = "thread.new"
 	MethodThreadSend     = "thread.send"
 	MethodThreadGet      = "thread.get"
 	MethodThreadWait     = "thread.wait"
 	MethodThreadPull     = "thread.pull"
+	MethodThreadList     = "thread.list"
 	MethodScheduleGet    = "schedule.get"
 	MethodScheduleSet    = "schedule.set"
 	MethodScheduleDelete = "schedule.delete"

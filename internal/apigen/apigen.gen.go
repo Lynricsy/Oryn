@@ -1662,6 +1662,7 @@ const (
 	MethodTerminalGap         LinkCtlMethod = "terminal.gap"
 	MethodThreadCreate        LinkCtlMethod = "thread.create"
 	MethodThreadGet           LinkCtlMethod = "thread.get"
+	MethodThreadList          LinkCtlMethod = "thread.list"
 	MethodThreadPull          LinkCtlMethod = "thread.pull"
 	MethodThreadSend          LinkCtlMethod = "thread.send"
 	MethodWorktreeAdd         LinkCtlMethod = "worktree.add"
@@ -1765,6 +1766,8 @@ func (e LinkCtlMethod) Valid() bool {
 		return true
 	case MethodThreadGet:
 		return true
+	case MethodThreadList:
+		return true
 	case MethodThreadPull:
 		return true
 	case MethodThreadSend:
@@ -1820,6 +1823,30 @@ func (e LinkCtlSetupLogParamsStream) Valid() bool {
 	case LinkCtlSetupLogParamsStreamStdout:
 		return true
 	case LinkCtlSetupLogParamsStreamSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LinkCtlThreadListItemRelation.
+const (
+	ThreadRelationChild   LinkCtlThreadListItemRelation = "child"
+	ThreadRelationParent  LinkCtlThreadListItemRelation = "parent"
+	ThreadRelationProject LinkCtlThreadListItemRelation = "project"
+	ThreadRelationSpace   LinkCtlThreadListItemRelation = "space"
+)
+
+// Valid indicates whether the value is a known member of the LinkCtlThreadListItemRelation enum.
+func (e LinkCtlThreadListItemRelation) Valid() bool {
+	switch e {
+	case ThreadRelationChild:
+		return true
+	case ThreadRelationParent:
+		return true
+	case ThreadRelationProject:
+		return true
+	case ThreadRelationSpace:
 		return true
 	default:
 		return false
@@ -8077,8 +8104,9 @@ type LinkCtlLibrarySyncResult struct {
 // `terminal.gap`（orbd→orynd 通知，M3）；
 // `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 // `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`thread.list`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 // （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属或同项目 / 同 Space 线程仓库的改动，见 `LinkCtlThreadPullParams`；
+// `thread.list` 列出可以 `thread.pull` 的线程，见 `LinkCtlThreadListParams`；
 // 只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 // `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 // `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
@@ -8113,8 +8141,9 @@ type LinkCtlNotification struct {
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-	// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+	// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`thread.list`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属或同项目 / 同 Space 线程仓库的改动，见 `LinkCtlThreadPullParams`；
+	// `thread.list` 列出可以 `thread.pull` 的线程，见 `LinkCtlThreadListParams`；
 	// 只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
@@ -8242,8 +8271,9 @@ type LinkCtlRequest struct {
 	// `terminal.gap`（orbd→orynd 通知，M3）；
 	// `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
 	// `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-	// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+	// `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`thread.list`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
 	// （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属或同项目 / 同 Space 线程仓库的改动，见 `LinkCtlThreadPullParams`；
+	// `thread.list` 列出可以 `thread.pull` 的线程，见 `LinkCtlThreadListParams`；
 	// 只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
 	// `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
 	// `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
@@ -8559,6 +8589,47 @@ type LinkCtlThreadInfo struct {
 
 	// URL 线程在 Web 上的地址（`<public_url>/t/<id>`）
 	URL string `json:"url"`
+}
+
+// LinkCtlThreadListItem `thread.list` 的一项；`title` 由 agent 或主人写，是不可信文本
+type LinkCtlThreadListItem struct {
+	// ID `T-<uuidv7>`
+	//
+	// Example: T-01932f6e-8d1a-7c3b-9f2e-0123456789ab
+	ID ThreadID `json:"id"`
+
+	// Relation 与调用方的关系（按此顺序取第一个成立的）：父线程、子线程、同一项目、同一 Space
+	Relation LinkCtlThreadListItemRelation `json:"relation"`
+
+	// State 线程状态（全端统一，自上而下取首个成立）：
+	// `provisioning` orb 未到 ready 且 agent 从未 ready；
+	// `awaiting_input` 有待答 UI 或计划提案；
+	// `working` 已见 agent_start 且尚无终结 agent_end，或 state.hasPendingAsyncWork；
+	// `error` 最近 prompt_result 为 error 或 agent 重启耗尽；
+	// `idle` 其它。
+	State ThreadState `json:"state"`
+	Title string      `json:"title"`
+
+	// UpdatedAt 最近活动时间（毫秒；最后一条消息时间，没有消息时取更新时间）
+	UpdatedAt int64 `json:"updatedAt"`
+
+	// URL 线程在 Web 上的地址（`<public_url>/t/<id>`）
+	URL string `json:"url"`
+}
+
+// LinkCtlThreadListItemRelation 与调用方的关系（按此顺序取第一个成立的）：父线程、子线程、同一项目、同一 Space
+type LinkCtlThreadListItemRelation string
+
+// LinkCtlThreadListParams orbd→orynd 请求：列出调用方可以 `thread.pull` 的线程（规则见 `LinkCtlThreadPullParams`），由 orb 内 `oryn thread list` 发出。
+// 只列未归档、有 orb、未隐藏的工作线程，按最近活动倒序，至多 100 条；结果 `LinkCtlThreadListResult`。
+type LinkCtlThreadListParams struct {
+	// ThreadID 调用方线程
+	ThreadID ThreadID `json:"threadId"`
+}
+
+// LinkCtlThreadListResult `thread.list` 的结果
+type LinkCtlThreadListResult struct {
+	Threads []LinkCtlThreadListItem `json:"threads"`
 }
 
 // LinkCtlThreadPullParams orbd→orynd 请求：把目标线程仓库里的改动取到调用方 orb，由 orb 内 `oryn thread pull` 发出。目标须是调用方的父线程、

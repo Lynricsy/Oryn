@@ -57,6 +57,51 @@ func TestThreadPullSources(t *testing.T) {
 	assert.Equal(t, CodeForbidden, ctlCode(t, err), "全自动 orb 上的线程不能取平级")
 }
 
+// thread.list：只列能 thread.pull 的线程并标出关系；已归档、没有 orb、隐藏、别的项目、runner 与全自动 orb 上的平级线程不列。
+func TestOnThreadList(t *testing.T) {
+	e := newEnv(t, true)
+	alpha, beta := e.project("alpha"), e.project("beta")
+	sp := e.space("S", "")
+	parent := e.threadOn(e.newOrb(), "", "", "")
+	x := e.newOrb()
+	caller := e.threadOn(x, parent.ID, alpha, sp.ID)
+	auto := e.newOrb()
+	require.NoError(t, e.st.Q.SetOrbAutomation(e.ctx, db.SetOrbAutomationParams{Automation: true, ID: auto}))
+	_, runnerOrb, err := e.orbs.AddRunner("laptop", []apigen.RunnerDir{{Path: "/w/app", Name: "app"}}, nil)
+	require.NoError(t, err)
+
+	want := map[string]apigen.LinkCtlThreadListItemRelation{
+		parent.ID:                                       apigen.ThreadRelationParent,
+		e.threadOn(auto, caller.ID, "", "").ID:          apigen.ThreadRelationChild,
+		e.threadOn(e.newOrb(), "", alpha, "").ID:        apigen.ThreadRelationProject,
+		e.threadOn(e.newOrb(), caller.ID, alpha, "").ID: apigen.ThreadRelationChild,
+		e.threadOn(e.newOrb(), "", beta, sp.ID).ID:      apigen.ThreadRelationSpace,
+	}
+	e.threadOn(e.newOrb(), "", beta, "") // 别的项目
+	e.threadOn(auto, "", alpha, "")      // 全自动 orb 上的平级
+	e.threadOn(runnerOrb, "", alpha, "") // runner 上的线程
+	archived := e.threadOn(e.newOrb(), "", alpha, "")
+	hidden := e.threadOn(e.newOrb(), "", alpha, "")
+	_, err = e.st.DB.ExecContext(e.ctx, `UPDATE threads SET archived_at = 1 WHERE id = ?`, archived.ID)
+	require.NoError(t, err)
+	_, err = e.st.DB.ExecContext(e.ctx, `UPDATE threads SET hidden = 1 WHERE id = ?`, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, e.st.Q.CreateThread(e.ctx, db.CreateThreadParams{ID: ids.Thread(), Kind: threads.KindWork, ProjectID: &alpha,
+		TitleSource: "auto", State: threads.StateIdle, SessionDir: "x", CreatedAt: 1, UpdatedAt: 1})) // 没有 orb
+
+	out, err := e.c.onThreadList(e.ctx, x, raw(apigen.LinkCtlThreadListParams{ThreadID: caller.ID}))
+	require.NoError(t, err)
+	got := map[string]apigen.LinkCtlThreadListItemRelation{}
+	for _, it := range out.(apigen.LinkCtlThreadListResult).Threads {
+		got[it.ID] = it.Relation
+		assert.Equal(t, "https://oryn.test/t/"+it.ID, it.URL)
+	}
+	assert.Equal(t, want, got)
+
+	_, err = e.c.onThreadList(e.ctx, auto, raw(apigen.LinkCtlThreadListParams{ThreadID: caller.ID}))
+	assert.Equal(t, CodeForbidden, ctlCode(t, err), "调用方不属于发起 link 的 orb")
+}
+
 // thread.pull：在对方 orb 上 /sync/prepare（have 原样转交），有 bundle 时把字节原样写到
 // 调用方 orb 的 bundlePath（不覆盖）；对象已齐时不写文件。
 func TestOnThreadPull(t *testing.T) {

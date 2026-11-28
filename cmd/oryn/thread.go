@@ -283,11 +283,23 @@ var threadListOpts threadListOptions
 
 var threadListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "列出线程（默认未归档）",
+	Short: "列出线程（默认未归档）；orb 内列出可以 `oryn thread pull` 的线程",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if inOrb() {
-			return errUnavailableInOrb("thread list")
+			for _, f := range []string{"archived", "state", "project", "query"} {
+				if cmd.Flags().Changed(f) {
+					return usageErr("orb 内的 `thread list` 不支持 --%s", f)
+				}
+			}
+			list, err := orbThreadList(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if threadListOpts.json {
+				return printJSON(list)
+			}
+			return printOrbThreadList(os.Stdout, list)
 		}
 		c, err := newClient()
 		if err != nil {

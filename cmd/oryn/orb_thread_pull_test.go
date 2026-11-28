@@ -133,3 +133,34 @@ func TestThreadPull(t *testing.T) {
 	assert.Equal(t, srcHead, pullGit(t, dst, nil, "rev-parse", ns+"head"), "head 不能单独更新")
 	assert.Empty(t, pullGit(t, dst, nil, "for-each-ref", "refs/oryn/pull-tmp"), "失败时临时 ref 也已删")
 }
+
+// orb 内 `oryn thread list`：以调用方线程发 thread.list，表格带关系列，标题里的控制字符不进终端；空列表给出说明。
+func TestOrbThreadList(t *testing.T) {
+	items := []apigen.LinkCtlThreadListItem{
+		{ID: "T-a", Title: "改登录\x1b[31m", State: apigen.ThreadStateIdle, Relation: apigen.ThreadRelationProject, UpdatedAt: 1, URL: "https://o/t/T-a"},
+		{ID: "T-b", Title: "子任务", State: apigen.ThreadStateWorking, Relation: apigen.ThreadRelationChild, UpdatedAt: 2, URL: "https://o/t/T-b"},
+	}
+	f := startOrbThreadSock(t, func(_ context.Context, method string, _ json.RawMessage, _ *orbsock.Responder) (any, error) {
+		if method != orbsock.MethodThreadList {
+			return nil, orbsock.Errorf(orbsock.CodeMethodNotFound, "%s", method)
+		}
+		return apigen.LinkCtlThreadListResult{Threads: items}, nil
+	})
+	res, err := orbThreadList(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, items, res.Threads)
+	reqs := f.requests()
+	require.Len(t, reqs, 1)
+	assert.JSONEq(t, `{"threadId":"T-caller"}`, string(reqs[0].Params))
+
+	var out strings.Builder
+	require.NoError(t, printOrbThreadList(&out, res))
+	assert.Contains(t, out.String(), "RELATION")
+	assert.Regexp(t, `T-a\s+project\s+idle`, out.String())
+	assert.Regexp(t, `T-b\s+child\s+working`, out.String())
+	assert.NotContains(t, out.String(), "\x1b", "标题里的控制字符被替换")
+
+	out.Reset()
+	require.NoError(t, printOrbThreadList(&out, apigen.LinkCtlThreadListResult{}))
+	assert.Contains(t, out.String(), "没有可以取改动的线程")
+}

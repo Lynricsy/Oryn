@@ -33,12 +33,13 @@ const (
 	threadPullWait = 2 * time.Minute
 )
 
-// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` / `oryn follow add` 经 orbd.sock 转来的十个 ctl 请求。
+// registerOrbMethods 注册 orb 内 `oryn thread …` / `oryn schedule …` / `oryn library put` / `oryn follow add` 经 orbd.sock 转来的十一个 ctl 请求。
 func (s *Service) registerOrbMethods(handle func(method string, fn orbs.RequestFunc)) {
 	handle(string(apigen.MethodThreadCreate), s.onThreadCreate)
 	handle(string(apigen.MethodThreadSend), s.onThreadSend)
 	handle(string(apigen.MethodThreadGet), s.onThreadGet)
 	handle(string(apigen.MethodThreadPull), s.onThreadPull)
+	handle(string(apigen.MethodThreadList), s.onThreadList)
 	handle(string(apigen.MethodScheduleGet), s.onScheduleGet)
 	handle(string(apigen.MethodSchedulePut), s.onSchedulePut)
 	handle(string(apigen.MethodScheduleDelete), s.onScheduleDelete)
@@ -93,46 +94,101 @@ func (s *Service) relative(ctx context.Context, caller db.Thread, targetID strin
 	return t, nil
 }
 
-// pullSource 校验 thread.pull 的目标：亲属线程，或与调用方同一项目、同一 Space 的工作线程（集成线程收拢平级线程的
-// 改动）；否则 forbidden。平级互取有两条例外：全自动 orb 上的线程（入口可能由不可信输入驱动）只能与亲属互取；
-// 跑在 runner 上的线程一律不作目标（不把主人机器上的未提交内容搬进 orb）→ runner_unsupported。
+// pullSource 取 thread.pull 的目标并按 pullRelation 校验。
 func (s *Service) pullSource(ctx context.Context, c db.Thread, targetID string) (db.Thread, error) {
-	denied := ctlErr(CodeForbidden, "only threads of the same project or Space, and this thread's parent and children, can be pulled from")
 	t, err := s.st.Q.GetThread(ctx, targetID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return db.Thread{}, denied
+		return db.Thread{}, errPullDenied
 	}
 	if err != nil {
 		return db.Thread{}, err
 	}
-	if t.Kind != threads.KindWork || t.ID == c.ID {
-		return db.Thread{}, denied
+	if _, err := s.pullRelation(ctx, c, t); err != nil {
+		return db.Thread{}, err
 	}
-	kin := (t.ParentThreadID != nil && *t.ParentThreadID == c.ID) || (c.ParentThreadID != nil && *c.ParentThreadID == t.ID)
-	if !kin {
-		sameProject := c.ProjectID != nil && t.ProjectID != nil && *c.ProjectID == *t.ProjectID
-		sameSpace := c.SpaceID != nil && t.SpaceID != nil && *c.SpaceID == *t.SpaceID
-		if !sameProject && !sameSpace {
-			return db.Thread{}, denied
-		}
+	return t, nil
+}
+
+var errPullDenied = ctlErr(CodeForbidden, "only threads of the same project or Space, and this thread's parent and children, can be pulled from")
+
+// pullRelation 判定 c 能否取 t 的改动，能取时返回关系（依次取父线程、子线程、同一项目、同一 Space 中第一个成立的）。
+// 平级（同项目 / 同 Space）互取有两条例外：全自动 orb 上的线程（入口可能由不可信输入驱动）只能与亲属互取 → forbidden；
+// 跑在 runner 上的线程一律不作目标（不把主人机器上的未提交内容搬进 orb）→ runner_unsupported。
+func (s *Service) pullRelation(ctx context.Context, c, t db.Thread) (apigen.LinkCtlThreadListItemRelation, error) {
+	if t.Kind != threads.KindWork || t.ID == c.ID {
+		return "", errPullDenied
+	}
+	var rel apigen.LinkCtlThreadListItemRelation
+	switch {
+	case c.ParentThreadID != nil && *c.ParentThreadID == t.ID:
+		rel = apigen.ThreadRelationParent
+	case t.ParentThreadID != nil && *t.ParentThreadID == c.ID:
+		rel = apigen.ThreadRelationChild
+	case c.ProjectID != nil && t.ProjectID != nil && *c.ProjectID == *t.ProjectID:
+		rel = apigen.ThreadRelationProject
+	case c.SpaceID != nil && t.SpaceID != nil && *c.SpaceID == *t.SpaceID:
+		rel = apigen.ThreadRelationSpace
+	default:
+		return "", errPullDenied
+	}
+	if rel == apigen.ThreadRelationProject || rel == apigen.ThreadRelationSpace {
 		for _, x := range []db.Thread{c, t} {
 			auto, err := s.automationThread(ctx, x)
 			if err != nil {
-				return db.Thread{}, err
+				return "", err
 			}
 			if auto {
-				return db.Thread{}, ctlErr(CodeForbidden, "threads started by automation can only pull from, and be pulled by, their parent and children")
+				return "", ctlErr(CodeForbidden, "threads started by automation can only pull from, and be pulled by, their parent and children")
 			}
 		}
 	}
 	runner, err := s.isRunnerThread(ctx, t)
 	if err != nil {
-		return db.Thread{}, err
+		return "", err
 	}
 	if runner {
-		return db.Thread{}, ctlErr(threads.CodeRunnerUnsupported, t.ID+" runs on a runner; its changes cannot be pulled into an orb")
+		return "", ctlErr(threads.CodeRunnerUnsupported, t.ID+" runs on a runner; its changes cannot be pulled into an orb")
 	}
-	return t, nil
+	return rel, nil
+}
+
+// maxThreadList 是 thread.list 一次列出的线程上限。
+const maxThreadList = 100
+
+// onThreadList 列出调用方可以 thread.pull 的线程：SQL 先按亲属 / 项目 / Space 取候选，再逐个按 pullRelation 过滤掉
+// runner 与全自动 orb 上的线程。
+func (s *Service) onThreadList(ctx context.Context, orbID string, params json.RawMessage) (any, error) {
+	var p apigen.LinkCtlThreadListParams
+	if err := decodeParams(params, &p); err != nil {
+		return nil, err
+	}
+	c, err := s.caller(ctx, orbID, p.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.st.Q.ListThreadPullCandidates(ctx, db.ListThreadPullCandidatesParams{ID: c.ID, ParentID: derefStr(c.ParentThreadID),
+		ProjectID: derefStr(c.ProjectID), SpaceID: derefStr(c.SpaceID), Lim: maxThreadList})
+	if err != nil {
+		return nil, err
+	}
+	res := apigen.LinkCtlThreadListResult{Threads: []apigen.LinkCtlThreadListItem{}}
+	for _, t := range rows {
+		rel, err := s.pullRelation(ctx, c, t)
+		var ce *link.CtlError
+		if errors.As(err, &ce) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		at := t.UpdatedAt
+		if t.LastMessageAt != nil {
+			at = *t.LastMessageAt
+		}
+		res.Threads = append(res.Threads, apigen.LinkCtlThreadListItem{ID: t.ID, Title: t.Title, State: apigen.ThreadState(t.State),
+			Relation: rel, UpdatedAt: at, URL: s.threadURL(t.ID)})
+	}
+	return res, nil
 }
 
 // automationThread 报告线程所在 orb 是否标为全自动（M18 D3）；没有 orb 时为假。

@@ -121,6 +121,33 @@ func orbThreadGet(ctx context.Context, target string) (apigen.LinkCtlThreadInfo,
 	return info, nil
 }
 
+// orbThreadList 列出调用方线程可以 `oryn thread pull` 的线程（亲属与同项目 / 同 Space 的线程）。
+func orbThreadList(ctx context.Context) (apigen.LinkCtlThreadListResult, error) {
+	caller, err := callerThread()
+	if err != nil {
+		return apigen.LinkCtlThreadListResult{}, err
+	}
+	var res apigen.LinkCtlThreadListResult
+	if err := sockCall(ctx, orbsock.MethodThreadList, apigen.LinkCtlThreadListParams{ThreadID: caller}, &res, nil); err != nil {
+		return apigen.LinkCtlThreadListResult{}, sockErr(err)
+	}
+	return res, nil
+}
+
+// printOrbThreadList 按表格打印 thread.list 的结果；标题是别人写的文本，经 termText 去掉控制字符。
+func printOrbThreadList(w io.Writer, res apigen.LinkCtlThreadListResult) error {
+	if len(res.Threads) == 0 {
+		_, err := fmt.Fprintln(w, "没有可以取改动的线程（只列父子线程与同一项目、同一 Space 的未归档线程）")
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tRELATION\tSTATE\tUPDATED\tTITLE")
+	for _, t := range res.Threads {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Relation, t.State, time.UnixMilli(t.UpdatedAt).Local().Format("01-02 15:04"), termText(t.Title))
+	}
+	return tw.Flush()
+}
+
 func printThreadInfo(w io.Writer, info apigen.LinkCtlThreadInfo) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(tw, "ID\t%s\nTitle\t%s\nState\t%s\nURL\t%s\n", info.ID, info.Title, info.State, info.URL)

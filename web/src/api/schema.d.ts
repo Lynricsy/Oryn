@@ -13104,8 +13104,9 @@ export interface components {
          *     `terminal.gap`（orbd→orynd 通知，M3）；
          *     `services.state`（orbd→orynd 通知，M4，受管服务全量快照）、`portal.configure`（orynd→orbd 请求，M4）。
          *     `desktop.state`（orbd→orynd 通知，M8，桌面全量状态）、`profile.mode`（orynd→orbd 请求，M8，改变本地 Profile 的使用方式）。
-         *     `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
+         *     `thread.create`、`thread.send`、`thread.get`、`thread.pull`、`thread.list`、`schedule.get`、`schedule.put`、`schedule.delete`、`schedule.enable`
          *     （orbd→orynd 请求，M9，orb 内 agent 间协作与自我定时；`thread.pull` 取亲属或同项目 / 同 Space 线程仓库的改动，见 `LinkCtlThreadPullParams`；
+         *     `thread.list` 列出可以 `thread.pull` 的线程，见 `LinkCtlThreadListParams`；
          *     只有 `features` 含 `threads` 的 orbd 发起，协调宿主不接受）；
          *     `snapshot.prepare`（orynd→orbd 请求，M11a，无参数，结果 `LinkCtlSnapshotPrepareResult`；项目快照提交前调用：停掉 orb 内运行中的 Docker 容器）；
          *     `worktree.add`、`worktree.remove`（orynd→orbd 请求，M11b，只有 runner 形态的 orbd 接受；其它 orbd 回 `not_supported`）；
@@ -13127,7 +13128,7 @@ export interface components {
          *     runner 与协调宿主回 `not_supported`）、`computer.update`（orbd→orynd 通知，M19，参数 `LinkCtlComputerUpdateParams`，在途工具的流式输出）。
          * @enum {string}
          */
-        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "thread.pull" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call" | "follow.add";
+        LinkCtlMethod: "hello" | "entries.cursors" | "entries.append" | "entries.reset" | "entries.reset_done" | "agent.status" | "agent.gap" | "setup.log" | "metrics.sample" | "setup.run" | "resume.run" | "agent.start" | "agent.stop" | "blob.fetch" | "fs.copyTree" | "fs.move" | "shutdown" | "setup.result" | "project.scripts.get" | "project.scripts.set" | "terminal.gap" | "services.state" | "portal.configure" | "desktop.state" | "profile.mode" | "thread.create" | "thread.send" | "thread.get" | "thread.pull" | "thread.list" | "schedule.get" | "schedule.put" | "schedule.delete" | "schedule.enable" | "snapshot.prepare" | "worktree.add" | "worktree.remove" | "omphome.apply" | "library.sync" | "library.fetch" | "library.put" | "artifact.call" | "github.call" | "github.prepare.report" | "ssh.call" | "computer.start" | "computer.call" | "computer.cancel" | "computer.stop" | "computer.update" | "box.call" | "follow.add";
         LinkCtlRequest: {
             /**
              * Format: int64
@@ -13867,6 +13868,36 @@ export interface components {
             dirty: boolean;
             /** @description 是否写了 bundle；为假时调用方仓库已有 `head` 与 `snapshot` 的全部对象 */
             bundled: boolean;
+        };
+        /**
+         * @description orbd→orynd 请求：列出调用方可以 `thread.pull` 的线程（规则见 `LinkCtlThreadPullParams`），由 orb 内 `oryn thread list` 发出。
+         *     只列未归档、有 orb、未隐藏的工作线程，按最近活动倒序，至多 100 条；结果 `LinkCtlThreadListResult`。
+         */
+        LinkCtlThreadListParams: {
+            /** @description 调用方线程 */
+            threadId: components["schemas"]["ThreadId"];
+        };
+        /** @description `thread.list` 的结果 */
+        LinkCtlThreadListResult: {
+            threads: components["schemas"]["LinkCtlThreadListItem"][];
+        };
+        /** @description `thread.list` 的一项；`title` 由 agent 或主人写，是不可信文本 */
+        LinkCtlThreadListItem: {
+            id: components["schemas"]["ThreadId"];
+            title: string;
+            state: components["schemas"]["ThreadState"];
+            /**
+             * @description 与调用方的关系（按此顺序取第一个成立的）：父线程、子线程、同一项目、同一 Space
+             * @enum {string}
+             */
+            relation: "parent" | "child" | "project" | "space";
+            /**
+             * Format: int64
+             * @description 最近活动时间（毫秒；最后一条消息时间，没有消息时取更新时间）
+             */
+            updatedAt: number;
+            /** @description 线程在 Web 上的地址（`<public_url>/t/<id>`） */
+            url: string;
         };
         /** @description `schedule.get` / `schedule.delete` 的参数（M9）：只作用于调用方线程自己的线程内定时；结果分别为 `LinkCtlScheduleResult` / `LinkCtlOkResult` */
         LinkCtlScheduleParams: {

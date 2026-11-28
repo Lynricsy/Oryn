@@ -321,6 +321,8 @@ HTML 类内容放进不执行脚本、不发网络请求的沙箱帧。
 
 **取别的线程的改动**：orb 内 `oryn thread pull <id>` 把对方仓库里的改动取进当前仓库，包括没提交、没推送的：`refs/oryn/threads/<id>/head` 是对方已提交的工作，`refs/oryn/threads/<id>/snapshot` 另含未提交的改动（含未跟踪文件，遵守 `.gitignore`；没有时同 head）。可取的线程：父线程、自己开的子线程，以及同一项目或同一 Space 的工作线程，满足其一即可，所以同一 Space 里不同项目、或都不属于项目的线程也能互取（线程链接 `…/t/<id>` 的最后一段就是 id，可以直接贴给集成线程）。不能取的：既不是父子、又不同项目也不同 Space 的线程；跑在 Runner 上的线程（不把你机器上的未提交内容搬进 orb）；GitHub 触发、项目定时等全自动入口开的线程只能与父子线程互取。不动当前工作区、index 与分支，之后用 `git merge`、`cherry-pick` 或 `diff` 并入、比较；再取一次只传增量，两个 ref 在同一个事务里一起更新。对方 orb 冻结或停机时先被唤醒；对方仓库只多出 `refs/oryn/sync/*`。`--json` 输出对方仓库的分支、head、snapshot 与是否有未提交改动。
 
+**列出可取的线程**：orb 内 `oryn thread list` 列出当前线程能 `oryn thread pull` 的线程：未归档、有 orb 的父子线程与同项目 / 同 Space 线程，排除 Runner 线程和全自动入口的平级线程，按最近活动倒序，至多 100 条。每行是 id、关系（`parent` / `child` / `project` / `space`）、状态、最近活动时间与标题；`--json` 另带线程链接。orb 内不支持 `--archived`、`--state`、`--project`、`-q`。
+
 ### 全局助手
 
 按三层执行，能自己做的就不派线程：

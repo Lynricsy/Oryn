@@ -554,6 +554,95 @@ func (q *Queries) ListThreadLabels(ctx context.Context, threadID string) ([]stri
 	return items, nil
 }
 
+const listThreadPullCandidates = `-- name: ListThreadPullCandidates :many
+SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads
+WHERE kind = 'work' AND archived_at IS NULL AND hidden = 0 AND orb_id IS NOT NULL AND id <> CAST(?1 AS TEXT)
+  AND (parent_thread_id = CAST(?1 AS TEXT) OR id = CAST(?2 AS TEXT)
+       OR project_id = CAST(?3 AS TEXT) OR space_id = CAST(?4 AS TEXT))
+ORDER BY COALESCE(last_message_at, updated_at) DESC, id
+LIMIT CAST(?5 AS INTEGER)
+`
+
+type ListThreadPullCandidatesParams struct {
+	ID        string `json:"id"`
+	ParentID  string `json:"parentId"`
+	ProjectID string `json:"projectId"`
+	SpaceID   string `json:"spaceId"`
+	Lim       int64  `json:"lim"`
+}
+
+// Work threads an orb thread may pull from (`oryn thread list`): unarchived, visible, with an orb, other than @id, and
+// @id's children, its parent, or in @project_id / @space_id (” = none); most recent activity first. The service
+// drops runner and automation threads afterwards.
+func (q *Queries) ListThreadPullCandidates(ctx context.Context, arg ListThreadPullCandidatesParams) ([]Thread, error) {
+	rows, err := q.db.QueryContext(ctx, listThreadPullCandidates,
+		arg.ID,
+		arg.ParentID,
+		arg.ProjectID,
+		arg.SpaceID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Thread{}
+	for rows.Next() {
+		var i Thread
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.OrbID,
+			&i.Title,
+			&i.TitleSource,
+			&i.State,
+			&i.StateChangedAt,
+			&i.ParentThreadID,
+			&i.ForkedFromEntryID,
+			&i.SessionDir,
+			&i.LeafEntryID,
+			&i.Model,
+			&i.ThinkingLevel,
+			&i.Color,
+			&i.Pinned,
+			&i.SnoozedUntil,
+			&i.ArchivedAt,
+			&i.Unread,
+			&i.LastSeq,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastMessageAt,
+			&i.StartupFrames,
+			&i.ForkOp,
+			&i.TranscriptRev,
+			&i.ShortCode,
+			&i.Kind,
+			&i.SpaceID,
+			&i.ShippedAt,
+			&i.ScheduleID,
+			&i.ScheduleRun,
+			&i.Cwd,
+			&i.Worktree,
+			&i.Main,
+			&i.Hidden,
+			&i.Research,
+			&i.AgentRole,
+			&i.AppendSystemPrompt,
+			&i.AllowedTools,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listThreads = `-- name: ListThreads :many
 SELECT id, project_id, orb_id, title, title_source, state, state_changed_at, parent_thread_id, forked_from_entry_id, session_dir, leaf_entry_id, model, thinking_level, color, pinned, snoozed_until, archived_at, unread, last_seq, created_at, updated_at, last_message_at, startup_frames, fork_op, transcript_rev, short_code, kind, space_id, shipped_at, schedule_id, schedule_run, cwd, worktree, main, hidden, research, agent_role, append_system_prompt, allowed_tools FROM threads
 WHERE (CAST(?1 AS TEXT) IS NULL OR state = CAST(?1 AS TEXT))
