@@ -6,7 +6,7 @@
 
 Amp **没有服务端的合并机制**：没有 merge queue、没有锁、没有集成服务。并行线程的合并全部由 agent 在各自 orb 里用 git 完成，服务端只负责三件事：
 
-1. 把「怎么交付」写成可编辑的保存提示词（Ship 按钮只是发一条消息）；
+1. 把「怎么交付」写成可编辑的保存提示词（文档称 Ship 按钮只是让 agent 收到一条消息）；
 2. 跨线程消息自动附带来源元数据，并约束「不得未经主人同意并入别人的改动」；
 3. 追踪交付结果（提交是否进了默认分支、PR 状态），在 Space 里汇总。
 
@@ -14,7 +14,9 @@ Amp **没有服务端的合并机制**：没有 merge queue、没有锁、没有
 
 ## 1. Ship：交付提示词
 
-Changes 面板的 Ship 按钮 = 发送保存的提示词 `ship`，等同用户亲手输入。内置保存提示词共四个：`ship`、`update-base`、`refactor-commits`、`review`，可在 Prompts 页修改；`send_thread_message` 的 `prompt` 参数也可以按名发送它们，文本前置在消息正文之前。
+内置保存提示词共四个：`ship`、`update-base`、`refactor-commits`、`review`，可在 Prompts 页修改；`load_prompt` 可读取原文，`send_thread_message` 的 `prompt` 参数可按名发送，文本前置在消息正文之前。下面的规则取自 `load_prompt` 返回的原文。
+
+**Changes 面板的按钮本次没有实测**（无头浏览器没有 Amp 登录态）。文档说按钮发出的提示词「as if you had typed it」，但按钮路径并不等于手动输入：插件钩子 `changes.prompt` 可以往 Ship / Push to Branch 提示词后追加内容（对话框里可见可改），`agent.start` 事件带 `changesWorkflow: 'ship' | 'push_branch'` 标记，所以插件和 Amp 能区分这是一次按钮触发的交付。
 
 `ship` 的规则（转述）：
 
@@ -37,7 +39,7 @@ Ship Behavior 三选一：Ship（上面这段）、Push to Branch（推到当前
 
 ## 3. 并发 Ship 实测：两个线程改同一函数
 
-两个 orb 线程从 `47533fb` 出发，各自本地提交互相矛盾的 `add()` 改动（C：接受 float；D：只接受 int、拒绝 bool/str），然后以主人身份几乎同时发送 `ship` 提示词：
+两个 orb 线程从 `47533fb` 出发，各自本地提交互相矛盾的 `add()` 改动（C：接受 float；D：只接受 int、拒绝 bool/str），然后用 CLI `amp threads continue -ox -x` 以主人身份几乎同时发出一条消息：`load_prompt` 取到的 `ship` 原文，后面追加一行推送授权（因为两个线程开工时被要求不要推送）。这模拟的是 Ship 提示词的内容，不是 Changes 按钮本身：
 
 | 线程 | 过程 | 结果 |
 |---|---|---|
