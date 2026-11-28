@@ -218,7 +218,7 @@ sudo install -m 0644 deploy/systemd/oryn-provider.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now oryn-provider
 ```
 
-`types` 里的 `cpus` / `memory` 就是 `docker run --cpus` / `--memory` 的值（`memory` 的写法同 docker：`512m`、`4g`、`1.5g`，至少 `6m`）。`cpus: 0` 表示不限 CPU，`memory: "0"`（或省略）表示不限内存，此时 provider 不传对应参数，容器可用满宿主机的 CPU 与内存；界面上显示为「CPU 不限」「内存不限」，Provider 总览的配额读数另行标出运行中不限资源的 orb 台数。写了 `types` 就会整个替换默认的 `small` / `medium` / `large`，`default_type` 必须是表里的类型，例如在默认三档之外加一档：
+`types` 里的 `cpus` / `memory` 对应 `docker run --cpus` / `--memory`（`memory` 的写法同 docker：`512m`、`4g`、`1.5g`、`4GiB`，provider 解析成整数字节数再传给 docker；非零值至少 `6m`，`0.5`、`1k` 这类过小的值和 docker 不认的写法在 provider 启动时就报错）。`cpus: 0` 表示不限 CPU，`memory: "0"`（或省略）表示不限内存，只有数值恰为 0 才算不限；此时 provider 不传对应参数，容器可用满宿主机的 CPU 与内存；界面上显示为「CPU 不限」「内存不限」，Provider 总览的配额读数另行标出运行中不限资源的 orb 台数。写了 `types` 就会整个替换默认的 `small` / `medium` / `large`，`default_type` 必须是表里的类型，例如在默认三档之外加一档：
 
 ```yaml
   types:

@@ -152,12 +152,12 @@ func TestDockerDriverCommands(t *testing.T) {
 		job   Job
 		want  []string
 	}{
-		{"spawn new", "missing", false, spawn(""), []string{inspect, createArgs("oryn-orb:dev", "2", "4g"), "ENV http://172.17.0.1:7600 orb-x oot_tok", cpFrom, "start orb-x"}},
+		{"spawn new", "missing", false, spawn(""), []string{inspect, createArgs("oryn-orb:dev", "2", "4294967296"), "ENV http://172.17.0.1:7600 orb-x oot_tok", cpFrom, "start orb-x"}},
 		{"spawn new from snapshot, unknown type → default", "missing", true, func() Job {
 			j := spawn("oryn-snap-1")
 			j.Spawn.Type = "huge"
 			return j
-		}(), []string{inspect, "image inspect --format {{.Id}} oryn-snap-1", createArgs("oryn-snap-1", "4.5", "8g"), "ENV http://172.17.0.1:7600 orb-x oot_tok", cpFrom, "start orb-x"}},
+		}(), []string{inspect, "image inspect --format {{.Id}} oryn-snap-1", createArgs("oryn-snap-1", "4.5", "8589934592"), "ENV http://172.17.0.1:7600 orb-x oot_tok", cpFrom, "start orb-x"}},
 		{"spawn paused", "paused", false, spawn(""), []string{inspect, "unpause orb-x", writeToken, hup}},
 		{"spawn exited", "exited", false, spawn(""), []string{inspect, "start orb-x", writeToken, hup}},
 		{"spawn running", "running", false, spawn(""), []string{inspect, writeToken, hup}},
@@ -403,6 +403,7 @@ func TestDockerNestedDockerArgs(t *testing.T) {
 		"dind":  {CPUs: 4, Memory: "8g", Runtime: config.SysboxRuntime, NestedDocker: true},
 		"sys":   {CPUs: 2, Memory: "4g", Runtime: config.SysboxRuntime},
 		"free":  {CPUs: 0, Memory: "0"},
+		"bad":   {CPUs: 1, Memory: "0.5"}, // 绕过配置校验的非零小值
 	}})
 	spawn := func(typ string) Job {
 		return Job{Op: "spawn", OrbID: "orb-x", Spawn: &apigen.JobSpawnParams{Type: typ, Env: apigen.JobSpawnEnv{OrynURL: "http://u", OrynOrbID: "orb-x", OrynOrbToken: "oot_tok"}}}
@@ -412,7 +413,7 @@ func TestDockerNestedDockerArgs(t *testing.T) {
 	fd.set(t, "missing", false)
 	require.NoError(t, execErr(d, context.Background(), spawn("dind"), newTailBuffer(1<<16)))
 	log := fd.log(t)
-	assert.Equal(t, head+"4 --memory 8g --shm-size 1g --add-host host.docker.internal:host-gateway"+
+	assert.Equal(t, head+"4 --memory 8589934592 --shm-size 1g --add-host host.docker.internal:host-gateway"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_NESTED_DOCKER --runtime sysbox-runc --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
 	assert.Equal(t, "ENV http://u orb-x oot_tok nested=1", log[2])
 	assert.NotContains(t, strings.Join(log, "\n"), "--cap-drop")
@@ -420,14 +421,14 @@ func TestDockerNestedDockerArgs(t *testing.T) {
 	fd.set(t, "missing", false)
 	require.NoError(t, execErr(d, context.Background(), spawn("sys"), newTailBuffer(1<<16)))
 	log = fd.log(t)
-	assert.Equal(t, head+"2 --memory 4g --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
+	assert.Equal(t, head+"2 --memory 4294967296 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --runtime sysbox-runc --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
 	assert.Equal(t, "ENV http://u orb-x oot_tok", log[2])
 
 	fd.set(t, "missing", false)
 	require.NoError(t, execErr(d, context.Background(), spawn("small"), newTailBuffer(1<<16)))
 	log = fd.log(t)
-	assert.Equal(t, head+"2 --memory 4g --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
+	assert.Equal(t, head+"2 --memory 4294967296 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
 
 	// 不限资源的类型：不传 --cpus / --memory（docker 缺省即不限），其余参数不变
@@ -436,6 +437,12 @@ func TestDockerNestedDockerArgs(t *testing.T) {
 	log = fd.log(t)
 	assert.Equal(t, "create --init --name orb-x --hostname orb-x --label oryn-orb=1 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
+
+	// 非零内存解析不过（0.5 字节截断后是 0）：spawn 直接报错、不 create，绝不静默变成不限
+	fd.set(t, "missing", false)
+	err := execErr(d, context.Background(), spawn("bad"), newTailBuffer(1<<16))
+	assert.ErrorContains(t, err, "至少为 6m")
+	assert.NotContains(t, strings.Join(fd.log(t), "\n"), "create ")
 }
 
 // snapshotOptional：快照镜像不存在时退回基础镜像；没有 optional 时报错且不 create。
@@ -546,7 +553,7 @@ func TestDockerSpawnPidsLimitAndCA(t *testing.T) {
 	out := newTailBuffer(1 << 16)
 	require.NoError(t, execErr(d, context.Background(), spawn("small", &pem), out))
 	log := fd.log(t)
-	assert.Equal(t, head+"2 --memory 4g --pids-limit 4096 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
+	assert.Equal(t, head+"2 --memory 4294967296 --pids-limit 4096 --shm-size 1g --add-host host.docker.internal:host-gateway --cap-drop NET_RAW --cap-drop NET_ADMIN"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_ORB_CA_PEM --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
 	b, err := os.ReadFile(filepath.Join(fd.dir, "ca.pem"))
 	require.NoError(t, err)
@@ -556,7 +563,7 @@ func TestDockerSpawnPidsLimitAndCA(t *testing.T) {
 	fd.set(t, "missing", false)
 	require.NoError(t, execErr(d, context.Background(), spawn("dind", nil), newTailBuffer(1<<16)))
 	log = fd.log(t)
-	assert.Equal(t, head+"4 --memory 8g --pids-limit 4096 --shm-size 1g --add-host host.docker.internal:host-gateway"+
+	assert.Equal(t, head+"4 --memory 8589934592 --pids-limit 4096 --shm-size 1g --add-host host.docker.internal:host-gateway"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_NESTED_DOCKER --runtime sysbox-runc --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
 	_, err = os.Stat(filepath.Join(fd.dir, "ca.pem"))
 	assert.ErrorIs(t, err, os.ErrNotExist, "没有 orbCaPem 时不下发 ORYN_ORB_CA_PEM")

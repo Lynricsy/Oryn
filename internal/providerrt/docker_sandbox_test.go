@@ -55,7 +55,7 @@ func TestDockerSandboxSpawnArgs(t *testing.T) {
 	log := fd.log(t)
 	assert.Equal(t, "create --init --name orb-x --hostname orb-x --label oryn-orb=1"+
 		" --label oryn-sandbox=none --label oryn-sandbox-link="+target+
-		" --cpus 2 --memory 4g --pids-limit 4096 --shm-size 1g --cap-drop NET_RAW --cap-drop NET_ADMIN"+
+		" --cpus 2 --memory 4294967296 --pids-limit 4096 --shm-size 1g --cap-drop NET_RAW --cap-drop NET_ADMIN"+
 		" --network none -v "+dir+"/orb-x:/run/oryn-link:ro"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_SANDBOX -e ORYN_LINK_VIA"+
 		" --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])
@@ -81,7 +81,7 @@ func TestDockerSandboxSpawnArgs(t *testing.T) {
 	log = fd.log(t)
 	assert.Equal(t, "create --init --name orb-y --hostname orb-y --label oryn-orb=1"+
 		" --label oryn-sandbox=egress --label oryn-sandbox-link=172.18.0.1:7643"+
-		" --cpus 4 --memory 8g --pids-limit 4096 --shm-size 1g"+
+		" --cpus 4 --memory 8589934592 --pids-limit 4096 --shm-size 1g"+
 		" --network oryn-sbx --dns 1.1.1.1 --dns 9.9.9.9 -v "+dir+"/orb-y:/run/oryn-link:ro"+
 		" -e ORYN_URL -e ORYN_ORB_ID -e ORYN_ORB_TOKEN -e ORYN_NESTED_DOCKER -e ORYN_SANDBOX -e ORYN_LINK_VIA"+
 		" --runtime sysbox-runc --security-opt seccomp=PROFILE oryn-orb:dev orbd run", log[1])

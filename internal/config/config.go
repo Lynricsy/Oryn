@@ -639,11 +639,13 @@ type DockerType struct {
 // dockerMemoryMinBytes 是 docker 接受的最小内存上限（`--memory` 低于 6MiB 时 docker 拒绝创建容器）。
 const dockerMemoryMinBytes = 6 << 20
 
-// dockerMemoryRe 与 docker CLI 解析 `--memory` 的写法一致（go-units RAMInBytes）：数字、可选空格、
-// 可选单位 k/m/g/t/p（按 1024 进位）、可选 i 与 b；没有单位时是字节。
-var dockerMemoryRe = regexp.MustCompile(`^(\d+(?:\.\d+)?) ?([kKmMgGtTpP])?[iI]?[bB]?$`)
+// dockerMemoryRe 是 docker CLI 接受的 `--memory` 写法（go-units RAMInBytes）：数字、可选一个空格、
+// 可选后缀——单独的 b，或单位 k/m/g/t/p 后跟可选的 b / ib（不区分大小写，按 1024 进位）；没有后缀时是字节。
+// 单位后只跟 i（如 6mi）docker 不认，这里同样拒绝。
+var dockerMemoryRe = regexp.MustCompile(`^(\d+(?:\.\d+)?) ?((?i:[kmgtp](?:i?b)?|b))?$`)
 
-// MemoryBytes 把 Memory 解析为字节数；空串与 0 返回 0（不限内存）。
+// MemoryBytes 把 Memory 解析为整数字节数。空串或数值恰为 0 返回 0（不限内存）；写法不合 docker、
+// 正数换算后低于 docker 下限 6MiB（先比较再取整，0.5、1k 这类正数不会截成 0 变成不限）时报错。
 func (t DockerType) MemoryBytes() (int64, error) {
 	s := strings.TrimSpace(t.Memory)
 	if s == "" {
@@ -657,8 +659,14 @@ func (t DockerType) MemoryBytes() (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%q 不是 docker 的内存写法（如 4g、512m；0 = 不限）", t.Memory)
 	}
-	if m[2] != "" {
-		v *= math.Pow(1024, float64(strings.Index("kmgtp", strings.ToLower(m[2]))+1))
+	if v == 0 {
+		return 0, nil
+	}
+	if u := strings.ToLower(m[2]); u != "" && u[0] != 'b' {
+		v *= math.Pow(1024, float64(strings.IndexByte("kmgtp", u[0])+1))
+	}
+	if v < dockerMemoryMinBytes {
+		return 0, fmt.Errorf("%q 至少为 6m（0 = 不限）", t.Memory)
 	}
 	if v >= math.MaxInt64 {
 		return 0, fmt.Errorf("%q 超出范围", t.Memory)
@@ -688,10 +696,8 @@ func validateDockerTypes(types map[string]DockerType) []error {
 		if !(t.CPUs >= 0) || math.IsInf(t.CPUs, 0) {
 			errs = append(errs, fmt.Errorf("docker.types.%s.cpus %v 必须是非负数（0 = 不限）", name, t.CPUs))
 		}
-		if b, err := t.MemoryBytes(); err != nil {
+		if _, err := t.MemoryBytes(); err != nil {
 			errs = append(errs, fmt.Errorf("docker.types.%s.memory: %w", name, err))
-		} else if b > 0 && b < dockerMemoryMinBytes {
-			errs = append(errs, fmt.Errorf("docker.types.%s.memory %q 至少为 6m（0 = 不限）", name, t.Memory))
 		}
 		if t.Runtime != "" && t.Runtime != SysboxRuntime {
 			errs = append(errs, fmt.Errorf("docker.types.%s.runtime %q 无效：只接受空或 %s", name, t.Runtime, SysboxRuntime))

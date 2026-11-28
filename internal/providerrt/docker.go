@@ -428,6 +428,11 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 	if !ok {
 		typ = d.Cfg.Types[d.Cfg.DefaultType]
 	}
+	// 内存按解析出的整数字节数传给 docker，与配置校验、界面展示用同一份结果，不让 docker 再解析一遍原文
+	memBytes, err := typ.MemoryBytes()
+	if err != nil {
+		return nil, fmt.Errorf("docker: 类型的 memory 无效: %w", err)
+	}
 	image := d.Cfg.Image
 	if p.Image != "" && sb == nil {
 		image = p.Image
@@ -455,8 +460,8 @@ func (d *Docker) spawn(ctx context.Context, j Job, out io.Writer) (*apigen.JobRe
 	if typ.CPUs > 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(typ.CPUs, 'f', -1, 64))
 	}
-	if typ.MemoryMB() > 0 {
-		args = append(args, "--memory", typ.Memory)
+	if memBytes > 0 {
+		args = append(args, "--memory", strconv.FormatInt(memBytes, 10))
 	}
 	if d.Cfg.PidsLimit > 0 {
 		// 所有类型都限制进程数（S-P2-6）：sysbox 宿主调高了 kernel.pid_max，fork 炸弹的上限随之放大。

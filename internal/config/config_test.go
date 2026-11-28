@@ -371,15 +371,31 @@ func TestDockerTypeResources(t *testing.T) {
 	assert.Equal(t, 0, c.Docker.Types["bare"].MemoryMB(), "省略 memory 同样不限")
 	assert.Equal(t, 1536, c.Docker.Types["half"].MemoryMB())
 
-	for mem, mb := range map[string]int{"512m": 512, "4G": 4096, "4gb": 4096, "4GiB": 4096, "1t": 1 << 20, "8388608": 8, "0g": 0} {
-		assert.Equal(t, mb, DockerType{Memory: mem}.MemoryMB(), mem)
+	// 与 docker CLI（go-units RAMInBytes）同一套写法，结果是整数字节数
+	for mem, want := range map[string]int64{
+		"512m": 512 << 20, "4G": 4 << 30, "4gb": 4 << 30, "4GiB": 4 << 30, "4 g": 4 << 30, "6mib": 6 << 20,
+		"1t": 1 << 40, "8388608": 8 << 20, "8388608b": 8 << 20, "1.5g": 3 << 29, "0g": 0, "0.0": 0,
+	} {
+		got, err := DockerType{Memory: mem}.MemoryBytes()
+		require.NoError(t, err, mem)
+		assert.Equal(t, want, got, mem)
+	}
+	// 只有明确的 0 取消上限：0.5、1k 这类正数先比下限再取整，不会截成 0 变成不限；
+	// docker 不认的写法（6mi、单独的 i、两个空格）在加载时就报错
+	for mem, want := range map[string]string{
+		"0.5": "至少为 6m", "1k": "至少为 6m", "5.9m": "至少为 6m", "1024": "至少为 6m",
+		"6mi": "不是 docker 的内存写法", "6i": "不是 docker 的内存写法", "6  m": "不是 docker 的内存写法",
+		"-1g": "不是 docker 的内存写法", "4x": "不是 docker 的内存写法",
+	} {
+		_, err := DockerType{Memory: mem}.MemoryBytes()
+		assert.ErrorContains(t, err, want, mem)
 	}
 
 	for types, want := range map[string]string{
-		"    free: {cpus: -1, memory: 4g}\n":  "docker.types.free.cpus -1 必须是非负数",
-		"    free: {cpus: 1, memory: 4x}\n":   "docker.types.free.memory",
-		"    free: {cpus: 1, memory: -1g}\n":  "docker.types.free.memory",
-		"    free: {cpus: 1, memory: 1024}\n": "至少为 6m",
+		"    free: {cpus: -1, memory: 4g}\n":     "docker.types.free.cpus -1 必须是非负数",
+		"    free: {cpus: 1, memory: 4x}\n":      "docker.types.free.memory",
+		"    free: {cpus: 1, memory: \"0.5\"}\n": "docker.types.free.memory: \"0.5\" 至少为 6m",
+		"    free: {cpus: 1, memory: 6mi}\n":     "docker.types.free.memory",
 	} {
 		_, err = load(types)
 		assert.ErrorContains(t, err, want, types)
