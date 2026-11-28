@@ -31,13 +31,19 @@ Amp **没有服务端的合并机制**：没有 merge queue、没有锁、没有
 
 Ship Behavior 三选一：Ship（上面这段）、Push to Branch（推到当前分支；在基线上时 agent 自起分支名；不自动开 PR）、Custom Ship（≤10,000 字符纯文本）。
 
-## 2. 托管仓库的强推：主人凭据实测允许，线程凭据未验证
+## 2. 托管仓库没有强推保护，主人与线程凭据都一样（实测）
 
-用主人本机凭据对 `ampcode.com/@lingx/oryn-ship-lab`：普通非快进推送被 git 客户端拒绝；`git push --force origin main` **成功**；`git push origin --delete main` **成功**。这只说明**主人凭据**不受限制；它区分不了「只限制线程、不限制主人」这类规则是否存在，orb 里线程凭据能否强推或删除基线**没有验证**。
+用主人本机凭据对 `ampcode.com/@lingx/oryn-ship-lab`：`git push --force origin main` 成功，`git push origin --delete main` 成功。
 
-文档里托管仓库的设置只有 Base Branch、只读凭据、归档只读、post-receive webhook，没找到保护规则或被覆盖 ref 留存的说明（没找到不等于没有）。GitHub 仓库沿用 GitHub 自己的保护规则。
+再在 orb 线程里用线程自己的凭据（`~/.gitconfig` 里的 `amp git-credential-helper`）测同样的操作：对 main 强推非快进历史得到 `+ 53d5ad7...8f9ce54 HEAD -> main (forced update)`，删除 main 得到 `- [deleted] main`，scratch 分支的推送、强推、删除也都被接受。所以 Amp **没有**「只限制线程、不限制主人」的服务端规则，不强推只靠提示词约束。
 
-Oryn 托管仓库目前对线程推送同样没有限制，另有 `refs/oryn/saved/` 30 天留存。
+测试中途的两个干扰：
+- 第一次线程测试被主人自己的 `oh-my-amp/guards-and-rules` 插件在本地拦下，请求根本没到服务器；实验仓库提交 `.amp/oh-my-amp.json` 关掉危险命令守卫后才测成。
+- 线程那次强推 scratch 显示 `[new branch]`，删除后 `ls-remote` 仍短暂可见该分支；主人凭据随后再删一次即消失。原因未查，不影响结论。
+
+文档里托管仓库的设置只有 Base Branch、只读凭据、归档只读、post-receive webhook，也没提到保护规则或被覆盖 ref 的留存。GitHub 仓库沿用 GitHub 自己的保护规则。
+
+Oryn 托管仓库对线程推送同样没有限制，另有 `refs/oryn/saved/` 30 天留存。主人决定：Amp 也没有，Oryn 暂不做「线程推送基线只允许快进」。
 
 ## 3. 并发 Ship 实测：两个线程改同一函数
 
@@ -91,7 +97,7 @@ New Worktree 在仓库旁执行 `git worktree add`（`<repo>-<name>`，同名分
 | rebase 后跑测试 | 必须，且规定何时可以不重跑 | 托管提示词没有这一步 |
 | 实质性冲突 | 先问人 | 「resolving any conflicts」，agent 自行处理 |
 | 浅克隆 add/add 兜底 | 有 | 无 |
-| 托管仓库强推保护 | 主人凭据可强推、可删 main；线程凭据未验证；文档未提及 | 无（但有 30 天 saved ref） |
+| 托管仓库强推保护 | 无：主人与线程凭据都能强推、删除 main | 无（但有 30 天 saved ref）；暂不做 |
 | 跨线程消息来源标注与授权约束 | 标注来源，并要求未经主人同意不得并入对方改动 | `coord/tools.go` 的 `sourceLine` 标注「sent by an agent, not typed by the owner」，没有并入改动的约束 |
 | 派工时预先裁决语义冲突 | 协调者自发 | `internal/coord` 里没有分支、推送、合并相关指引 |
 | 集成线程 + 拉取别人改动的工具 | `download_thread_changes`：任一线程一次取回另一线程整份改动（取自服务端快照，源 orb 不在也行） | 只有全局助手能中转：`get_thread_changes` 列出改动 → 逐个 `fetch_thread_file` 存进文件库 → `put_thread_file` 或 `create_thread` 的 `files` 放进集成线程（`coord/filetools.go:101-117`，读文件时会唤醒源 orb）；工作线程和 Space 协调者没有这些工具 |
