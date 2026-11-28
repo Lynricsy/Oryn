@@ -5,11 +5,18 @@ name: readme-ios-shots
 # 作为产物 readme-ios-shots 上传（web/src-tauri/ci/ios-readme-shots.sh）。
 # 合成到 docs/assets 在本机做：下载产物后 `ORYN_IOS_SHOTS=<目录> bun run shots:readme --only mobile-views,duo-views`（见 docs/development.md）。
 # 触发：推送 readme-shots/** 分支，或手动运行。只读权限、不取任何 secret。
+# 手动运行可选 only=duo：只截 Duo 的四张，不启动普通 iPhone（它那段卡住时 Duo 原图照样能拿到）；推送触发总是全截。
 # 供应链约束同 mobile.yml：第三方 action 钉到完整提交 SHA；checkout 不保留凭据。
 on:
   push:
     branches: ["readme-shots/**"]
   workflow_dispatch:
+    inputs:
+      only:
+        description: 截哪些图（all：手机三联与 Duo；duo：只截 Duo）
+        type: choice
+        options: [all, duo]
+        default: all
 
 permissions: {}
 
@@ -89,6 +96,8 @@ jobs:
       - name: 模拟器截图
         timeout-minutes: 50
         shell: bash
+        env:
+          ORYN_SHOTS_ONLY: ${{ inputs.only || 'all' }}
         run: |
           set -euo pipefail
           app=$(find web/src-tauri/gen/apple/build -type d -name 'Oryn.app' | head -1)

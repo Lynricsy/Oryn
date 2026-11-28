@@ -16,9 +16,16 @@
 # 与网页探针判断。
 # 合成到 docs/assets/{mobile,duo}-views-*.png 在本机做：ORYN_IOS_SHOTS=<产物目录> bun run shots:readme --only mobile-views,duo-views。
 # 用法：ios-readme-shots.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
+# ORYN_SHOTS_ONLY=duo 只截 Duo 的四张：不选、不启动普通 iPhone，也不往它上面装 App（普通 iPhone 那段卡住时，
+# Duo 的原图不必跟着拿不到）。默认（空或 all）全截。
 set -euo pipefail
 if (($# != 3)); then
   echo "用法：$0 <Oryn.app> <mock Web UI 构建目录> <输出目录>" >&2
+  exit 2
+fi
+only=${ORYN_SHOTS_ONLY:-all}
+if [[ $only != all && $only != duo ]]; then
+  echo "ORYN_SHOTS_ONLY 只能是 all 或 duo，收到 ${only}" >&2
   exit 2
 fi
 here=$(cd "$(dirname "$0")" && pwd)
@@ -29,7 +36,11 @@ origin="http://localhost:$port"
 
 # shellcheck source=ios-sim.sh
 source "$here/ios-sim.sh"
-sim_setup "$1" "$3" "README 截图（iOS 模拟器）"
+if [[ $only == duo ]]; then
+  sim_prepare "$1" "$3" "README 截图（iOS 模拟器，只截 Duo）"
+else
+  sim_setup "$1" "$3" "README 截图（iOS 模拟器）"
+fi
 out=$(cd "$out" && pwd)
 server=""
 duo_udid=""
@@ -67,7 +78,7 @@ pin_status_bar() {
   sim_run 60 xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active --wifiBars 3 \
     --cellularMode active --cellularBars 4 --batteryState discharging --batteryLevel 100
 }
-pin_status_bar
+if [[ $only == all ]]; then pin_status_bar; fi
 
 # 演示数据的主线程（与 readme-shots.ts 的 T.fc 同一个夹具 ID）
 thread=$(cd "$web" && bun -e 'import { MAIN_THREAD } from "./src/mock/fixtures"; console.log(MAIN_THREAD)')
@@ -120,16 +131,18 @@ shoot() {
   capture_when "$1" "$3"
 }
 
-for scheme in light dark; do
-  sim_run 60 xcrun simctl ui "$udid" appearance "$scheme"
-  shoot "ios-sidebar-$scheme" "/t/$thread?readme=sidebar" ready_sidebar
-  shoot "ios-thread-$scheme" "/t/$thread" ready_thread
-  shoot "ios-home-$scheme" "/" ready_home
-done
+if [[ $only == all ]]; then
+  for scheme in light dark; do
+    sim_run 60 xcrun simctl ui "$udid" appearance "$scheme"
+    shoot "ios-sidebar-$scheme" "/t/$thread?readme=sidebar" ready_sidebar
+    shoot "ios-thread-$scheme" "/t/$thread" ready_thread
+    shoot "ios-home-$scheme" "/" ready_home
+  done
+fi
 
 # ---------------------------------------------------------------- iPhone Duo
 # 换一台 Duo：iPhone 关掉腾出资源；同一会话里先在外屏打开线程页，再展开、内屏横放
-pg_timeout 60 xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+if [[ $only == all ]]; then pg_timeout 60 xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true; fi
 duo_setup
 duo_udid=$udid
 echo "Duo 模拟器：iPhone Duo（iOS ${duo_os}），duoctl ${duoctl_rev:0:7}" | tee -a "$summary"
