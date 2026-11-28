@@ -153,8 +153,10 @@ fail() {
   tail -80 "$xlog" || true
   # WebKit 的进程也带上：ATS 拦截、导航失败都记在那里
   echo "--- 系统日志（末尾）"
-  xcrun simctl spawn "$udid" log show --last 5m --style compact \
+  pg_timeout 60 xcrun simctl spawn "$udid" log show --last 5m --style compact \
     --predicate 'processImagePath CONTAINS "Oryn" OR processImagePath CONTAINS "WebKit"' 2>/dev/null | tail -200 || true
+  # App 卡住（启动页出不来、截图不返回）时看主线程停在哪
+  app_sample "$out/e2e-fail-$1-sample.txt"
   cp "$log" "$out/$events" 2>/dev/null || true
   exit 1
 }
