@@ -5,6 +5,8 @@
 // 算出 Oryn 竖栏的矩形（顶端让开状态栏与相机）与竖栏之外内容区的安全区（横向收角：状态栏那一角从侧面让开，不再占整条顶边），
 // 经 trigger("event", {type: "rail", side?, frame?, safeArea, probe}) 交给 Rust → 网页（lib/rail.ts：页头按钮与底栏放进竖栏）。
 // 装在 WebView 的父视图上、与之同大、透明且不接触摸：折叠 / 展开 / 转屏会改它的边界、安全区或 trait，任一变化重算，结果变了才上报。
+// 重算不在布局回调里同步做：读 bar 指引、reservedRegions 可能让 UIKit 再排一轮布局（同步递归会把主线程卡死在启动里），
+// 上报又会调进 Rust → WebView；这里只排一次主队列任务（合并同一轮的多次请求），重算期间引起的布局不再排新任务。
 // probe 是原始量测（系统安全区、收角安全区、两侧 bar 指引、遮挡区、状态栏），只进事件日志，供 CI 在 Duo 模拟器上核对。
 import Tauri
 import UIKit
@@ -28,6 +30,10 @@ final class RailProbe: UIView {
   private lazy var trailingBar = layoutGuide(for: .bar(onEdge: .trailing, extent: Self.extent))
   private lazy var cornerSafe = layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))
   private var last: State?
+  /// 已排了一次重算（主队列）还没跑
+  private var queued = false
+  /// 正在重算：期间读指引引起的布局回调不再排新任务（否则每一帧都重算一次）
+  private var computing = false
 
   init(webview: WKWebView, onChange: @escaping (JSObject) -> Void) {
     self.webview = webview
@@ -38,10 +44,10 @@ final class RailProbe: UIView {
     autoresizingMask = [.flexibleWidth, .flexibleHeight]
     // 布局指引先建好：第一轮布局就能求解出它们的 layoutFrame
     _ = (leadingBar, trailingBar, cornerSafe)
-    // 折叠 / 展开 / 转屏都会改边界（layoutSubviews 重算）；尺寸类变化另外再排一次布局（竖栏的一侧随之变）
+    // 折叠 / 展开 / 转屏都会改边界（layoutSubviews 排重算）；尺寸类变化另外再排一次（竖栏的一侧随之变）
     registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) {
       (probe: RailProbe, _: UITraitCollection) in
-      probe.setNeedsLayout()
+      probe.schedule()
     }
   }
 
@@ -52,12 +58,24 @@ final class RailProbe: UIView {
 
   override func safeAreaInsetsDidChange() {
     super.safeAreaInsetsDidChange()
-    setNeedsLayout()
+    schedule()
   }
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    report()
+    schedule()
+  }
+
+  private func schedule() {
+    guard !queued, !computing else { return }
+    queued = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.queued = false
+      self.computing = true
+      defer { self.computing = false }
+      self.report()
+    }
   }
 
   private func report() {
