@@ -372,13 +372,13 @@
 	color: var(--text-muted);
 }
 
-/* 思考块流式时的淡入光标 */
+/* 思考块流式时的淡入光标：思考按 Markdown 排，光标跟在最后一个块的末尾，不另起一行 */
 @keyframes oryn-caret {
 	50% {
 		opacity: 0;
 	}
 }
-.stream-caret::after {
+.stream-caret .md > :last-child::after {
 	content: "▍";
 	margin-left: 1px;
 	animation: oryn-caret 1s steps(1) infinite;

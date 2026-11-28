@@ -333,6 +333,36 @@ describe("思考块随思考开合", () => {
 		expect(container.querySelector('[data-ask-scope="thinking"]')).toBeNull();
 	});
 
+	it("思考按 Markdown 渲染：**小标题** 成粗体、尖括号照字面；合上后的预览去掉记号", () => {
+		const text = "**评估界面方案**\n\n用 `<Tabs>` 分开 <div> 方案";
+		let live = startLiveMessage({
+			type: "message_start",
+			messageId: "m1",
+			message: { role: "assistant", content: [] },
+		});
+		live = upd(live, {
+			type: "thinking_start",
+			contentIndex: 0,
+			block: { type: "thinking", thinking: "" },
+		});
+		live = upd(live, { type: "thinking_delta", contentIndex: 0, delta: text });
+		const { container, rerender } = render(liveRow(live));
+		const body = container.querySelector('[data-ask-scope="thinking"]');
+		expect(body?.querySelector("strong")?.textContent).toBe("评估界面方案");
+		expect(body?.querySelector("code")?.textContent).toBe("<Tabs>");
+		expect(body?.textContent).not.toContain("**");
+		expect(body?.textContent).toContain("分开 <div> 方案");
+
+		rerender(
+			liveRow(
+				upd(live, { type: "thinking_end", contentIndex: 0, content: text }),
+			),
+		);
+		expect(screen.getByRole("button", { name: /思考/ }).textContent).toContain(
+			"评估界面方案 用 <Tabs> 分开 <div> 方案",
+		);
+	});
+
 	it("允许动效时 thinking_end 触发收起动画：裁切到 0 高、淡出，动画结束才卸载", () => {
 		vi.stubGlobal("matchMedia", () => ({ matches: false }));
 		const anim = { cancel: vi.fn(), onfinish: null as null | (() => void) };

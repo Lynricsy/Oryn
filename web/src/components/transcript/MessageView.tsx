@@ -961,9 +961,13 @@ function AutoMessageCard({
 	);
 }
 
-/** 思考块文本压成一行预览：完成后取开头，流式中取末尾。 */
+/** 思考块文本压成一行预览：去掉标题、加粗与行内代码的 Markdown 记号，完成后取开头，流式中取末尾。 */
 function thinkingPreview(text: string, streaming: boolean): string {
-	const flat = text.replace(/\s+/g, " ").trim();
+	const flat = text
+		.replace(/^#{1,6}\s+/gm, "")
+		.replace(/\*\*|__|`/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
 	if (flat.length <= 240) return flat;
 	return streaming ? `…${flat.slice(-240)}` : flat.slice(0, 240);
 }
@@ -1033,10 +1037,15 @@ function ThinkingBlock({
 				<div
 					ref={body.ref}
 					data-ask-scope="thinking"
-					className={`whitespace-pre-wrap break-words pt-0.5 pb-1.5 pl-[22px] text-muted text-xs leading-relaxed ${auto ? "scroll-smooth overflow-hidden motion-reduce:scroll-auto" : ""} ${clipped ? "[mask-image:linear-gradient(to_bottom,transparent,black_2rem)]" : ""} ${streaming ? "stream-caret" : ""}`}
+					className={`break-words pt-0.5 pb-1.5 pl-[22px] text-muted [&_.md]:text-xs! [&_.md]:leading-relaxed! ${auto ? "scroll-smooth overflow-hidden motion-reduce:scroll-auto" : ""} ${clipped ? "[mask-image:linear-gradient(to_bottom,transparent,black_2rem)]" : ""} ${streaming ? "stream-caret" : ""}`}
 					style={auto ? { maxHeight: THINK_TAIL_H } : undefined}
 				>
-					{shownText}
+					{/* 思考由模型写成 Markdown（OpenAI 的推理摘要以 **小标题** 分段）；不加载外部图片，尖括号按字面显示 */}
+					<Markdown
+						text={escapeAngles(shownText)}
+						streaming={streaming}
+						images={false}
+					/>
 				</div>
 			)}
 		</div>

@@ -1606,7 +1606,7 @@ export function buildMainTranscript(): Entry[] {
 						{
 							type: "thinking",
 							thinking:
-								"先看现有的 socket.ts：重连逻辑在 scheduleReconnect，订阅表在 subs。需要在 onopen 里对每个订阅线程重发 sub，并带上 store 里的 lastSeq。",
+								"**梳理重连流程**\n\n先看现有的 `socket.ts`：重连逻辑在 `scheduleReconnect`，订阅表在 `subs`。需要：\n\n- 在 `onopen` 里对每个订阅线程重发 `sub`\n- 带上 store 里的 `lastSeq`",
 						},
 						{ type: "text", text: "先看一下现有实现。" },
 						{
