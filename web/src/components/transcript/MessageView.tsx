@@ -1037,7 +1037,7 @@ function ThinkingBlock({
 				<div
 					ref={body.ref}
 					data-ask-scope="thinking"
-					className={`break-words pt-0.5 pb-1.5 pl-[22px] text-muted [&_.md]:text-xs! [&_.md]:leading-relaxed! ${auto ? "scroll-smooth overflow-hidden motion-reduce:scroll-auto" : ""} ${clipped ? "[mask-image:linear-gradient(to_bottom,transparent,black_2rem)]" : ""} ${streaming ? "stream-caret" : ""}`}
+					className={`break-words pt-0.5 pb-1.5 pl-[22px] text-muted [&_.md]:text-xs! [&_.md]:leading-relaxed! ${auto ? "scroll-smooth overflow-hidden motion-reduce:scroll-auto" : ""} ${clipped ? "[mask-image:linear-gradient(to_bottom,transparent,black_2rem)]" : ""} ${streaming ? "think-caret" : ""}`}
 					style={auto ? { maxHeight: THINK_TAIL_H } : undefined}
 				>
 					{/* 思考由模型写成 Markdown（OpenAI 的推理摘要以 **小标题** 分段）；不加载外部图片，尖括号按字面显示 */}
