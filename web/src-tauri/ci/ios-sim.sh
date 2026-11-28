@@ -124,6 +124,31 @@ sim_drop() {
   done
 }
 
+# sim_run <秒> <命令…>：限时跑一条模拟器命令（pg_timeout），前后在 stderr 打 [sim] 标记、耗时与退出码，stdout 照常
+# （可用在 $(…) 里）。Duo 步骤曾整段没有输出地挂到被回收，只剩 cleanup 时被终止的孤儿 simctl：靠这些标记定位卡在哪一条
+sim_run() {
+  local secs=$1 t=$SECONDS rc=0
+  shift
+  echo "[sim] $*" >&2
+  pg_timeout "$secs" "$@" || rc=$?
+  echo "[sim] $* -> ${rc}（$((SECONDS - t)) 秒）" >&2
+  return "$rc"
+}
+
+# app_sample <文件>：对正在跑的 Oryn 进程采样 3 秒（macOS sample，模拟器里的 App 是宿主进程），存进产物并打印主线程栈的开头；
+# 用于 App 卡住（没有事件、网页没加载）时看主线程停在哪
+app_sample() {
+  local pid
+  pid=$(pgrep -f '/Oryn\.app/Oryn$' | head -1) || true
+  if [[ -z $pid ]]; then
+    echo "--- 没有在跑的 Oryn 进程" >&2
+    return 0
+  fi
+  pg_timeout 60 sample "$pid" 3 -file "$1" >/dev/null 2>&1 || true
+  echo "--- Oryn（pid ${pid}）主线程采样，全文在 $(basename "$1")"
+  grep -A40 -m1 "com.apple.main-thread" "$1" 2>/dev/null | head -40 || true
+}
+
 # run <名字> <等待的事件> [要传给 App 的 SIMCTL_CHILD_* 赋值…]
 # 冷启动 App，等事件日志里出现该事件后截图到 <输出目录>/<名字>.png，日志存为 <名字>.jsonl。
 run() {
