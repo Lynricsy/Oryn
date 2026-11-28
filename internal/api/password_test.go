@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/base32"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Lynricsy/Oryn/internal/auth"
 	"github.com/Lynricsy/Oryn/internal/ids"
+	"github.com/Lynricsy/Oryn/internal/store/db"
 )
 
 // h2TOTP 按 RFC 6238（SHA1、6 位、30 秒）独立计算验证码，不复用被测实现。
@@ -196,4 +198,33 @@ func TestPasswordTotpLogin(t *testing.T) {
 	assert.Empty(t, fin.RecoveryCodes)
 	assert.Equal(t, 401, e.do("GET", "/api/v1/me", rec, nil).status, "恢复会话已删除")
 	assert.Equal(t, 200, login(pw1, h2TOTP(t, en3.Secret, step+1)).status)
+}
+
+// 会话通过中间件后、写入新 Passkey 前被吊销（如另一端重设或关闭密码登录）：进行中的登记不能留下永久凭据。
+func TestAddPasskeyRejectsRevokedSession(t *testing.T) {
+	e := newH2Env(t)
+	ctx := context.Background()
+	require.NoError(t, e.st.Q.CreateOwner(ctx, db.CreateOwnerParams{DisplayName: "Owner", UserHandle: []byte("h"), CreatedAt: 1}))
+	sess, err := auth.CreateWebSession(ctx, e.st, "")
+	require.NoError(t, err)
+	now := time.Now().UnixMilli()
+	require.NoError(t, e.st.Q.TouchWebSessionVerified(ctx, db.TouchWebSessionVerifiedParams{VerifiedAt: &now, IDHash: ids.Hash(sess)}))
+
+	r := e.do("POST", "/api/v1/auth/passkeys/begin", h2Cred{cookie: sess, csrf: true}, map[string]string{"name": "钥匙"})
+	require.Equal(t, 200, r.status, string(r.body))
+	var cer h2Ceremony
+	r.json(t, &cer)
+	cred, err := json.Marshal(newH2Authenticator(t).create(cer.Options))
+	require.NoError(t, err)
+
+	// 中间件已放行的旧 principal；随后会话被删
+	p := auth.Principal{Kind: auth.KindWeb, ID: ids.Hash(sess), VerifiedAt: now}
+	require.NoError(t, e.st.Q.DeleteWebSession(ctx, p.ID))
+	_, err = e.svc.FinishAddPasskey(ctx, p, cer.CeremonyID, cred)
+	var ae *auth.Error
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, 401, ae.Status)
+	n, err := e.st.Q.CountPasskeys(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, n, "吊销后的请求没有写入 Passkey")
 }

@@ -565,6 +565,7 @@ func (s *Service) BeginAddPasskey(ctx context.Context, p Principal, name string)
 
 // FinishAddPasskey 校验注册响应并写入新 Passkey；不签发新会话，也不改会话的验证时间。
 // 不再检查验证窗口：begin 已检查过，仪式自身 5 分钟过期；用户已在认证器上建好凭据后再拒绝会留下孤儿凭据。
+// 但会话本身必须仍有效：写入与复查同一事务，鉴权后被吊销（如重设 / 关闭密码登录）的请求不能留下永久凭据。
 func (s *Service) FinishAddPasskey(ctx context.Context, p Principal, ceremonyID string, credential []byte) (PasskeyInfo, error) {
 	if err := requireOwnerSession(p); err != nil {
 		return PasskeyInfo{}, err
@@ -598,7 +599,13 @@ func (s *Service) FinishAddPasskey(ctx context.Context, p Principal, ceremonyID 
 	if err != nil {
 		return PasskeyInfo{}, err
 	}
-	if err := s.st.Q.CreatePasskey(ctx, row); err != nil {
+	err = s.st.Tx(ctx, func(q *db.Queries) error {
+		if err := requireLiveSession(ctx, q, p); err != nil {
+			return err
+		}
+		return q.CreatePasskey(ctx, row)
+	})
+	if err != nil {
 		return PasskeyInfo{}, err
 	}
 	return passkeyInfo(db.Passkey{
