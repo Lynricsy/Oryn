@@ -112,6 +112,18 @@ pg_timeout() {
 # 超时连同它派生的 simctl 子进程一起结束，调用方按失败处理（以前没有限时，卡住时整步挂到 runner 被回收也没有日志）
 duo() { pg_timeout "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
 
+# sim_drop <udid>：收尾时关掉并删除模拟器，每条 simctl 限时 60 秒（pg_timeout，超时返回 124），前后打 [cleanup] 标记：
+# 清理卡住时 EXIT trap 不会拖住整步（Actions 才能封存日志、上传产物），日志里也看得到停在哪一条、结果如何
+sim_drop() {
+  local u=$1 c rc
+  for c in shutdown delete; do
+    echo "[cleanup] xcrun simctl ${c} ${u}" >&2
+    rc=0
+    pg_timeout 60 xcrun simctl "$c" "$u" >/dev/null 2>&1 || rc=$?
+    echo "[cleanup] xcrun simctl ${c} ${u} -> ${rc}" >&2
+  done
+}
+
 # run <名字> <等待的事件> [要传给 App 的 SIMCTL_CHILD_* 赋值…]
 # 冷启动 App，等事件日志里出现该事件后截图到 <输出目录>/<名字>.png，日志存为 <名字>.jsonl。
 run() {

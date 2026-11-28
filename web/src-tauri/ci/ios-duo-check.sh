@@ -46,10 +46,8 @@ udid=""
 log=""
 cleanup() {
   if [[ -n $server ]]; then kill "$server" 2>/dev/null || true; fi
-  if [[ -n $udid ]]; then
-    xcrun simctl shutdown "$udid" 2>/dev/null || true
-    xcrun simctl delete "$udid" 2>/dev/null || true
-  fi
+  # sim_drop 在 ios-sim.sh（下面 source）：限时并打标记，清理卡住也不拖住整步
+  if [[ -n $udid ]]; then sim_drop "$udid"; fi
   rm -rf "$work"
 }
 trap cleanup EXIT

@@ -30,8 +30,9 @@ sim_setup "$1" "$3" "README 截图（iOS 模拟器）"
 out=$(cd "$out" && pwd)
 server=""
 duo_udid=""
+# 收尾：sim_drop（ios-sim.sh）限时关掉并删除 Duo 模拟器，前后打标记，清理卡住也不拖住整步
 trap 'if [[ -n $server ]]; then kill "$server" 2>/dev/null || true; fi
-if [[ -n $duo_udid ]]; then xcrun simctl shutdown "$duo_udid" 2>/dev/null || true; xcrun simctl delete "$duo_udid" 2>/dev/null || true; fi
+if [[ -n $duo_udid ]]; then sim_drop "$duo_udid"; fi
 rm -rf "$work"' EXIT
 
 # 演示数据脚本在截图前一刻生成（线程的「x 分钟前」从这时算起），插在所有脚本之前
@@ -113,7 +114,7 @@ done
 
 # ---------------------------------------------------------------- iPhone Duo
 # 换一台 Duo：iPhone 关掉腾出资源；同一会话里先在外屏打开线程页，再展开、内屏横放
-xcrun simctl shutdown "$udid" 2>/dev/null || true
+pg_timeout 60 xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
 duo_setup
 duo_udid=$udid
 echo "Duo 模拟器：iPhone Duo（iOS ${duo_os}），duoctl ${duoctl_rev:0:7}" | tee -a "$summary"
