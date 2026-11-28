@@ -107,10 +107,19 @@ describe("buildShipPrompt", () => {
 			"Update the open pull request for this work: commit any uncommitted changes that belong to this task, push the branch to origin, and reply with what was pushed.",
 		);
 	});
-	it("托管项目：推上基线、不强推", () => {
+	it("托管项目：rebase 后先跑检查再推上基线、实质冲突问人、不强推", () => {
 		const p = buildHostedShipPrompt("main");
 		expect(p.startsWith("Ship the current work to `main`:\n1. ")).toBe(true);
-		expect(p).toContain("git push origin HEAD:main");
+		const at = (s: string) => {
+			const i = p.indexOf(s);
+			expect(i, s).toBeGreaterThanOrEqual(0);
+			return i;
+		};
+		// 顺序就是契约：rebase → 检查 → 推送
+		expect(at("onto `origin/main`")).toBeLessThan(at("full test suite"));
+		expect(at("full test suite")).toBeLessThan(at("git push origin HEAD:main"));
+		expect(p).toContain("ask me how to combine them");
+		expect(p).toContain("git fetch --unshallow origin");
 		expect(p).toContain("do not force-push");
 	});
 });

@@ -17,13 +17,20 @@ export function buildShipPrompt(o: { base?: string; update: boolean }): string {
 	].join("\n");
 }
 
-/** 托管项目（M24 阶段 ③）：直接推上基线分支；推上基线后服务端自动把线程标为已交付。 */
+/**
+ * 托管项目（M24 阶段 ③）：直接推上基线分支；推上基线后服务端自动把线程标为已交付。
+ * rebase 之后跑一次完整检查再推送，挡住「文本上没冲突、合起来行为不对」的并发改动；实质性冲突交回主人裁决；
+ * 浅克隆（项目可开 shallowClone）rebase 时会冒出大量无关的 add/add 冲突，先 unshallow 再来。
+ * 推送被拒后只在解决冲突改了文件时重跑检查，避免并发交付时反复全量测试互相拖住。
+ */
 export function buildHostedShipPrompt(base: string): string {
 	return [
 		`Ship the current work to \`${base}\`:`,
 		"1. Commit any uncommitted changes that belong to this task, with a clear message.",
-		`2. Run \`git fetch origin\` and rebase your commits onto \`origin/${base}\`, resolving any conflicts.`,
-		`3. Push with \`git push origin HEAD:${base}\`. If it is rejected because \`${base}\` moved, repeat step 2 and push again; do not force-push.`,
-		"4. Reply with the commits that were pushed (short SHA and subject).",
+		`2. Run \`git fetch origin\` and rebase your commits onto \`origin/${base}\`. If the rebase reports add/add conflicts in many files this task never touched, the clone is shallow: run \`git rebase --abort\`, \`git fetch --unshallow origin\`, and rebase again.`,
+		"3. Resolve mechanical conflicts yourself. If a conflict is substantive (both sides changed the same behavior and keeping one side drops the other's intent), run `git rebase --abort` and ask me how to combine them before going any further.",
+		`4. Run the project's full test suite or checks on the rebased commits. If something fails, check whether it also fails on \`origin/${base}\` without your commits; only such pre-existing failures may be ignored, and name them in your reply.`,
+		`5. Push with \`git push origin HEAD:${base}\`. If it is rejected because \`${base}\` moved, repeat steps 2–5, re-running the checks only if resolving conflicts changed files; do not force-push.`,
+		"6. Reply with the commits that were pushed (short SHA and subject) and the checks you ran with their result.",
 	].join("\n");
 }
