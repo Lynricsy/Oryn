@@ -73,14 +73,15 @@ func toolNames(defs []apigen.OmpFrame) []string {
 	return out
 }
 
-// TestProfileOwnerMemory：助手记忆没有运行时提示词与工具表与改动前逐字相同；运行时记忆段与用法接在末尾、多出记忆工具；
-// Space 不注入。
+// TestProfileOwnerMemory：助手记忆没有运行时提示词与工具表与改动前逐字相同；运行时记忆段接在末尾，按需工具目录多出
+// memory 组，记忆工具在加载之后才进工具表；Space 不注入。
 func TestProfileOwnerMemory(t *testing.T) {
 	e := newEnv(t, true)
 	conv := e.assistant()
 	before, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, SystemPrompt(nil, "", conv.ID, true)+"\n\n"+viewGuide(), before.SystemPrompt)
+	assert.Equal(t, newConvPrompt(t, e, conv.ID, true), before.SystemPrompt)
+	assert.NotContains(t, before.SystemPrompt, "- memory (")
 
 	mem := &fakeOwnerMemory{brief: "Memory（记忆）：\n## 关于主人\n主人住在新加坡"}
 	e.c.SetOwnerMemory(mem, nil)
@@ -93,8 +94,14 @@ func TestProfileOwnerMemory(t *testing.T) {
 	mem.on = true
 	on, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
-	assert.Equal(t, before.SystemPrompt+"\n\n"+mem.brief+"\n\n"+memoryGuide, on.SystemPrompt)
-	names := toolNames(on.Tools)
+	assert.Equal(t, newConvPrompt(t, e, conv.ID, true)+"\n\n"+mem.brief, on.SystemPrompt)
+	assert.Contains(t, on.SystemPrompt, "- memory (recall_memory, search_history, recall_engineering, remember): ")
+	assert.Equal(t, toolNames(before.Tools), toolNames(on.Tools), "记忆工具按需加载")
+
+	res := e.call(conv, ToolLoadTools, `{"groups":["memory"]}`, true)
+	require.False(t, res.IsError, res.Text)
+	assert.Contains(t, res.Text, memoryGuide)
+	names := toolNames(res.HostTools)
 	for _, n := range []string{ToolRecallMemory, ToolSearchHistory, ToolRecallEngineering, ToolRemember} {
 		assert.Contains(t, names, n)
 	}

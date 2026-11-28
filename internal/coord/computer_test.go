@@ -278,6 +278,7 @@ func TestComputerToolCache(t *testing.T) {
 		return n
 	}
 
+	require.False(t, e.call(conv, ToolLoadTools, `{"groups":["computer"]}`, true).IsError, "电脑工具按需加载")
 	prof, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
 	names := compToolNames(prof.Tools)

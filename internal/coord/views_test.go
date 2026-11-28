@@ -36,32 +36,40 @@ func specJSON(t *testing.T, view map[string]any) string {
 	return string(b)
 }
 
-// 视图工具与指引只给生成式 UI 开启的全局助手：Space 协调者、研究员、受限的一段与开关关闭时都没有。
+// 视图工具只给生成式 UI 开启的全局助手：Space 协调者、研究员、受限的一段与开关关闭时都没有。开局只在按需工具目录里，
+// load_tools 加载 views 组后两个工具同进，用法进系统提示词。
 func TestViewToolsInProfile(t *testing.T) {
 	e := newEnv(t, true)
 	conv := e.assistant()
 	hasViews := func(p threads.AgentProfile) bool {
-		names := toolNames(p.Tools)
-		ui, html := false, false
-		for _, n := range names {
-			ui = ui || n == ToolRenderUI
-			html = html || n == ToolRenderHTML
-		}
-		assert.Equal(t, ui, html, "两个工具同进同出")
-		assert.Equal(t, ui, strings.Contains(p.SystemPrompt, viewGuide()), "工具与指引同进同出")
-		assert.Equal(t, ui, strings.Contains(p.SystemPrompt, "# Writing blocks"), "写作块指引跟随生成式 UI 开关")
-		return ui
+		assert.NotContains(t, toolNames(p.Tools), ToolRenderUI, "视图工具按需加载，开局不在工具表里")
+		listed := strings.Contains(p.SystemPrompt, "- views (render_ui, render_html): ")
+		assert.Equal(t, listed, strings.Contains(p.SystemPrompt, "# Writing blocks"), "写作块指引跟随生成式 UI 开关")
+		assert.NotContains(t, p.SystemPrompt, "# Views (render_ui / render_html)", "用法在加载之后才给")
+		return listed
 	}
 
 	p, err := e.c.AgentProfile(e.ctx, conv.ID)
 	require.NoError(t, err)
 	assert.True(t, hasViews(p), "所有者未初始化时按开启")
-	assert.True(t, strings.HasPrefix(viewGuide(), "# Views (render_ui / render_html)"))
-	for _, d := range p.Tools {
-		if n := frameName(d); n == ToolRenderUI || n == ToolRenderHTML {
-			assert.Equal(t, "essential", d["loadMode"], n)
-			assert.NotEmpty(t, d["description"], n)
-			assert.Equal(t, "object", d["parameters"].(obj)["type"], n)
+
+	res := e.call(conv, ToolLoadTools, `{"groups":["views"]}`, true)
+	require.False(t, res.IsError, res.Text)
+	assert.Contains(t, res.Text, "# Views (render_ui / render_html)", "结果给出用法")
+	loaded, err := e.c.AgentProfile(e.ctx, conv.ID)
+	require.NoError(t, err)
+	assert.Contains(t, loaded.SystemPrompt, "# Views (render_ui / render_html)", "已加载组的用法进系统提示词")
+	assert.NotContains(t, loaded.SystemPrompt, "- views (", "已加载的组不再列在目录里")
+	for _, tools := range [][]apigen.OmpFrame{res.HostTools, loaded.Tools} {
+		names := toolNames(tools)
+		assert.Contains(t, names, ToolRenderUI)
+		assert.Contains(t, names, ToolRenderHTML)
+		for _, d := range tools {
+			if n := frameName(d); n == ToolRenderUI || n == ToolRenderHTML {
+				assert.Equal(t, "essential", d["loadMode"], n)
+				assert.NotEmpty(t, d["description"], n)
+				assert.Equal(t, "object", d["parameters"].(obj)["type"], n)
+			}
 		}
 	}
 

@@ -212,7 +212,7 @@ func TestSystemPromptFiles(t *testing.T) {
 	assert.Contains(t, p, "~/library/threads/T-1/")
 	assert.Contains(t, p, "~/library/shared/")
 	assert.Contains(t, p, "The only place you may write is ~/library/out/")
-	assert.Contains(t, p, "save_file")
+	assert.Contains(t, p, "not kept until you save it into the library with the files tools")
 	assert.NotContains(t, p, "<FILES>")
 	assert.Contains(t, p, "generate_image saves its images under ~/tmp/")
 	sp := SystemPrompt(&apigen.Space{Name: "Alpha"}, "", "T-2", true)

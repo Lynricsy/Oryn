@@ -153,7 +153,9 @@ func TestArtifactToolsAssistantOnly(t *testing.T) {
 		}
 	}
 
-	assert.Contains(t, SystemPrompt(nil, "", "T-1", true), "create_artifact")
+	loaded := e.call(e.assistant(), ToolLoadTools, `{"groups":["artifacts"]}`, true)
+	require.False(t, loaded.IsError, loaded.Text)
+	assert.Contains(t, loaded.Text, "screenshot_artifact", "artifact 的用法随 artifacts 组加载给出")
 	assert.NotContains(t, SystemPrompt(&apigen.Space{Name: "Alpha"}, "", "T-2", true), "artifact")
 
 	prj := e.project("Beta")

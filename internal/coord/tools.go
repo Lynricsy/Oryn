@@ -133,6 +133,9 @@ func (s *Service) HostToolCall(ctx context.Context, c threads.HostToolCall) thre
 			break
 		}
 		return s.toolOryn(ctx, tc)
+	case ToolLoadTools:
+		// 按需加载工具组（只给全局助手，toolLoadTools 自己核对）
+		return s.toolLoadTools(ctx, tc)
 	case ToolAbortThread, ToolSetThreadModel:
 		// M19 第三层：中止与改模型（只给全局助手，经 oryn 转来）
 		if c.Kind != threads.KindAssistant {

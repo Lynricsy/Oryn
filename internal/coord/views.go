@@ -76,9 +76,6 @@ var viewTools = sync.OnceValue(func() viewToolsFile {
 	return f
 })
 
-// viewGuide 是追加到全局助手系统提示词的视图指引（C11），后接写作块指引。
-func viewGuide() string { return viewTools().Guide + "\n\n" + viewTools().WritingGuide }
-
 // viewToolDefs 是视图工具的宿主工具定义：名字、标签、描述与参数 schema 原样取自 view-tools.json，以顶层工具出现。
 func viewToolDefs() []apigen.OmpFrame {
 	f := viewTools()

@@ -1,7 +1,8 @@
 /**
  * Oryn 宿主工具（M9，协调对话里的 `create_thread` / `send_message` / `archive_thread` / `list_threads` /
  * `read_thread` / `set_schedule` / `list_schedules` / `get_stats` / `list_projects`；M19 加上全局助手的
- * `update_thread` / `abort_thread` / `set_thread_model` / `fork_thread` / `wake_thread` / `delete_thread` / `list_runners`）。
+ * `update_thread` / `abort_thread` / `set_thread_model` / `fork_thread` / `wake_thread` / `delete_thread` / `list_runners`，
+ * 以及按需加载工具组的 `load_tools`，摘要行列出加载的组）。
  * 摘要行只用调用参数，读数是结果里的线程数；输入段是参数的 JSON 树，发出的消息与提示词单独按引文给出全文；
  * 输出段里 `details.threadIds` / `details.threads` / `details.thread` 指向的线程渲染成实时的 `ThreadCard`
  * （数据取线程索引），卡片只是补充：下面始终是原始结果（JSON 树，有卡片时深层先收起；`read_thread` 读到的消息
@@ -159,6 +160,10 @@ function Summary({ name, args }: ToolRenderProps): ReactNode {
 		case "get_stats":
 			if (str(a.groupBy)) tags.push(str(a.groupBy) as string);
 			return <Badges items={tags} />;
+		case "load_tools":
+			if (Array.isArray(a.groups))
+				for (const g of a.groups) if (str(g)) tags.push(str(g) as string);
+			return <Badges items={tags} />;
 		default:
 			return null;
 	}
@@ -267,4 +272,5 @@ export const ORYN_TOOLS = [
 	"wake_thread",
 	"delete_thread",
 	"list_runners",
+	"load_tools",
 ] as const;
