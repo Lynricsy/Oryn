@@ -220,7 +220,7 @@ round() {
   mark=$(wc -l <"$plog" | tr -d ' ')
   round_start=$(date '+%Y-%m-%d %H:%M:%S')
 
-  xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+  app_stop
   xcrun simctl install "$udid" "$app"
   local data
   data=$(xcrun simctl get_app_container "$udid" "$bundle" data)
@@ -283,7 +283,7 @@ round() {
   fi
 
   # P3 NSE（App 已退出）
-  xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
+  app_stop
   sleep 2
   xcrun simctl push "$udid" "$bundle" "$here/ios-push/notify.apns"
   if wait_log 60 'nse\.received'; then
