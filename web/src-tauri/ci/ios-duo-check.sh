@@ -109,12 +109,13 @@ sim_run 300 xcrun simctl bootstatus "$udid" -b || fail setup "simctl bootstatus 
 sim_run 300 xcrun simctl install "$udid" "$app" || fail setup "simctl install 没有完成"
 # 先合上：从外屏起步
 pose folded close
-data=$(sim_run 60 xcrun simctl get_app_container "$udid" "$bundle" data) || fail setup "simctl get_app_container 没有完成"
+# 与 boot / install 同一上限：Duo 模拟器上 install 返回后 LaunchServices 还在登记，get_app_container 实测卡过 74 秒以上
+data=$(sim_run 300 xcrun simctl get_app_container "$udid" "$bundle" data) || fail setup "simctl get_app_container 没有完成"
 log="$data/tmp/events.jsonl"
 mkdir -p "$data/tmp"
 rm -f "$log"
 SIMCTL_CHILD_ORYN_E2E_URL="$origin/t/$thread" SIMCTL_CHILD_ORYN_DESKTOP_EVENT_LOG="$log" \
-  sim_run 120 xcrun simctl launch "$udid" "$bundle" >/dev/null || fail launch "simctl launch 没有完成"
+  sim_run 300 xcrun simctl launch "$udid" "$bundle" >/dev/null || fail launch "simctl launch 没有完成"
 
 # 谓词
 ev() { grep -F "\"event\":\"$1\"" "$log" 2>/dev/null || true; }
