@@ -87,8 +87,9 @@ duo_setup() {
   duoctl="$work/duoctl/bin/duoctl"
 }
 
-# duo <duoctl 子命令…>：对当前这台 Duo 执行 duoctl
-duo() { "$duoctl" -d "$udid" "$@"; }
+# duo <duoctl 子命令…>：对当前这台 Duo 执行 duoctl，最多 DUO_TIMEOUT 秒（默认 180，首次调用含编译辅助程序）：
+# duoctl 走模拟器私有接口，卡住时整步挂到 runner 被回收也没有日志；超时由 SIGALRM 结束它，调用方按失败处理
+duo() { perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
 
 # run <名字> <等待的事件> [要传给 App 的 SIMCTL_CHILD_* 赋值…]
 # 冷启动 App，等事件日志里出现该事件后截图到 <输出目录>/<名字>.png，日志存为 <名字>.jsonl。
