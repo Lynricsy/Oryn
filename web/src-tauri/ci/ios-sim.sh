@@ -112,8 +112,9 @@ pg_timeout() {
 }
 
 # duo <duoctl 子命令…>：对当前这台 Duo 执行 duoctl，最多 DUO_TIMEOUT 秒（默认 180，首次调用含编译辅助程序），
-# 超时连同它派生的 simctl 子进程一起结束，调用方按失败处理（以前没有限时，卡住时整步挂到 runner 被回收也没有日志）
-duo() { pg_timeout "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
+# 超时连同它派生的 simctl 子进程一起结束，调用方按失败处理（以前没有限时，卡住时整步挂到 runner 被回收也没有日志）。
+# 走 sim_run：命令、退出码与耗时记在 stderr（切屏卡住时日志里看得到是哪一条），stdout 原样给调用方（duo state | jq）
+duo() { sim_run "${DUO_TIMEOUT:-180}" "$duoctl" -d "$udid" "$@"; }
 
 # header_titled_in <事件日志> [线程 id]：竖栏下原生页头只剩标题胶囊、且这一次挂上之后已淡入。
 # 最后一条 header.set 开着、没有侧栏钮（lead 为 null）、有标题（给了线程 id 时 key 还得是它）；
