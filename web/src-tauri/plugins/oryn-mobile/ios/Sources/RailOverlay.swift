@@ -83,7 +83,7 @@ final class RailOverlay {
   static let fade: TimeInterval = 0.12
 
   private let host = RailHostView()
-  private let model = RailModel()
+  private let model: RailModel
   private let hosting: UIHostingController<RailRootView>
   private weak var webview: WKWebView?
   /// 竖栏矩形（WebView 坐标）；当前不竖排时为 nil。
@@ -94,7 +94,9 @@ final class RailOverlay {
     webview: WKWebView, controller: UIViewController?,
     onTap: @escaping (_ key: String, _ part: String, _ id: String?, _ item: String?) -> Void
   ) {
-    let model = self.model
+    // 先建好 model 再建宿主控制器：所有存储属性初始化之前不能读 self
+    let model = RailModel()
+    self.model = model
     self.webview = webview
     hosting = UIHostingController(rootView: RailRootView(model: model))
     hosting.view.backgroundColor = .clear
