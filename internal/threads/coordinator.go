@@ -68,13 +68,16 @@ type HostToolCall struct {
 
 // HostToolResult 是宿主工具的结果：Text 写进 content，Details 原样作为 details；Images 跟在 text 块之后
 // （M19，出错时不带图）。Raw 非空时原样作为 result（M19：助手的电脑里的工具结果透传），其 isError 决定帧的 isError，
-// 其余字段忽略。
+// 其余字段忽略。HostTools 非 nil 时（按需加载工具组），写回结果之前先以它整体替换 agent 的宿主工具表（set_host_tools）
+// 并等到应答：host_tool_result 走 Core 的旁路、立即生效，set_host_tools 排在串行命令队列里，先等应答才能保证模型的
+// 下一步看得到新工具。替换失败时结果改为错误。
 type HostToolResult struct {
-	Text    string
-	Details any
-	IsError bool
-	Images  []HostToolImage
-	Raw     json.RawMessage
+	Text      string
+	Details   any
+	IsError   bool
+	Images    []HostToolImage
+	Raw       json.RawMessage
+	HostTools []apigen.OmpFrame
 }
 
 // HostToolImage 是宿主工具结果里的一张图片（Data 为 base64）。
@@ -808,6 +811,9 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 		if coord != nil {
 			res = coord.HostToolCall(ctx, call)
 		}
+		if res.HostTools != nil && !res.IsError && len(res.Raw) == 0 {
+			res = s.replaceHostTools(ctx, t, res)
+		}
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		if _, live := t.hostCalls[f.ID]; !live {
@@ -827,6 +833,20 @@ func (s *Service) hostToolCallLocked(t *thread, line []byte) {
 			slog.Warn("threads: 宿主工具结果未能写入 agent 流", "thread", t.id, "tool", f.ToolName)
 		}
 	})
+}
+
+// replaceHostTools 以 res.HostTools 整体替换 agent 的宿主工具表并等到应答（见 HostToolResult）；失败时返回错误结果。
+func (s *Service) replaceHostTools(ctx context.Context, t *thread, res HostToolResult) HostToolResult {
+	frame, err := json.Marshal(apigen.OmpFrame{"type": "set_host_tools", "tools": res.HostTools})
+	if err == nil {
+		_, _, err = s.call(ctx, t, frame)
+	}
+	if err != nil {
+		slog.Warn("threads: 替换宿主工具表失败", "thread", t.id, "err", err)
+		return HostToolResult{Text: "tools_unavailable: the tools could not be loaded: " + err.Error(), IsError: true}
+	}
+	res.HostTools = nil
+	return res
 }
 
 // hostToolUpdate 把一次在途宿主工具调用的部分结果写给 omp：调用已结束（结果已写回或已取消）或 agent 不在线时丢弃。

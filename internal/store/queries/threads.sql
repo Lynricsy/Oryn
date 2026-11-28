@@ -128,6 +128,10 @@ UPDATE threads SET space_id = sqlc.narg(space_id), updated_at = @updated_at WHER
 -- name: SetThreadShipped :exec
 UPDATE threads SET shipped_at = sqlc.narg(shipped_at), updated_at = @updated_at WHERE id = @id;
 
+-- Tool groups an assistant conversation has loaded on demand (JSON array; NULL = none). Not a user-visible change: updated_at stays.
+-- name: SetThreadToolGroups :exec
+UPDATE threads SET tool_groups = sqlc.narg(tool_groups) WHERE id = @id;
+
 -- Detaches the work threads of a deleted space (the space chat itself is deleted separately).
 -- name: ClearSpaceThreads :exec
 UPDATE threads SET space_id = NULL WHERE space_id = CAST(@space_id AS TEXT) AND kind = 'work';

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/Lynricsy/Oryn/internal/apigen"
 	"github.com/Lynricsy/Oryn/internal/ids"
 	"github.com/Lynricsy/Oryn/internal/link"
+	"github.com/Lynricsy/Oryn/internal/omprpc"
 	"github.com/Lynricsy/Oryn/internal/orbs"
 	"github.com/Lynricsy/Oryn/internal/store/db"
 )
@@ -331,6 +333,47 @@ func TestHostToolCallDispatch(t *testing.T) {
 	<-coord.done
 	f.s.Close() // 等后台的工具调用返回
 	assert.Empty(t, sent(a), "取消的调用不写回结果")
+}
+
+// 结果带 HostTools（按需加载工具组）：先下发 set_host_tools，等到应答才写回结果；替换失败时结果改为错误。
+func TestHostToolResultReplacesHostTools(t *testing.T) {
+	f := newFixture(t, Config{})
+	coord := newFakeCoord()
+	tools := []apigen.OmpFrame{{"name": "create_thread"}, {"name": "render_ui"}}
+	coord.res = HostToolResult{Text: "loaded", HostTools: tools}
+	f.s.SetCoordinator(coord)
+	th := f.coordThread(f.orb("ready"), KindAssistant, StateIdle)
+	a := fakeAgent(16)
+	attach(th, a, apigen.AgentStatusReady)
+
+	answer := func(success bool) map[string]any {
+		t.Helper()
+		set := recvJSON(t, a)
+		require.Equal(t, "set_host_tools", set["type"])
+		assert.Len(t, set["tools"], 2)
+		assert.Empty(t, sent(a), "set_host_tools 应答之前不写回结果")
+		id, _ := set["id"].(string)
+		resp := fmt.Sprintf(`{"type":"response","id":%q,"command":"set_host_tools","success":%t,"error":"boom"}`, id, success)
+		env, err := omprpc.ParseEnvelope([]byte(resp))
+		require.NoError(t, err)
+		f.s.onResponse(f.ctx, th, env, json.RawMessage(resp))
+		res := recvJSON(t, a)
+		require.Equal(t, "host_tool_result", res["type"])
+		return res
+	}
+
+	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"host_tool_call","id":"h-1","toolCallId":"tc-1","toolName":"load_tools","arguments":{"groups":["views"]}}`))
+	<-coord.calls
+	res := answer(true)
+	assert.Equal(t, false, res["isError"])
+	assert.Equal(t, []any{map[string]any{"type": "text", "text": "loaded"}}, res["result"].(map[string]any)["content"])
+
+	f.s.onFrame(f.ctx, th, th.orbID, []byte(`{"type":"host_tool_call","id":"h-2","toolCallId":"tc-2","toolName":"load_tools","arguments":{"groups":["views"]}}`))
+	<-coord.calls
+	res = answer(false)
+	assert.Equal(t, true, res["isError"])
+	text := res["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"].(string)
+	assert.True(t, strings.HasPrefix(text, "tools_unavailable:"), text)
 }
 
 // M19 2.4：宿主工具的调用上限按工具名取 Coordinator.HostToolTimeout，0 时用缺省的 60 秒。

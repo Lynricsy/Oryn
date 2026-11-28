@@ -1446,6 +1446,7 @@ type Thread struct {
 	AgentRole          *string `json:"agentRole"`
 	AppendSystemPrompt *string `json:"appendSystemPrompt"`
 	AllowedTools       *string `json:"allowedTools"`
+	ToolGroups         *string `json:"toolGroups"`
 }
 
 type ThreadBrowserRelayBinding struct {
