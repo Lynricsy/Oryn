@@ -77,6 +77,19 @@ func TestImport(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
+	// 只上传一个 Markdown 文件：导入成文档 artifact，内容存为 document.md，标题取文件名
+	const doc = "# 周报\n\n本周完成了 **导入**。\n"
+	a, err = e.s.Import(ctx, multipartOf(t, "周报.md", doc), ImportParams{Name: "周报.md"})
+	require.NoError(t, err)
+	assert.Equal(t, TypeDocument, a.Type)
+	assert.Equal(t, KindDocument, a.Kind)
+	assert.Equal(t, "周报", a.Title)
+	assert.Equal(t, doc, readFile(t, e.s, a.ID, 0, EntryDocument))
+	a, err = e.s.Import(ctx, multipartOf(t, "Notes.MARKDOWN", "hi\n"), ImportParams{})
+	require.NoError(t, err)
+	assert.Equal(t, TypeDocument, a.Type)
+	assert.Equal(t, "Notes", a.Title)
+
 	// 失败
 	_, err = e.s.Import(ctx, multipartOf(t, "a.html", "<p>hi</p>", "b.html", "<p>b</p>"), ImportParams{})
 	assert.Equal(t, CodeNoIndex, code(err))

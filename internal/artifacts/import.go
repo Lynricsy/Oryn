@@ -132,6 +132,10 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 			}
 			return s.importOffice(ctx, p, target, paths[0], f)
 		}
+		// 单个 Markdown 文件导入成文档 artifact（例如写作块「存为 Artifact」）
+		if ext := strings.ToLower(path.Ext(paths[0])); ext == ".md" || ext == ".markdown" {
+			return s.importDocument(ctx, p, paths[0], st.writes[paths[0]])
+		}
 	}
 	if c := CaseClash(paths); c != "" {
 		return Artifact{}, opErr(CodeBadName, "%s 与另一个文件只差大小写。", c)
@@ -165,6 +169,18 @@ func (s *Service) Import(ctx context.Context, mr *multipart.Reader, p ImportPara
 func officeName(name string) bool {
 	_, legacy := LegacyOfficeExt(name)
 	return legacy || OfficeTypeByExt(name) != ""
+}
+
+// importDocument 把单个 Markdown 文件 f 导入成文档 artifact：内容存为 document.md，标题取上传的文件名 name
+// 去掉扩展名；校验不过的 invalid 错误原样返回。
+func (s *Service) importDocument(ctx context.Context, p ImportParams, name string, f stored) (Artifact, error) {
+	st := staged{writes: map[string]stored{EntryDocument: f}}
+	base := path.Base(name)
+	title := clipTitle(strings.TrimSuffix(base, path.Ext(base)))
+	if title == "" {
+		title = untitled
+	}
+	return s.create(ctx, CreateParams{Title: title, Type: TypeDocument, ProjectID: p.ProjectID, ThreadID: p.ThreadID, Origin: OriginImport}, &st)
 }
 
 // importOffice 把单个 Office 文件 f 导入成 typ 类型的 artifact：入口是该类型的 Entry，标题取上传的文件名 name

@@ -1611,9 +1611,15 @@ export class MockArtifacts {
 		const lower = new Map([...files.keys()].map((k) => [k.toLowerCase(), k]));
 		if (lower.size !== files.size)
 			return error(400, "bad_name", "有只差大小写的文件名");
+		// 只上传了一个 Markdown 文件时导入为文档 artifact：存成 document.md（同 import.go 的 importDocument）
+		const markdownDoc =
+			!officeType && !!single && /^[^/]+\.(md|markdown)$/i.test(lone);
 		if (officeType && lone && loneFile) {
 			files.delete(lone);
 			files.set(OFFICE_SPEC[officeType].entry, loneFile);
+		} else if (markdownDoc && lone && loneFile) {
+			files.delete(lone);
+			files.set("document.md", loneFile);
 		} else if (single && /^[^/]+\.html?$/i.test(lone)) {
 			// 只上传了一个 HTML 文件时它就是页面本身：存成 index.html（同 import.go）
 			files.delete(lone);
@@ -1622,12 +1628,14 @@ export class MockArtifacts {
 		const index = files.get("index.html");
 		const kind: ArtifactKind = officeType
 			? OFFICE_SPEC[officeType].kind
-			: index
-				? "web"
-				: files.has("canvas.json")
-					? "canvas"
-					: "web";
-		if (!officeType && !index && !files.has("canvas.json"))
+			: markdownDoc
+				? "document"
+				: index
+					? "web"
+					: files.has("canvas.json")
+						? "canvas"
+						: "web";
+		if (!officeType && !markdownDoc && !index && !files.has("canvas.json"))
 			return error(400, "no_index", "缺少 index.html 或 canvas.json");
 		const titleTag = index
 			? /<title[^>]*>([^<]*)<\/title>/i
@@ -1635,7 +1643,7 @@ export class MockArtifacts {
 					?.trim()
 			: undefined;
 		const title =
-			(officeType && lone
+			((officeType || markdownDoc) && lone
 				? lone.slice(0, lone.lastIndexOf(".")).trim()
 				: titleTag) ||
 			url.searchParams.get("name")?.trim() ||
