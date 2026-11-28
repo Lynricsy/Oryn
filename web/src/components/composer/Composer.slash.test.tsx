@@ -42,14 +42,14 @@ function reply(handlers: Record<string, Reply> = {}) {
 	});
 }
 
-function mount() {
+function mount({ coordinator = false }: { coordinator?: boolean } = {}) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
 	return render(
 		<QueryClientProvider client={client}>
 			<MemoryRouter>
-				<Composer threadId={A} />
+				<Composer threadId={A} coordinator={coordinator} />
 			</MemoryRouter>
 		</QueryClientProvider>,
 	);
@@ -468,6 +468,27 @@ describe("Composer 斜杠命令", () => {
 				usage: "/fast [on|ultra|off|status]",
 			}),
 		);
+	});
+
+	it("协调对话里 /fast ultra 放行，发出 set_ultrafast_mode 后刷新状态写回极速档", async () => {
+		reply({
+			get_state: () => ({
+				isStreaming: false,
+				isSettled: true,
+				fastModeEnabled: true,
+				ultrafastEnabled: true,
+			}),
+		});
+		mount({ coordinator: true });
+		await send("/fast ultra");
+		expect(calls().map((c) => c.frame.type)).toEqual([
+			"set_ultrafast_mode",
+			"get_state",
+		]);
+		expect(framesOf("set_ultrafast_mode")).toEqual([
+			{ type: "set_ultrafast_mode", enabled: true },
+		]);
+		expect(getThreadStore(A).getState().state?.ultrafastEnabled).toBe(true);
 	});
 
 	it("输入命令参数时光标后显示参数灰字，输入参数后消失", () => {
