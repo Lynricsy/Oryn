@@ -70,6 +70,22 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: bun run tauri ios build --debug --target aarch64-sim --no-sign --ci
 
+      # 编好就先传模拟器包（tar 保留符号链接与权限）：本机 x86Sim 上的 iPhone Duo 直接装它测，不等后面的截图
+      - name: 打包模拟器包
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(find web/src-tauri/gen/apple/build -type d -name 'Oryn.app' | head -1)
+          if [[ -z "$app" ]]; then echo "::error::没有找到 Oryn.app"; exit 1; fi
+          tar -czf oryn-sim-app.tgz -C "$(dirname "$app")" Oryn.app
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oryn-sim-app
+          path: oryn-sim-app.tgz
+          if-no-files-found: error
+          retention-days: 7
+
       - name: 模拟器截图
         timeout-minutes: 50
         shell: bash
