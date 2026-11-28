@@ -676,7 +676,8 @@ fn valid_menu(m: &HeaderMenu) -> bool {
 
 /// `host_header_set` 的入参上限（命令可能被 portal iframe 调到，见 host.rs 文件头）：
 /// key `valid_header_key`；六个调色板颜色 `valid_color`；tune 两项 ∈ [0, 1]；text 两项 1..=32 个字符；
-/// lead / trail：frame 同底栏（`valid_frame`）、symbol `valid_symbol`、label 1..=64 个字符；title / trail 可为 null（首页只有 lead）；
+/// lead / trail：frame 同底栏（`valid_frame`）、symbol `valid_symbol`、label 1..=64 个字符；title / trail 可为 null（首页只有 lead），
+/// lead 也可为 null（iPhone Duo 竖栏在时侧栏钮挪进竖栏），但 lead 与 title 不能都没有；
 /// title（有的话）：text 1..=300、label 1..=600、error（有的话）1..=300 个字符，meta ≤ 6 段、marks ≤ 6 个；
 /// 菜单：label 1..=400，quick ≤ 4、status ≤ 32、groups ≤ 8 组且每组 1..=24 项、子项 ≤ 24 且不再嵌套、
 /// 全菜单 ≤ 160 项且 id 互不相同；项：label 1..=200、hint 1..=32、说明行 1..=120 个字符、copy 1..=2048 字节；
@@ -688,9 +689,10 @@ pub fn valid_header(spec: &HeaderSpec) -> bool {
         && within(spec.tune.tint, 0.0, 1.0)
         && chars_in(&spec.text.back, 1, 32)
         && chars_in(&spec.text.close, 1, 32)
-        && valid_frame(&spec.lead.frame)
-        && valid_symbol(&spec.lead.symbol)
-        && chars_in(&spec.lead.label, 1, 64)
+        && spec.lead.as_ref().is_none_or(|l| {
+            valid_frame(&l.frame) && valid_symbol(&l.symbol) && chars_in(&l.label, 1, 64)
+        })
+        && (spec.lead.is_some() || spec.title.is_some())
         && spec.title.as_ref().is_none_or(|t| {
             valid_frame(&t.frame)
                 && chars_in(&t.text, 1, 300)
@@ -765,7 +767,9 @@ pub fn demo_header(width: f64, safe_top: f64) -> HeaderSpec {
         width: 44.0,
         height: 44.0,
     };
-    spec.lead.frame = round(12.0);
+    if let Some(lead) = spec.lead.as_mut() {
+        lead.frame = round(12.0);
+    }
     if let Some(title) = spec.title.as_mut() {
         title.frame = TabBarFrame {
             x: 64.0,
@@ -2201,9 +2205,11 @@ mod tests {
         rejects_header("tune.tint NaN", |s| s.tune.tint = f64::NAN);
         rejects_header("text.back 为空", |s| s.text.back.clear());
         rejects_header("lead.symbol 含大写", |s| {
-            s.lead.symbol = "Sidebar.left".into()
+            s.lead.as_mut().unwrap().symbol = "Sidebar.left".into()
         });
-        rejects_header("lead.label 65 字符", |s| s.lead.label = "字".repeat(65));
+        rejects_header("lead.label 65 字符", |s| {
+            s.lead.as_mut().unwrap().label = "字".repeat(65)
+        });
         rejects_title("title.text 为空", |t| t.text.clear());
         rejects_title("title.text 301 字符", |t| t.text = "字".repeat(301));
         rejects_title("title.label 601 字符", |t| t.label = "字".repeat(601));
@@ -2351,7 +2357,9 @@ mod tests {
             s.trail.as_mut().unwrap().symbol.clear()
         });
         rejects_title("title.frame x 为 NaN", |t| t.frame.x = f64::NAN);
-        rejects_header("lead.frame 高 401", |s| s.lead.frame.height = 401.0);
+        rejects_header("lead.frame 高 401", |s| {
+            s.lead.as_mut().unwrap().frame.height = 401.0
+        });
         // 边界上的合法值
         let mut s = fixture_header();
         s.trail = None;
@@ -2384,8 +2392,12 @@ mod tests {
             assert!(!valid_header(&s), "{name}");
         };
         rejects("key 为空", |s| s.key.clear());
-        rejects("lead.label 为空", |s| s.lead.label.clear());
-        rejects("lead.frame 宽 0", |s| s.lead.frame.width = 0.0);
+        rejects("lead.label 为空", |s| {
+            s.lead.as_mut().unwrap().label.clear()
+        });
+        rejects("lead.frame 宽 0", |s| {
+            s.lead.as_mut().unwrap().frame.width = 0.0
+        });
         rejects("palette.accent red", |s| s.palette.accent = "red".into());
         // 夹具线程页的标题胶囊去掉：仍合法（视图钮照样校验）
         let mut s = fixture_header();
@@ -2393,6 +2405,23 @@ mod tests {
         assert!(valid_header(&s));
         s.trail.as_mut().unwrap().symbol.clear();
         assert!(!valid_header(&s));
+    }
+
+    /// iPhone Duo 竖栏在时侧栏钮挪进竖栏：lead 为 null 而有标题胶囊合法；lead 与 title 都没有不合法。
+    #[test]
+    fn header_without_lead() {
+        let mut s = fixture_header();
+        s.lead = None;
+        assert!(valid_header(&s));
+        s.title = None;
+        assert!(!valid_header(&s));
+        let null: HeaderSpec = serde_json::from_value({
+            let mut v = serde_json::to_value(fixture_header()).unwrap();
+            v["lead"] = Value::Null;
+            v
+        })
+        .unwrap();
+        assert!(null.lead.is_none() && valid_header(&null));
     }
 
     #[test]
@@ -2511,7 +2540,7 @@ mod tests {
                 height: 46.0,
             }
         );
-        assert_eq!(spec.lead.frame.y, 29.0);
+        assert_eq!(spec.lead.unwrap().frame.y, 29.0);
         assert_eq!(spec.trail.unwrap().frame.x, 264.0);
     }
 

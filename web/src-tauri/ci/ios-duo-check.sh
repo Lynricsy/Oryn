@@ -128,6 +128,8 @@ probe() { jq -sc --arg e "$1" 'map(select(.event == $e)) | sort_by(.nav, .seq)' 
 last_layout() { probe layout | jq -e --argjson s "$1" 'last | .info.sink == $s and ((.info.w < 600) == $s)'; }
 # last_sink <true|false>：壳的最后一条 sink.set
 last_sink() { ev sink.set | tail -1 | jq -e --argjson o "$1" '.on == $o'; }
+# 竖栏下外屏的原生页头只剩标题胶囊：最后一条 header.set 开着、没有侧栏钮（它在竖栏顶上）、有标题
+header_titled() { ev header.set | tail -1 | jq -e '.on and .lead == null and .title != null'; }
 # rail_side：壳的最后一条 rail 竖排在某一侧，且竖栏矩形不空
 rail_side() { ev rail | tail -1 | jq -e '(.side == "left" or .side == "right") and .frame.width > 0 and .frame.height > 0'; }
 # rail_note <姿态>：最后一条 rail 原文进 Step Summary
@@ -183,6 +185,7 @@ until_ok folded 60 "外屏 compact：探针 layout sink = true、宽 < 600" last
 until_ok folded 30 "原生跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok folded 30 "外屏竖栏：最后一条 rail 带 side 与矩形" rail_side
 until_ok folded 30 "原生竖栏：视图钮在竖栏里、网页只留占位、页头侧栏开关已隐藏" native_rail 1
+until_ok folded 30 "竖栏下原生页头接管外屏标题：header.set 没有侧栏钮、有标题胶囊" header_titled
 rail_note folded
 rail_tap folded true
 rail_tap folded false
@@ -210,6 +213,7 @@ until_ok refolded 60 "合上后 layout 回到 sink = true" last_layout true
 until_ok refolded 30 "原生重新跟随根滚动：最后一条 sink.set 是 on" last_sink true
 until_ok refolded 30 "合上后竖栏回来：最后一条 rail 带 side 与矩形" rail_side
 until_ok refolded 30 "合上后原生竖栏回来（视图钮在竖栏里）" native_rail 1
+until_ok refolded 30 "合上后原生页头重新接管外屏标题（没有侧栏钮）" header_titled
 rail_note refolded
 shot refolded
 

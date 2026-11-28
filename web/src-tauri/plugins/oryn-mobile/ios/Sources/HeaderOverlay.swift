@@ -105,7 +105,7 @@ final class HeaderOverlay {
     // 宿主控制器的特征继承自父控制器而不是父视图：两处都设
     hosting.overrideUserInterfaceStyle = style
     host.overrideUserInterfaceStyle = style
-    var frames = [spec.lead.frame.rect]
+    var frames = spec.lead.map { [$0.frame.rect] } ?? []
     if let title = spec.title { frames.append(title.frame.rect) }
     if let trail = spec.trail { frames.append(trail.frame.rect) }
     host.controlFrames = frames
@@ -167,7 +167,7 @@ final class HeaderOverlay {
     }
     return HeaderProbeOut(
       center: host.captures(mid(host.bounds)),
-      lead: host.captures(mid(spec.lead.frame.rect.offsetBy(dx: host.dx, dy: 0))),
+      lead: spec.lead.map { host.captures(mid($0.frame.rect.offsetBy(dx: host.dx, dy: 0))) } ?? false,
       title: spec.title.map { host.captures(mid($0.frame.rect.offsetBy(dx: host.dx, dy: 0))) }
         ?? false,
       trail: spec.trail.map { host.captures(mid($0.frame.rect.offsetBy(dx: host.dx, dy: 0))) }

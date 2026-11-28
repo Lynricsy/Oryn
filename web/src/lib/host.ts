@@ -309,7 +309,8 @@ export interface NativeHeaderSpec {
 	tune: { scrim: number; tint: number };
 	/** 读屏文案：子页的返回行、关闭区。 */
 	text: { back: string; close: string };
-	lead: { frame: NativeFrame; symbol: string; label: string };
+	/** iPhone Duo 竖栏在时侧栏钮挪进竖栏：`null`（只有 bridge ≥ 13 的壳收，且此时一定有 title）。 */
+	lead: { frame: NativeFrame; symbol: string; label: string } | null;
 	/** 没有标题胶囊的页（首页：只有侧栏钮）为 `null`（不省略）。 */
 	title: {
 		frame: NativeFrame;

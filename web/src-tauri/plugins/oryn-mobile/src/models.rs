@@ -397,7 +397,8 @@ pub struct HeaderSpec {
     pub palette: HeaderPalette,
     pub tune: HeaderTune,
     pub text: HeaderText,
-    pub lead: HeaderLead,
+    /// 竖栏在时（iPhone Duo，bridge ≥ 13）侧栏钮挪进竖栏，页头只有标题胶囊：为 `null`（此时必须有 title）。
+    pub lead: Option<HeaderLead>,
     /// 没有标题胶囊（首页：只有侧栏钮）时为 `null`（不省略）。
     pub title: Option<HeaderTitle>,
     /// 没有视图钮时为 `null`（不省略）。

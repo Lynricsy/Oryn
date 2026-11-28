@@ -395,8 +395,9 @@ describe("slotsCovered", () => {
 			scrollY: 0,
 			visualViewport: vv,
 			document: { elementFromPoint: hit },
+			getComputedStyle: (el: Element) => window.getComputedStyle(el),
 		} as unknown as Window;
-		return { slots: [lead, title], hit, win };
+		return { slots: [lead, title], lead, title, hit, win };
 	}
 
 	afterEach(() => {
@@ -407,6 +408,15 @@ describe("slotsCovered", () => {
 		const { slots, hit, win } = setup();
 		expect(slotsCovered(slots, win)).toBe(false);
 		expect(hit).toHaveBeenCalledTimes(4);
+	});
+
+	it("display: none 的件（竖栏在时让位的侧栏钮）不算，也不探测", () => {
+		const { slots, lead, title, hit, win } = setup();
+		lead.style.display = "none";
+		expect(slotsCovered(slots, win)).toBe(false);
+		expect(hit).toHaveBeenCalledTimes(3);
+		title.style.display = "none";
+		expect(slotsCovered(slots, win)).toBe(true);
 	});
 
 	it("命中别的元素或为空 → true", () => {
@@ -449,7 +459,7 @@ describe("slotsCovered", () => {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 /** 可手动推进的假定时器 + 同步执行的 microtask。 */
-function fakeEnv(opts: { reduce?: boolean } = {}) {
+function fakeEnv(opts: { reduce?: boolean; railed?: () => boolean } = {}) {
 	let now = 0;
 	let n = 0;
 	const timers = new Map<number, { at: number; cb: () => void }>();
@@ -464,6 +474,7 @@ function fakeEnv(opts: { reduce?: boolean } = {}) {
 		microtask: (cb) => cb(),
 		blur: vi.fn(),
 		reduce: () => opts.reduce ?? false,
+		railed: opts.railed ?? (() => false),
 	};
 	const advance = (ms: number) => {
 		const end = now + ms;
@@ -527,7 +538,12 @@ const HIDE: NativeHeaderShow = { alpha: 0, ms: 0 };
 const FADE_IN: NativeHeaderShow = { alpha: 1, ms: HEADER_FADE_MS };
 
 function setup(
-	opts: { rejectSet?: boolean; reduce?: boolean; sink?: boolean } = {},
+	opts: {
+		rejectSet?: boolean;
+		reduce?: boolean;
+		sink?: boolean;
+		railed?: () => boolean;
+	} = {},
 ) {
 	const api = fakeApi(opts);
 	const { env, advance } = fakeEnv(opts);
@@ -614,6 +630,30 @@ describe("控制器", () => {
 		expect(s.header.active()).toBe(false);
 		s.advance(1);
 		expect(s.header.active()).toBe(true);
+	});
+
+	it("iPhone Duo 竖栏接管了侧栏开关：侧栏钮让位后 spec 只剩标题胶囊（lead: null）；竖栏不在时缺侧栏钮就撤掉页头", async () => {
+		let railed = true;
+		const s = setup({ railed: () => railed });
+		s.register();
+		await flush();
+		s.header.setPart("lead", null);
+		await flush();
+		const spec = s.api.set.mock.calls.at(-1)?.[0];
+		expect(spec?.lead).toBeNull();
+		expect(spec?.title?.text).toBe(s.p.title.text);
+		// 只剩侧栏钮的页（首页）在竖栏下什么都不剩：撤掉
+		s.header.setPart("title", null);
+		await flush();
+		expect(s.api.set.mock.calls.at(-1)?.[0]).toBeNull();
+		// 竖栏不在（合上 / 旧壳）：缺侧栏钮不发半份页头
+		railed = false;
+		s.header.setPart("title", s.p.title);
+		await flush();
+		expect(s.api.set.mock.calls.at(-1)?.[0]).toBeNull();
+		s.header.setPart("lead", s.p.lead);
+		await flush();
+		expect(s.api.set.mock.calls.at(-1)?.[0]?.lead?.label).toBe(s.p.lead.label);
 	});
 
 	it("根滚动未接管：部件到齐也不调 set；接管后补发 spec、接管并淡入", async () => {

@@ -116,7 +116,8 @@ struct HeaderSpec: Decodable, Equatable {
   let palette: HeaderPaletteSpec
   let tune: HeaderTuneSpec
   let text: HeaderTextSpec
-  let lead: HeaderLeadSpec
+  /// iPhone Duo 竖栏在时侧栏钮挪进竖栏：nil（此时一定有标题胶囊）。
+  let lead: HeaderLeadSpec?
   /// 没有标题胶囊（首页：只有侧栏钮）时为 nil。
   let title: HeaderTitleSpec?
   let trail: HeaderTrailSpec?

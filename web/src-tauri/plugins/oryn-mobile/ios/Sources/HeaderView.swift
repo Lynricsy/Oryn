@@ -191,12 +191,14 @@ struct HeaderRootView: View {
     let maxHeight: CGFloat = max(120, min(480, size.height - 128))
     let titleOpen = model.open == "title"
     return ZStack(alignment: .topLeading) {
-      // 1. 两枚圆钮：标题菜单开着时在关闭区之下（被压暗，读屏不可达）
+      // 1. 两枚圆钮（侧栏钮在 iPhone Duo 竖栏在时挪进竖栏，没有）：标题菜单开着时在关闭区之下（被压暗，读屏不可达）
       ZStack(alignment: .topLeading) {
-        RoundGlassButton(symbol: spec.lead.symbol, label: spec.lead.label, dot: nil) {
-          model.emit("lead")
+        if let lead = spec.lead {
+          RoundGlassButton(symbol: lead.symbol, label: lead.label, dot: nil) {
+            model.emit("lead")
+          }
+          .place(lead.frame)
         }
-        .place(spec.lead.frame)
         if let trail = spec.trail {
           TrailMenuButton(
             model: model, threadKey: spec.key, trail: trail, palette: palette, paletteSpec: spec.palette,

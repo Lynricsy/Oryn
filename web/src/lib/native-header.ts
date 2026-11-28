@@ -356,15 +356,17 @@ function specMenu(m: NativeMenu): NativeMenu {
  * tune = {scrim: dark ? scrimDark : scrimLight, tint}；title.text / label / error / 各段文字按 HEADER_LIMIT 截断，
  * quick / status / groups / 每组 / meta / marks 按上限截掉多的（空组去掉）；没有 title / trail 时为 `null`。
  * key 取标题胶囊的线程 id，没有胶囊时取侧栏钮的页名；两者都没有（线程页的胶囊还没登记）时不成 spec，返回 null。
+ * 侧栏钮可以没有（`lead: null`：iPhone Duo 竖栏在时它挪进竖栏），这时必须有标题胶囊。
  */
 export function buildHeaderSpec(
-	p: Pick<HeaderParts, "theme" | "lead"> & {
+	p: Pick<HeaderParts, "theme"> & {
+		lead: HeaderParts["lead"] | null;
 		title: HeaderParts["title"] | null;
 		trail: HeaderParts["trail"] | null;
 	},
 ): NativeHeaderSpec | null {
 	const { theme, lead, title, trail } = p;
-	const key = title ? title.key : lead.key;
+	const key = title ? title.key : lead?.key;
 	if (key === undefined) return null;
 	let t: NativeHeaderSpec["title"] = null;
 	if (title) {
@@ -397,11 +399,13 @@ export function buildHeaderSpec(
 			back: clip(theme.text.back, HEADER_LIMIT.text),
 			close: clip(theme.text.close, HEADER_LIMIT.text),
 		},
-		lead: {
-			frame: { ...lead.frame },
-			symbol: LEAD_SYMBOL,
-			label: clip(lead.label, HEADER_LIMIT.button),
-		},
+		lead: lead
+			? {
+					frame: { ...lead.frame },
+					symbol: LEAD_SYMBOL,
+					label: clip(lead.label, HEADER_LIMIT.button),
+				}
+			: null,
 		title: t,
 		trail: trail
 			? {
@@ -419,6 +423,7 @@ export function buildHeaderSpec(
  * 页头位置上最上面的元素不是它自己的某一件（弹层、提示、侧栏的关闭区、切到面板标签），
  * 或布局坐标与屏幕坐标对不上（页面被软键盘推走、缩放）。
  * 注意：软键盘弹出本身不算被盖住（与底栏的 slotCovered 不同）——打字时页头照常是原生的。
+ * `display: none` 的部件不算（iPhone Duo 竖栏在时侧栏钮让位给竖栏，它不在 spec 里）。
  */
 export function slotsCovered(slots: Iterable<Element>, win: Window): boolean {
 	const vv = win.visualViewport;
@@ -432,6 +437,7 @@ export function slotsCovered(slots: Iterable<Element>, win: Window): boolean {
 	if (Math.abs(win.scrollY) > 0.5) return true;
 	let n = 0;
 	for (const slot of slots) {
+		if (win.getComputedStyle(slot).display === "none") continue;
 		n++;
 		const r = slot.getBoundingClientRect();
 		if (r.width <= 0 || r.height <= 0) return true;
@@ -475,6 +481,8 @@ export interface HeaderEnv {
 	/** 让输入框失焦（收起软键盘）。 */
 	blur(): void;
 	reduce(): boolean;
+	/** iPhone Duo 竖栏接管了侧栏开关，且壳收没有侧栏钮的页头 spec（bridge ≥ 13）。 */
+	railed(): boolean;
 }
 
 const browserEnv: HeaderEnv = {
@@ -484,6 +492,9 @@ const browserEnv: HeaderEnv = {
 	blur: () => (document.activeElement as HTMLElement | null)?.blur?.(),
 	reduce: () =>
 		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+	railed: () =>
+		host.mobile?.rail != null &&
+		document.documentElement.dataset.rail !== undefined,
 };
 
 export function createNativeHeader(
@@ -572,12 +583,13 @@ export function createNativeHeader(
 		queued = false;
 		if (disabled) return;
 		const { theme, lead } = parts;
-		// 标题胶囊可缺（只有侧栏钮的页）；线程页的胶囊还没登记时 buildHeaderSpec 给 null
+		// 标题胶囊可缺（只有侧栏钮的页）；线程页的胶囊还没登记时 buildHeaderSpec 给 null。
+		// 侧栏钮只在竖栏接管了开关时可缺（它让位给竖栏，spec 只剩标题胶囊）；否则没登记就不发
 		const spec =
-			sink.engaged() && theme && lead
+			sink.engaged() && theme && (lead || env.railed())
 				? buildHeaderSpec({
 						theme,
-						lead,
+						lead: lead ?? null,
 						title: parts.title ?? null,
 						trail: parts.trail ?? null,
 					})
