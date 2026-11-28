@@ -9,6 +9,7 @@ import { AlignTop } from "@phosphor-icons/react/dist/csr/AlignTop";
 import { AppWindow } from "@phosphor-icons/react/dist/csr/AppWindow";
 import { Archive } from "@phosphor-icons/react/dist/csr/Archive";
 import { ArrowArcLeft } from "@phosphor-icons/react/dist/csr/ArrowArcLeft";
+import { ArrowArcRight } from "@phosphor-icons/react/dist/csr/ArrowArcRight";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
 import { ArrowDown } from "@phosphor-icons/react/dist/csr/ArrowDown";
@@ -45,6 +46,7 @@ import { Chats } from "@phosphor-icons/react/dist/csr/Chats";
 import { Check } from "@phosphor-icons/react/dist/csr/Check";
 import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { Checkerboard } from "@phosphor-icons/react/dist/csr/Checkerboard";
+import { CheckSquare } from "@phosphor-icons/react/dist/csr/CheckSquare";
 import { Circle } from "@phosphor-icons/react/dist/csr/Circle";
 import { CircleHalf } from "@phosphor-icons/react/dist/csr/CircleHalf";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
@@ -64,6 +66,7 @@ import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 import { Devices } from "@phosphor-icons/react/dist/csr/Devices";
 import { DotsThree } from "@phosphor-icons/react/dist/csr/DotsThree";
 import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { EnvelopeSimple } from "@phosphor-icons/react/dist/csr/EnvelopeSimple";
 import { Eraser } from "@phosphor-icons/react/dist/csr/Eraser";
 import { Export } from "@phosphor-icons/react/dist/csr/Export";
 import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
@@ -112,7 +115,9 @@ import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
 import { LineSegment } from "@phosphor-icons/react/dist/csr/LineSegment";
 import { Link } from "@phosphor-icons/react/dist/csr/Link";
 import { List } from "@phosphor-icons/react/dist/csr/List";
+import { ListBullets } from "@phosphor-icons/react/dist/csr/ListBullets";
 import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { ListNumbers } from "@phosphor-icons/react/dist/csr/ListNumbers";
 import { LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
 import { LockSimpleOpen } from "@phosphor-icons/react/dist/csr/LockSimpleOpen";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
@@ -173,6 +178,9 @@ import { Target } from "@phosphor-icons/react/dist/csr/Target";
 import { TelegramLogo } from "@phosphor-icons/react/dist/csr/TelegramLogo";
 import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
 import { TerminalWindow } from "@phosphor-icons/react/dist/csr/TerminalWindow";
+import { TextB } from "@phosphor-icons/react/dist/csr/TextB";
+import { TextHTwo } from "@phosphor-icons/react/dist/csr/TextHTwo";
+import { TextItalic } from "@phosphor-icons/react/dist/csr/TextItalic";
 import { TextT } from "@phosphor-icons/react/dist/csr/TextT";
 import { ThermometerHot } from "@phosphor-icons/react/dist/csr/ThermometerHot";
 import { Timer } from "@phosphor-icons/react/dist/csr/Timer";
@@ -434,6 +442,15 @@ const ICONS = {
 	/** 视图读数块的趋势：上升、下降 */
 	trendUp: TrendUp,
 	trendDown: TrendDown,
+	/** 写作块：邮件草稿、编辑工具条（粗体、斜体、二级标题、无序 / 有序 / 待办列表、重做） */
+	envelope: EnvelopeSimple,
+	textBold: TextB,
+	textItalic: TextItalic,
+	heading: TextHTwo,
+	listBullets: ListBullets,
+	listNumbers: ListNumbers,
+	checkSquare: CheckSquare,
+	redo: ArrowArcRight,
 } satisfies Record<string, PhosphorIcon>;
 
 export type IconName = keyof typeof ICONS;

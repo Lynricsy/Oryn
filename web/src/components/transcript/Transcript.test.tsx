@@ -1558,3 +1558,85 @@ describe("bashExecution 状态徽章（omp 19.2.0 movedCwd / errexit）", () => 
 		expect(getByText("set -e")).toBeVisible();
 	});
 });
+
+describe("写作块", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("draft-email 围栏渲染成写作块：标题取 subject，围栏外仍是普通 Markdown，已存改稿优先并标「已编辑」", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: Request | string) => {
+				const url = typeof input === "string" ? input : input.url;
+				if (url.includes("/api/v1/threads/T-transcript/drafts"))
+					return Response.json({
+						drafts: [
+							{
+								entryId: "E1",
+								block: "0.0",
+								kind: "email",
+								title: "周五会议改期",
+								text: "Hi Sam, edited",
+								updatedAt: 1,
+							},
+						],
+					});
+				return Response.json({}, { status: 404 });
+			}),
+		);
+		const client = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const m = assistant(
+			'先看这版：\n\n```draft-email subject="周五会议改期"\nHi Sam,\n\nCould we move it?\n```\n\n**要改**告诉我。',
+			{ input: 1, output: 1, cacheRead: 0, cost: 0 },
+		);
+		render(
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider value={ctx}>
+					<MessageView message={m} live={false} entryId="E1" />
+				</TranscriptContext.Provider>
+			</QueryClientProvider>,
+		);
+		const block = screen.getByTestId("writing-block");
+		expect(block).toHaveAttribute("data-writing-block");
+		expect(screen.getByTestId("writing-block-title").textContent).toBe(
+			"周五会议改期",
+		);
+		expect(block.textContent).not.toContain("先看这版");
+		expect(screen.getByText("要改").tagName).toBe("STRONG");
+		expect(await screen.findByText("已编辑")).toBeInTheDocument();
+		expect(block.textContent).toContain("Hi Sam, edited");
+		expect(screen.getByTestId("writing-block-fullscreen")).toBeInTheDocument();
+	});
+
+	it("只读上下文：没有全屏与「存为 Artifact」，也不请求改稿", () => {
+		const fetch = vi.fn(async () => Response.json({}));
+		vi.stubGlobal("fetch", fetch);
+		const client = new QueryClient();
+		const m = assistant('```draft-doc title="周报"\n本周完成\n```', {
+			input: 1,
+			output: 1,
+			cacheRead: 0,
+			cost: 0,
+		});
+		render(
+			<QueryClientProvider client={client}>
+				<TranscriptContext.Provider value={{ ...ctx, readOnly: true }}>
+					<MessageView message={m} live={false} entryId="E1" />
+				</TranscriptContext.Provider>
+			</QueryClientProvider>,
+		);
+		expect(screen.getByTestId("writing-block-title").textContent).toBe("周报");
+		expect(screen.queryByTestId("writing-block-fullscreen")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+		expect(
+			screen.queryByRole("menuitem", { name: "存为 Artifact" }),
+		).toBeNull();
+		expect(
+			screen.getByRole("menuitem", { name: "下载 .docx" }),
+		).toBeInTheDocument();
+		expect(fetch).not.toHaveBeenCalled();
+	});
+});

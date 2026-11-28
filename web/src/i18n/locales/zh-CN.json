@@ -7494,5 +7494,42 @@
 			"errMin": "不能小于 {{min}}",
 			"errMax": "不能大于 {{max}}"
 		}
+	},
+	"writingBlock": {
+		"kind": {
+			"email": "邮件草稿",
+			"message": "消息草稿",
+			"doc": "文档草稿"
+		},
+		"composing": "正在起草…",
+		"edited": "已编辑",
+		"copy": "复制",
+		"copyMarkdown": "复制为 Markdown",
+		"downloadMd": "下载 .md",
+		"downloadDocx": "下载 .docx",
+		"saveArtifact": "存为 Artifact",
+		"savedAsArtifact": "已存为 Artifact",
+		"openArtifact": "打开",
+		"openInMail": "在邮件应用中打开",
+		"mailBodyCopied": "正文较长，已复制到剪贴板，粘贴进邮件即可",
+		"revert": "恢复原稿",
+		"fullscreen": "全屏编辑",
+		"closeFullscreen": "退出全屏",
+		"askChanges": "要求修改",
+		"undo": "撤销",
+		"redo": "重做",
+		"bold": "粗体",
+		"italic": "斜体",
+		"heading": "标题",
+		"bulletList": "无序列表",
+		"orderedList": "有序列表",
+		"taskList": "待办",
+		"link": "链接",
+		"linkPrompt": "链接地址（留空移除）",
+		"saveFailed": "草稿保存失败",
+		"retry": "重试",
+		"exportFailed": "导出失败",
+		"editedChip": "附上了改过的草稿：{{title}}",
+		"more": "更多操作"
 	}
 }

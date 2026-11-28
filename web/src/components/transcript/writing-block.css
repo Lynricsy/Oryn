@@ -1,0 +1,185 @@
+/* 写作块（WritingBlock / WritingEditor）样式，由 WritingBlock.tsx 导入。
+ * 非 Tailwind 文件：颜色、圆角、阴影只用原始变量；正文沿用 .md 规则，静态渲染与编辑器排版一致，懒加载完成时不跳动。 */
+/* 定位上下文：编辑器的气泡菜单绝对定位在卡片内，随转录滚动而不错位 */
+.wb {
+	position: relative;
+	border: 1px solid var(--line);
+	border-radius: var(--r-md);
+	background: var(--panel);
+	box-shadow: var(--sh-xs);
+	transition: border-color 150ms var(--ease);
+}
+.wb:focus-within {
+	border-color: color-mix(in oklab, var(--brand) 55%, var(--line));
+}
+.wb-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 44px;
+	padding: 6px 6px 6px 14px;
+	border-bottom: 1px solid var(--line);
+}
+.wb-title {
+	overflow: hidden;
+	font-size: 13.5px;
+	font-weight: 600;
+	line-height: 1.35;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-sub {
+	overflow: hidden;
+	color: var(--text-faint);
+	font-size: 12px;
+	line-height: 1.35;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wb-composing {
+	flex-shrink: 0;
+	padding-right: 8px;
+	color: var(--text-faint);
+	font-size: 12px;
+	animation: wb-pulse 1.6s ease-in-out infinite;
+}
+@keyframes wb-pulse {
+	50% {
+		opacity: 0.45;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.wb-composing {
+		animation: none;
+	}
+}
+.wb-body {
+	padding: 12px 16px 14px;
+}
+
+/* 固定工具条：宽屏常显；窄屏只在编辑时出现，不占阅读空间 */
+.wb-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--line);
+}
+@media (max-width: 640px) {
+	.wb:not(:focus-within) .wb-toolbar {
+		display: none;
+	}
+}
+
+/* 编辑器：不画默认焦点框（整卡描边已表示），空段落保留行高 */
+.wb-editor {
+	min-height: 1.7em;
+	outline: none;
+}
+.wb-editor:focus,
+.wb-editor:focus-visible {
+	outline: none;
+}
+
+.wb .md input[type="checkbox"] {
+	accent-color: var(--brand);
+}
+/* 编辑器里列表项包了一层 <p>：去掉段距，与静态渲染的紧凑列表一致 */
+.wb-editor li > p {
+	margin: 0;
+}
+
+/* 待办：静态渲染（GFM task list）与编辑器（Tiptap TaskList）对齐成同一外观 */
+.wb .md ul.contains-task-list,
+.wb .md ul[data-type="taskList"] {
+	list-style: none;
+	padding-left: 0.2em;
+}
+.wb .md li.task-list-item > input[type="checkbox"] {
+	margin: 0 0.5em 0 0;
+	vertical-align: -1px;
+}
+.wb .md ul[data-type="taskList"] > li {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.5em;
+}
+.wb .md ul[data-type="taskList"] > li > label {
+	flex-shrink: 0;
+	user-select: none;
+	line-height: 1.7;
+}
+.wb .md ul[data-type="taskList"] > li > div {
+	flex: 1;
+	min-width: 0;
+}
+.wb .md ul[data-type="taskList"] > li > div > p {
+	margin: 0;
+}
+.wb .md ul[data-type="taskList"] > li[data-checked="true"] > div {
+	color: var(--text-faint);
+	text-decoration: line-through;
+}
+
+/* 选区气泡菜单 */
+.wb-bubble {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 3px;
+	border: 1px solid var(--glass-line);
+	border-radius: var(--r-sm);
+	background: var(--panel);
+	box-shadow: var(--shadow-md);
+	z-index: 40;
+}
+.wb-bubble-sep {
+	width: 1px;
+	height: 16px;
+	margin: 0 2px;
+	background: var(--line);
+}
+.wb-bubble-ask {
+	height: 24px;
+	padding: 0 8px;
+	border-radius: var(--r-xs);
+	color: var(--brand);
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+.wb-bubble-ask:hover {
+	background: var(--hover);
+}
+
+/* 全屏编辑层 */
+.wb-full {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	background: var(--bg);
+}
+.wb-full-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: max(0.75rem, env(safe-area-inset-top)) 12px 10px 20px;
+	border-bottom: 1px solid var(--line);
+	background: var(--panel);
+}
+.wb-full-scroll {
+	flex: 1;
+	overflow-y: auto;
+	padding: 20px 16px max(0.875rem, env(safe-area-inset-bottom));
+}
+.wb-full-card {
+	max-width: 48rem;
+	margin: 0 auto;
+}
+.wb-full-card .wb-body {
+	padding: 20px 24px 28px;
+}
+.wb-full-card .wb-editor {
+	min-height: 50vh;
+}

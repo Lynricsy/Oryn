@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildDraftEditsBlock } from "./draft-edits";
 import {
 	filterUnmatchedOptimistic,
 	parseQueueMessage,
@@ -179,5 +180,55 @@ describe("queue-message：视图回执（M33）", () => {
 		const parsed = parseQueueMessage(receipt);
 		expect(parsed.rebuild(parsed.body)).toBe(receipt);
 		expect(parsed.rebuild("改成别的")).toBe("改成别的");
+	});
+});
+
+describe("queue-message：写作块改稿块", () => {
+	const drafts = buildDraftEditsBlock([
+		{ kind: "email", title: "周五会议改期", text: "Hi Sam,\n\n改到周一。" },
+	]);
+
+	it("带改稿块（及附件块）的权威项与乐观项按正文匹配", () => {
+		const raw = `再正式一点${drafts}\n\n${ATT_BLOCK}`;
+		expect(queueMatchKey(raw)).toBe("再正式一点");
+		const opt = {
+			text: "再正式一点",
+			attachments: [
+				{
+					id: "att_01JCZ800000000000000000001",
+					name: "report-template.md",
+					size: 2048,
+				},
+			],
+			baselineIds: [],
+		};
+		expect(
+			filterUnmatchedOptimistic(
+				[opt],
+				[{ id: "f0", text: raw, editable: true, timestamp: 1 }],
+				null,
+			),
+		).toEqual([]);
+		expect(filterUnmatchedOptimistic([opt], null, [raw])).toEqual([]);
+	});
+
+	it("拆出改稿芯片，rebuild 保留改稿块与附件块", () => {
+		const raw = `再正式一点${drafts}\n\n${ATT_BLOCK}`;
+		const parsed = parseQueueMessage(raw);
+		expect(parsed.body).toBe("再正式一点");
+		expect(parsed.draftEdits).toEqual([
+			{ kind: "email", title: "周五会议改期" },
+		]);
+		expect(parsed.attachments).toHaveLength(1);
+		expect(parsed.rebuild("再简短一点")).toBe(
+			`再简短一点${drafts}\n\n${ATT_BLOCK}`,
+		);
+		expect(parsed.rebuild(parsed.body)).toBe(raw);
+	});
+
+	it("只有改稿块、没有附件时同样保留", () => {
+		const parsed = parseQueueMessage(`好${drafts}`);
+		expect(parsed.body).toBe("好");
+		expect(parsed.rebuild("行")).toBe(`行${drafts}`);
 	});
 });

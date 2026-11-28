@@ -70,6 +70,11 @@ type SelectionRead =
 	| { kind: "other"; inRoot: boolean }
 	| { kind: "quote"; quote: SelectionQuote };
 
+function inWritingEditor(node: Node): boolean {
+	const el = node instanceof Element ? node : node.parentElement;
+	return el?.closest("[data-writing-editor]") != null;
+}
+
 function readSelection(
 	root: HTMLElement,
 	content: HTMLElement,
@@ -81,6 +86,12 @@ function readSelection(
 	const range = sel.getRangeAt(0);
 	const inRoot =
 		root.contains(range.startContainer) || root.contains(range.endContainer);
+	// 写作块编辑器里的选区由它自己的气泡菜单（「要求修改」）处理，不再弹引用胶囊
+	if (
+		inWritingEditor(range.startContainer) ||
+		inWritingEditor(range.endContainer)
+	)
+		return { kind: "other", inRoot };
 	const dom = readDomSelection();
 	if (!dom || !root.contains(range.startContainer))
 		return { kind: "other", inRoot };

@@ -9,6 +9,7 @@ import {
 	listThreadAttachments,
 	parseAttachmentBlock,
 } from "../../lib/attachments";
+import { parseDraftEditsBlock } from "../../lib/draft-edits";
 import type { ImageContent } from "../../omp/types";
 import { realtime } from "../../realtime/socket";
 import {
@@ -36,7 +37,8 @@ const IMAGE_EXT: Record<string, string> = {
 };
 
 /**
- * 把带回的草稿拆成输入区的正文与附件：去掉控制面追加的 `<oryn-attachments>` 块，块里的附件按 id 对上线程附件后
+ * 把带回的草稿拆成输入区的正文与附件：去掉控制面追加的 `<oryn-attachments>` 块与写作块改稿块（`<oryn-draft-edits>`，
+ * 改稿仍在服务端，不放回输入区），块里的附件按 id 对上线程附件后
  * 原样复用。发送时图片既上传为线程附件、又按条目顺序附一份内联副本，所以两边的图片个数相等时按顺序配回同一项；
  * 对不上（有的图片超了内联预算、只作为文件发送）时无法判断对应关系，图片只作为文件放回。没有线程附件的图片
  * （全局助手对话的图片只随 `images` 发送）作为内联图片放回。
@@ -45,7 +47,9 @@ export function draftFromLeafSwitch(
 	draft: LeafSwitchDraft,
 	threadAttachments: readonly Attachment[],
 ): { text: string; items: RestoredAttachment[] } {
-	const { text, attachments } = parseAttachmentBlock(draft.editorText ?? "");
+	const parsed = parseAttachmentBlock(draft.editorText ?? "");
+	const { attachments } = parsed;
+	const { text } = parseDraftEditsBlock(parsed.text);
 	const images = draft.editorImages ?? [];
 	const byId = new Map(threadAttachments.map((a) => [a.id, a]));
 	const files = attachments.flatMap((m) => {

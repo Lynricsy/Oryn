@@ -9,6 +9,7 @@
  */
 import type { Entry } from "../../api/client";
 import { parseAttachmentBlock } from "../../lib/attachments";
+import { parseDraftEditsBlock } from "../../lib/draft-edits";
 import { parseOrynMessage } from "../../lib/oryn-message";
 import { parseViewReceipt } from "../../lib/view/answer";
 import type { JsonRecord } from "../../state/message-builder";
@@ -149,7 +150,9 @@ function oneLine(text: string, limit = 80): string {
 function isRealUserMessage(msg: JsonRecord): boolean {
 	if (msg.role !== "user") return false;
 	if (msg.synthetic === true || isRecord(msg.parentIrc)) return false;
-	const { text } = parseAttachmentBlock(plainTextOfContent(msg.content));
+	const { text } = parseDraftEditsBlock(
+		parseAttachmentBlock(plainTextOfContent(msg.content)).text,
+	);
 	return parseOrynMessage(text) === null && parseViewReceipt(text) === null;
 }
 
@@ -212,7 +215,7 @@ function targetsFromBranch(branch: readonly Entry[]): RewindTarget[] {
 
 			if (role === "user") {
 				const raw = plainTextOfContent(msg.content);
-				const { text } = parseAttachmentBlock(raw);
+				const { text } = parseDraftEditsBlock(parseAttachmentBlock(raw).text);
 				const irc = isRecord(msg.parentIrc) ? msg.parentIrc : null;
 				// 视图回执（M33）预览显示作答正文，不露出标签与 JSON 围栏
 				const body = irc

@@ -1,14 +1,15 @@
 /**
  * 排队/引导消息（QueueBar）的显示与编辑解析：
- * - 复用 Oryn 现有的附件块（`<oryn-attachments>`）、引用回复（`splitLeadingQuote`）、
+ * - 复用 Oryn 现有的附件块（`<oryn-attachments>`）、写作块改稿块（`<oryn-draft-edits>`）、引用回复（`splitLeadingQuote`）、
  *   自动化消息头（`parseOrynMessage`）以及 artifact 选区数据块（`oryn-data-<hex>`）解析；
  * - 展示时拆出干净的正文与附件/引用/选区徽章，不向用户暴露原始标签文本；
- * - 编辑保存时通过 `rebuild(nextBody)` 无损拼回原有引用、选区块与 `<oryn-attachments>` 后缀；
+ * - 编辑保存时通过 `rebuild(nextBody)` 无损拼回原有引用、选区块与 `<oryn-draft-edits>` + `<oryn-attachments>` 后缀；
  * - 乐观排队去重通过「提交时刻的权威基线 ID + 正文 + 附件身份」一对一匹配，
  *   防止已排队的同正文/纯附件旧项或无关 `queue_update` 隐藏或误删新提交的在途乐观项。
  */
 import type { RpcQueuedMessage } from "../omp/types";
 import { type MessageAttachment, parseAttachmentBlock } from "./attachments";
+import { type DraftEditRef, parseDraftEditsBlock } from "./draft-edits";
 import { type OrynMessage, parseOrynMessage } from "./oryn-message";
 import { composeQuoted, splitLeadingQuote } from "./quote";
 import { type ParsedViewReceipt, parseViewReceipt } from "./view/answer";
@@ -40,11 +41,13 @@ export interface ParsedQueueMessage {
 	body: string;
 	/** 从末尾 `<oryn-attachments>` 块解析出的附件列表。 */
 	attachments: MessageAttachment[];
+	/** 从末尾 `<oryn-draft-edits>` 块解析出的改稿（类型与标题）。 */
+	draftEdits: DraftEditRef[];
 	/** 从末尾 `oryn-data-<16hex>` 块解析出的 artifact 标题（若有）。 */
 	artifactTitle: string | null;
 	/** 视图作答的回执（M33）：正文是去掉 JSON 围栏的作答。 */
 	viewReceipt: ParsedViewReceipt | null;
-	/** 把用户编辑后的新正文拼回原始完整消息（保留前导引用、选区块与附件块）。 */
+	/** 把用户编辑后的新正文拼回原始完整消息（保留前导引用、选区块、改稿块与附件块）。 */
 	rebuild: (nextBody: string) => string;
 }
 
@@ -75,9 +78,21 @@ function attachmentsMatch(
 	return true;
 }
 
-/** 剥离控制面追加的 `<oryn-attachments>` 块后的规范化正文。 */
+/** 剥离控制面追加的 `<oryn-attachments>` 与 `<oryn-draft-edits>` 块后的规范化正文。 */
 export function queueMatchKey(rawText: string): string {
-	return parseAttachmentBlock(rawText.replace(/\r\n/g, "\n")).text.trim();
+	return controlBody(rawText).text.trim();
+}
+
+/** 依次剥掉末尾的附件块与改稿块（附件块总在最后）。 */
+function controlBody(rawText: string): {
+	text: string;
+	attachments: MessageAttachment[];
+} {
+	const parsed = parseAttachmentBlock(rawText.replace(/\r\n/g, "\n"));
+	return {
+		text: parseDraftEditsBlock(parsed.text).text,
+		attachments: parsed.attachments,
+	};
 }
 
 /**
@@ -97,7 +112,7 @@ export function filterUnmatchedOptimistic<T extends OptimisticMatchCandidate>(
 		authoritativeItems !== null && authoritativeItems !== undefined;
 	const authList = useObjects
 		? authoritativeItems.map((item) => {
-				const parsed = parseAttachmentBlock(item.text.replace(/\r\n/g, "\n"));
+				const parsed = controlBody(item.text);
 				return {
 					id: item.id,
 					body: parsed.text.trim(),
@@ -105,7 +120,7 @@ export function filterUnmatchedOptimistic<T extends OptimisticMatchCandidate>(
 				};
 			})
 		: (authoritativeTexts ?? []).map((text) => {
-				const parsed = parseAttachmentBlock(text.replace(/\r\n/g, "\n"));
+				const parsed = controlBody(text);
 				return {
 					id: null as string | null,
 					body: parsed.text.trim(),
@@ -151,8 +166,11 @@ export function filterUnmatchedOptimistic<T extends OptimisticMatchCandidate>(
 export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 	const normalized = rawText.replace(/\r\n/g, "\n");
 	const attParsed = parseAttachmentBlock(normalized);
-	const attachmentSuffix = normalized.slice(attParsed.text.length);
-	let rest = attParsed.text;
+	const draftParsed = parseDraftEditsBlock(attParsed.text);
+	// 改稿块 + 附件块：编辑正文时原样保留在末尾
+	const controlSuffix = normalized.slice(draftParsed.text.length);
+	const draftEdits = draftParsed.drafts;
+	let rest = draftParsed.text;
 	let artifactSuffix = "";
 	let artifactTitle: string | null = null;
 
@@ -174,12 +192,13 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 			quote: null,
 			body: viewReceipt.display,
 			attachments: attParsed.attachments,
+			draftEdits,
 			artifactTitle,
 			viewReceipt,
 			rebuild: (nextBody: string) =>
 				nextBody === viewReceipt.display
 					? normalized
-					: `${nextBody}${artifactSuffix}${attachmentSuffix}`,
+					: `${nextBody}${artifactSuffix}${controlSuffix}`,
 		};
 	}
 
@@ -190,10 +209,11 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 			quote: null,
 			body: oryn.body,
 			attachments: attParsed.attachments,
+			draftEdits,
 			artifactTitle,
 			viewReceipt: null,
 			rebuild: (nextBody: string) =>
-				`${nextBody}${artifactSuffix}${attachmentSuffix}`,
+				`${nextBody}${artifactSuffix}${controlSuffix}`,
 		};
 	}
 
@@ -206,6 +226,7 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 		quote,
 		body,
 		attachments: attParsed.attachments,
+		draftEdits,
 		artifactTitle,
 		viewReceipt: null,
 		rebuild: (nextBody: string) => {
@@ -215,9 +236,9 @@ export function parseQueueMessage(rawText: string): ParsedQueueMessage {
 					? `${withQuote}${artifactSuffix}`
 					: artifactSuffix.replace(/^\n+/, "")
 				: withQuote;
-			if (!attachmentSuffix) return withArtifact;
-			if (!withArtifact) return attachmentSuffix.replace(/^\n+/, "");
-			return `${withArtifact}${attachmentSuffix.startsWith("\n") ? attachmentSuffix : `\n\n${attachmentSuffix}`}`;
+			if (!controlSuffix) return withArtifact;
+			if (!withArtifact) return controlSuffix.replace(/^\n+/, "");
+			return `${withArtifact}${controlSuffix.startsWith("\n") ? controlSuffix : `\n\n${controlSuffix}`}`;
 		},
 	};
 }

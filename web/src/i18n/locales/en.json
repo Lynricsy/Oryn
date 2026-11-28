@@ -7494,5 +7494,42 @@
 			"errMin": "Must be at least {{min}}",
 			"errMax": "Must be at most {{max}}"
 		}
+	},
+	"writingBlock": {
+		"kind": {
+			"email": "Email draft",
+			"message": "Message draft",
+			"doc": "Document draft"
+		},
+		"composing": "Drafting…",
+		"edited": "Edited",
+		"copy": "Copy",
+		"copyMarkdown": "Copy as Markdown",
+		"downloadMd": "Download .md",
+		"downloadDocx": "Download .docx",
+		"saveArtifact": "Save as artifact",
+		"savedAsArtifact": "Saved as artifact",
+		"openArtifact": "Open",
+		"openInMail": "Open in email",
+		"mailBodyCopied": "The body is long and was copied; paste it into the email",
+		"revert": "Restore original",
+		"fullscreen": "Open editor",
+		"closeFullscreen": "Close editor",
+		"askChanges": "Ask for changes",
+		"undo": "Undo",
+		"redo": "Redo",
+		"bold": "Bold",
+		"italic": "Italic",
+		"heading": "Heading",
+		"bulletList": "Bulleted list",
+		"orderedList": "Numbered list",
+		"taskList": "Checklist",
+		"link": "Link",
+		"linkPrompt": "Link URL (empty to remove)",
+		"saveFailed": "Couldn't save the draft",
+		"retry": "Retry",
+		"exportFailed": "Export failed",
+		"editedChip": "Included your edited draft: {{title}}",
+		"more": "More actions"
 	}
 }

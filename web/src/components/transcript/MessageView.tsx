@@ -32,6 +32,8 @@ import {
 	isSilentAbortMessage,
 	parseHandoffMessage,
 } from "../../lib/custom-messages";
+import { splitDrafts } from "../../lib/draft-blocks";
+import { parseDraftEditsBlock } from "../../lib/draft-edits";
 import { joinPath, orbFileSource } from "../../lib/file-source";
 import {
 	formatBytes,
@@ -90,6 +92,7 @@ import { BackgroundToolView, JobEventMessage } from "./JobEvents";
 import { escapeAngles, MD_SIZE } from "./NoticeLine";
 import { useSmoothText } from "./smooth-text";
 import { UserText } from "./UserText";
+import { DraftEditChips, WritingBlock } from "./WritingBlock";
 
 const CHIP =
 	"inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2 py-1 text-xs";
@@ -740,9 +743,11 @@ function UserMessage({
 	const { t, i18n } = useTranslation();
 	const ctx = useTranscriptContext();
 	// 控制面追加的附件块不按原文显示，渲染成附件芯片
-	const { text, attachments } = parseAttachmentBlock(
+	const { text: withDrafts, attachments } = parseAttachmentBlock(
 		textOfContent(message.content),
 	);
+	// orynd 追加的改稿块（用户改过的写作块全文，给 agent 读）不按原文显示，渲染成芯片
+	const { text, drafts: draftEdits } = parseDraftEditsBlock(withDrafts);
 	const irc = isRecord(message.parentIrc) ? message.parentIrc : null;
 	const synthetic = message.synthetic === true;
 	const steer = message.steering === true || message.liveSteered === true;
@@ -830,6 +835,7 @@ function UserMessage({
 						</Foldable>
 					)}
 					<Images content={message.content} />
+					<DraftEditChips drafts={draftEdits} />
 					<AttachmentChips attachments={attachments} />
 				</AutoMessageCard>
 				{menu}
@@ -871,6 +877,7 @@ function UserMessage({
 					shown && <UserText text={shown} />
 				)}
 				<Images content={message.content} />
+				<DraftEditChips drafts={draftEdits} />
 				<AttachmentChips attachments={attachments} />
 			</UserBubble>
 			{menu}
@@ -1464,16 +1471,50 @@ export function assistantEdges(
 	return [head ?? "prose", live && head === null ? "prose" : last];
 }
 
-/** 流式正文：显示长度平滑追上到达的文字（见 smooth-text.ts），结束后整段。 */
-function StreamMarkdown({
+/**
+ * 助手正文：显示长度平滑追上到达的文字（见 smooth-text.ts），结束后整段。
+ * 正文里的 ```draft-email / draft-message / draft-doc 围栏切出来渲染成写作块；没有写作块时与普通 Markdown 完全相同。
+ */
+function AssistantText({
 	text,
 	streaming,
+	entryId,
+	contentIndex,
 }: {
 	text: string;
 	streaming: boolean;
+	entryId?: string;
+	/** 正文块在助手消息 `content[]` 里的下标（写作块键的前半段） */
+	contentIndex: number;
 }): ReactNode {
+	const shown = useSmoothText(text, streaming);
+	const segs = useMemo(() => splitDrafts(shown), [shown]);
+	if (!segs.some((s) => s.type === "draft"))
+		return <Markdown text={shown} streaming={streaming} />;
 	return (
-		<Markdown text={useSmoothText(text, streaming)} streaming={streaming} />
+		<>
+			{segs.map((s, k) =>
+				s.type === "markdown" ? (
+					<Markdown
+						// biome-ignore lint/suspicious/noArrayIndexKey: 段落按正文顺序切分，流式中只在末尾追加
+						key={`m${k}`}
+						text={s.text}
+						streaming={streaming && k === segs.length - 1}
+					/>
+				) : (
+					<div key={`d${s.ordinal}`} className="my-3 first:mt-0 last:mb-0">
+						<WritingBlock
+							entryId={entryId}
+							blockKey={`${contentIndex}.${s.ordinal}`}
+							kind={s.kind}
+							attrs={s.attrs}
+							body={s.body}
+							composing={streaming && !s.closed}
+						/>
+					</div>
+				),
+			)}
+		</>
 	);
 }
 
@@ -1572,7 +1613,14 @@ function AssistantMessage({
 		let node: ReactNode;
 		switch (b.type) {
 			case "text":
-				node = <StreamMarkdown text={String(b.text)} streaming={streaming} />;
+				node = (
+					<AssistantText
+						text={String(b.text)}
+						streaming={streaming}
+						entryId={entryId}
+						contentIndex={i}
+					/>
+				);
 				break;
 			case "thinking":
 				node = (

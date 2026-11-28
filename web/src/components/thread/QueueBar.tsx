@@ -269,6 +269,7 @@ function Item({
 
 	const extraImages = Math.max(0, rawImageCount - inlineImages.length);
 	const hasChips =
+		parsed.draftEdits.length > 0 ||
 		attachments.length > 0 ||
 		parsed.artifactTitle !== null ||
 		extraGalleryItems.length > 0 ||
@@ -406,6 +407,20 @@ function Item({
 							data-testid="queue-attachments"
 							className="flex flex-wrap items-center gap-1"
 						>
+							{parsed.draftEdits.map((d, i) => (
+								<span
+									// biome-ignore lint/suspicious/noArrayIndexKey: 按块内顺序固定，标题可能重复
+									key={`draft-${i}`}
+									className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/80 bg-panel/85 px-1.5 py-0.5 text-2xs text-fg"
+								>
+									<Icon name="edit" size={11} className="shrink-0" />
+									<span className="truncate">
+										{t("writingBlock.editedChip", {
+											title: d.title || t(`writingBlock.kind.${d.kind}`),
+										})}
+									</span>
+								</span>
+							))}
 							{attachments.map((a) =>
 								a.thumb && a.galleryIndex !== undefined ? (
 									<button

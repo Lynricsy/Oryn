@@ -25,6 +25,7 @@ import {
 	DESKTOP_ASK_SKIP,
 	desktopAskTitle,
 } from "../lib/desktop-ask";
+import { buildDraftEditsBlock } from "../lib/draft-edits";
 import { readConfigDoc } from "../lib/omp-config";
 import { parseSideQuestion } from "../lib/side-ask";
 import { parseModelSource } from "../lib/turn-role";
@@ -754,6 +755,11 @@ export class MockServer {
 	readonly queues = new Map<
 		string,
 		{ steering: string[]; followUp: string[] }
+	>();
+	/** 写作块改稿（C5）：threadId → `entryId/block` → 最新改稿。 */
+	private readonly drafts = new Map<
+		string,
+		Map<string, Schemas["ThreadDraft"]>
 	>();
 	private readonly sockets = new Set<MockSocket>();
 	private readonly subs = new Map<MockSocket, Set<string>>();
@@ -2516,6 +2522,59 @@ export class MockServer {
 				leafEntryId: this.leafOf(entriesMatch[1] ?? "", list),
 			});
 		}
+		const draftsMatch = /^threads\/([^/]+)\/drafts$/.exec(p);
+		if (draftsMatch && m === "GET") {
+			const tid = draftsMatch[1] ?? "";
+			if (!this.threads.has(tid))
+				return json({ code: "not_found", message: "thread" }, 404);
+			const drafts = [...(this.drafts.get(tid)?.values() ?? [])].sort(
+				(a, b) => a.updatedAt - b.updatedAt,
+			);
+			return json({ drafts });
+		}
+		const draftMatch = /^threads\/([^/]+)\/drafts\/([^/]+)\/([^/]+)$/.exec(p);
+		if (draftMatch && (m === "PUT" || m === "DELETE")) {
+			const tid = draftMatch[1] ?? "";
+			if (!this.threads.has(tid))
+				return json({ code: "not_found", message: "thread" }, 404);
+			const entryId = decodeURIComponent(draftMatch[2] ?? "");
+			const block = decodeURIComponent(draftMatch[3] ?? "");
+			const key = `${entryId}/${block}`;
+			const byKey = this.drafts.get(tid) ?? new Map();
+			this.drafts.set(tid, byKey);
+			if (m === "DELETE") {
+				if (!byKey.delete(key))
+					return json({ code: "draft_not_found", message: "draft" }, 404);
+				return new Response(null, { status: 204 });
+			}
+			// 同 orynd 的校验（不校验条目是否存在）
+			const b = (await body()) as Partial<Schemas["ThreadDraftInput"]>;
+			if (
+				!/^\d{1,4}\.\d{1,4}$/.test(block) ||
+				(b.kind !== "email" && b.kind !== "message" && b.kind !== "doc") ||
+				typeof b.title !== "string" ||
+				[...b.title].length > 200 ||
+				typeof b.text !== "string" ||
+				new TextEncoder().encode(b.text).length > 102_400
+			)
+				return json({ code: "invalid_draft", message: "draft" }, 400);
+			const prev = byKey.get(key);
+			const now = Date.now();
+			const draft: Schemas["ThreadDraft"] = {
+				entryId,
+				block,
+				kind: b.kind,
+				title: b.title,
+				text: b.text,
+				// 时间戳单调递增：同一毫秒内连续保存也能区分新旧
+				updatedAt: prev && now <= prev.updatedAt ? prev.updatedAt + 1 : now,
+				...(prev?.deliveredAt !== undefined
+					? { deliveredAt: prev.deliveredAt }
+					: {}),
+			};
+			byKey.set(key, draft);
+			return json(draft);
+		}
 		const threadMatch = /^threads\/([^/]+)(?:\/(fork|wake))?$/.exec(p);
 		if (threadMatch) {
 			const id = threadMatch[1] ?? "";
@@ -2862,6 +2921,25 @@ export class MockServer {
 			return new Response(null, { status: 204 });
 		}
 		return null;
+	}
+
+	/**
+	 * 同 orynd `takePendingDrafts`：把该线程尚未交给 agent 的改稿拼成 `<oryn-draft-edits>` 块追加到消息末尾
+	 * （附件块之前），并标记为已送达。
+	 */
+	private withDraftEdits(threadId: string, message: string): string {
+		const byKey = this.drafts.get(threadId);
+		if (!byKey) return message;
+		const due = [...byKey.entries()]
+			.filter(
+				([, d]) => d.deliveredAt === undefined || d.deliveredAt < d.updatedAt,
+			)
+			.sort(([, a], [, b]) => a.updatedAt - b.updatedAt);
+		if (due.length === 0) return message;
+		for (const [key, d] of due)
+			byKey.set(key, { ...d, deliveredAt: d.updatedAt });
+		const block = buildDraftEditsBlock(due.map(([, d]) => d));
+		return message ? `${message}${block}` : block.replace(/^\n+/, "");
 	}
 
 	/**
@@ -4058,7 +4136,7 @@ export class MockServer {
 			case "follow_up": {
 				const q = this.queues.get(threadId) ?? { steering: [], followUp: [] };
 				(type === "steer" ? q.steering : q.followUp).push(
-					String(frame.message ?? ""),
+					this.withDraftEdits(threadId, String(frame.message ?? "")),
 				);
 				this.queues.set(threadId, q);
 				const toItems = (lane: string[], p: string) =>
@@ -4489,7 +4567,7 @@ export class MockServer {
 					files &&
 					this.withAttachments(
 						threadId,
-						String(frame.message ?? ""),
+						this.withDraftEdits(threadId, String(frame.message ?? "")),
 						frame.orynAttachments,
 						files,
 					);
@@ -4702,6 +4780,12 @@ export class MockServer {
 				message: notice,
 			});
 			await sleep(Math.max(d, 2500));
+		}
+
+		// 提示词含「写作块」或 draft：回一条带邮件写作块的消息（手测写作块）
+		if (/写作块|draft/i.test(text)) {
+			await this.runDraftReply(threadId);
+			return;
 		}
 
 		const ts1 = Date.now();
@@ -4973,13 +5057,19 @@ export class MockServer {
 			message: msg2,
 		});
 		this.appendEntry(threadId, msg2);
+		await this.finishTurn(threadId, text);
+	}
+
+	/** 一轮的收尾：agent_end、prompt_result、线程回到空闲，再推一次输入框预测。 */
+	private async finishTurn(threadId: string, text: string) {
+		const d = this.delay;
 		this.frame(threadId, {
 			type: "agent_end",
 			messages: [],
 			isTerminal: true,
 			yielded: true,
 		});
-		this.desktop.turn(t.orbId, false);
+		this.desktop.turn(this.threads.get(threadId)?.orbId, false);
 		this.frame(threadId, {
 			type: "prompt_result",
 			agentInvoked: true,
@@ -5004,5 +5094,62 @@ export class MockServer {
 		];
 		this.predictions.set(threadId, choices);
 		this.frame(threadId, { type: "oryn_composer_prediction", choices });
+	}
+
+	/** 流式回一条只含一个 text 块的助手消息：说明 + 邮件写作块 + 收尾，然后结束这一轮。 */
+	private async runDraftReply(threadId: string) {
+		const d = this.delay;
+		const ts = Date.now();
+		const mid = `m${this.idSeq++}`;
+		const answer = [
+			"好的，我起草了一封邮件，可以直接在下面修改：",
+			"",
+			'```draft-email subject="周五会议改期" to="sam@example.com"',
+			"Hi Sam，",
+			"",
+			"周五的例会我这边临时有冲突，想改到下周一上午 10 点，不知道你是否方便？",
+			"",
+			"会议内容不变，仍然过一遍 **重连改造** 的进度和下一步计划。",
+			"",
+			"如果周一不合适，告诉我你方便的时间，我来调整日程。",
+			"",
+			"谢谢！",
+			"Alex",
+			"```",
+			"",
+			"需要更正式或更简短的版本，告诉我即可。",
+		].join("\n");
+		this.frame(threadId, {
+			type: "message_start",
+			messageId: mid,
+			message: assistant([], ts, {
+				stopReason: undefined,
+				...this.turnModel(threadId),
+			}),
+		});
+		const upd = (ev: Json) =>
+			this.frame(threadId, {
+				type: "message_update",
+				messageId: mid,
+				message: { role: "assistant" },
+				assistantMessageEvent: ev,
+			});
+		upd({
+			type: "text_start",
+			contentIndex: 0,
+			block: { type: "text", text: "" },
+		});
+		for (const chunk of answer.match(/[\s\S]{1,4}/gu) ?? []) {
+			upd({ type: "text_delta", contentIndex: 0, delta: chunk });
+			await sleep(d);
+		}
+		upd({ type: "text_end", contentIndex: 0, content: answer });
+		const msg = assistant([{ type: "text", text: answer }], ts, {
+			stopReason: "stop",
+			...this.turnModel(threadId),
+		});
+		this.frame(threadId, { type: "message_end", messageId: mid, message: msg });
+		this.appendEntry(threadId, msg);
+		await this.finishTurn(threadId, "");
 	}
 }

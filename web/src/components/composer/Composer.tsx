@@ -63,6 +63,7 @@ import {
 	useComposerPendingFiles,
 	useComposerPendingRestores,
 } from "../../state/composer-drafts";
+import { flushDraftSaves, hasUnsavedDrafts } from "../../state/draft-saves";
 import {
 	addOptimisticQueue,
 	agentQueryable,
@@ -428,6 +429,7 @@ export const Composer = memo(function Composer({
 				if (action.frame) await runModeCommand(threadId, action.frame);
 				// 斜杠命令发出的也是主人的消息：挂起的视图调用先以「改用文字回复」结束（C5）
 				dismissViewAwaits(threadId);
+				if (hasUnsavedDrafts(threadId)) await flushDraftSaves(threadId);
 				await realtime.cmd(
 					threadId,
 					slashPromptFrame(
@@ -441,6 +443,7 @@ export const Composer = memo(function Composer({
 				return;
 			case "queue":
 				dismissViewAwaits(threadId);
+				if (hasUnsavedDrafts(threadId)) await flushDraftSaves(threadId);
 				await realtime.cmd(
 					threadId,
 					promptFrame(
@@ -551,6 +554,7 @@ export const Composer = memo(function Composer({
 				);
 			case "prompt":
 				dismissViewAwaits(threadId);
+				if (hasUnsavedDrafts(threadId)) await flushDraftSaves(threadId);
 				await realtime.cmd(
 					threadId,
 					action.attach
@@ -613,6 +617,7 @@ export const Composer = memo(function Composer({
 				}
 				// 主人改为直接打字：挂起等待作答的视图调用先以「改用文字回复」结束，消息随后送达（C5）
 				dismissViewAwaits(threadId);
+				if (hasUnsavedDrafts(threadId)) await flushDraftSaves(threadId);
 				const outText = outgoing("", sent);
 				const frame = promptFrame(
 					mode,
@@ -734,6 +739,7 @@ export const Composer = memo(function Composer({
 			}
 			// 主人改为直接打字：挂起等待作答的视图调用先以「改用文字回复」结束，消息随后送达（C5）
 			dismissViewAwaits(threadId);
+			if (hasUnsavedDrafts(threadId)) await flushDraftSaves(threadId);
 			const effectiveMode: SendMode =
 				asText.kind === "queue" ? "follow_up" : mode;
 			const body =

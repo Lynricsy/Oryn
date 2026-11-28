@@ -157,6 +157,47 @@ describe("SharePage", () => {
 		expect(urls).not.toContain("/api/v1/ws-ticket");
 	});
 
+	it("写作块与改稿芯片：改稿块不显示原始标签；写作块只读、不请求改稿接口", async () => {
+		const edited =
+			'改正式一点\n\n<oryn-draft-edits>\nThe user edited these drafts from your earlier replies in place. The text below is the current version of each; build on it rather than on your original wording.\n<draft kind="email" title="周五会议改期">\nHi Sam\n</draft>\n</oryn-draft-edits>';
+		const reply =
+			'好的：\n\n```draft-email subject="周五会议改期" to="sam@example.com"\nHi Sam,\n\nCould we move it?\n```\n\n需要再改告诉我。';
+		stubFetch((path) => {
+			if (path === `/api/v1/public/shares/${SLUG}`) return Response.json(SHARE);
+			if (path === `/api/v1/public/shares/${SLUG}/entries`)
+				return Response.json({
+					entries: [entry(1, "user", edited), entry(2, "assistant", reply)],
+					hasMore: false,
+					lastSeq: 2,
+					leafEntryId: "e2",
+				});
+			return Response.json({ code: "unauthorized" }, { status: 401 });
+		});
+		renderAt(SLUG);
+		expect(await screen.findByText("改正式一点")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				i18n.t("writingBlock.editedChip", { title: "周五会议改期" }),
+			),
+		).toBeInTheDocument();
+		expect(document.body.textContent).not.toContain("oryn-draft-edits");
+		expect(screen.getByTestId("writing-block-title").textContent).toBe(
+			"周五会议改期",
+		);
+		expect(screen.getByText("Could we move it?")).toBeInTheDocument();
+		expect(screen.queryByTestId("writing-block-fullscreen")).toBeNull();
+		fireEvent.click(
+			screen.getByRole("button", { name: T("writingBlock.more") }),
+		);
+		expect(
+			screen.queryByRole("menuitem", { name: T("writingBlock.saveArtifact") }),
+		).toBeNull();
+		expect(
+			screen.getByRole("menuitem", { name: T("writingBlock.downloadMd") }),
+		).toBeInTheDocument();
+		for (const u of urls) expect(u.startsWith("/api/v1/public/")).toBe(true);
+	});
+
 	it("读取元数据失败（非 404）：说明哪一步、为什么，并给出重试", async () => {
 		stubFetch(() =>
 			Response.json(
