@@ -6,11 +6,14 @@
 #   ios-sidebar-<明暗>.png  线程页打开下沉侧栏（原生底栏跟着卡片揭开）
 #   ios-thread-<明暗>.png   线程页（原生页头接管）
 #   ios-home-<明暗>.png     新建线程页（原生侧栏钮）
-#   duo-outer-<明暗>.png    iPhone Duo 合上：外屏线程页（compact，原生页头接管）
-#   duo-inner-<明暗>.png    同一会话里展开、内屏横放：列侧栏与对话并排（就绪看壳撤掉根滚动跟随，sink.set off）
+#   duo-outer-<明暗>.png    iPhone Duo 合上：外屏线程页（竖栏：开关侧栏、视图钮与分区底栏竖排在系统给的一侧，页头由网页画）
+#   duo-inner-<明暗>.png    同一会话里展开、内屏横放：列侧栏与对话并排，页头操作进竖栏
+# Duo 的就绪看壳的 rail 事件与网页探针（ios-e2e-preview.mjs 记到 <输出目录>/web.jsonl）：竖栏在时原生页头刻意不接管，
+# 等 header.* 会超时；普通 iPhone 仍看原生页头 / 底栏 / 根滚动的事件。
 # Duo 的折叠、转屏与截图用 duoctl（见 ios-sim.sh 的 duo_setup）。
 # 演示数据与 web/scripts/readme-shots.ts 同一份：`--emit-ios-init` 生成注入脚本，插进 mock 构建的 index.html 最前面。
-# debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open）跳过配对直接打开；就绪靠事件日志（web.ready / header.* / tabbar.set / sink.*）判断。
+# debug 包读 ORYN_E2E_URL（mobile.rs 的 e2e_open）跳过配对直接打开；就绪靠事件日志（web.ready / header.* / tabbar.set / sink.* / rail）
+# 与网页探针判断。
 # 合成到 docs/assets/{mobile,duo}-views-*.png 在本机做：ORYN_IOS_SHOTS=<产物目录> bun run shots:readme --only mobile-views,duo-views。
 # 用法：ios-readme-shots.sh <Oryn.app> <mock Web UI 构建目录> <输出目录>
 set -euo pipefail
@@ -45,7 +48,9 @@ grep -qF 'readme-demo.js' "$site/index.html" || {
   exit 1
 }
 
-(cd "$web" && exec bunx vite preview --outDir "$site" --host :: --port "$port" --strictPort) >"$out/preview.log" 2>&1 &
+# 预览服务器带网页探针（与 ios-duo-check.sh 同一个）：Duo 的就绪要看网页竖栏
+wlog="$out/web.jsonl"
+(cd "$web" && exec bun "$here/ios-e2e-preview.mjs" "$site" "$port" "$wlog") >"$out/preview.log" 2>&1 &
 server=$!
 for _ in $(seq 1 60); do
   curl -fsS -o /dev/null "$origin/" && break
@@ -75,6 +80,15 @@ ready_thread() { last_is header.set '.on and .key == $k' && last_is header.show 
 ready_sidebar() { last_is tabbar.set '.on' && last_is sink.show '.open == true'; }
 # 展开到内屏后换成列侧栏布局：SinkLayout 退成普通外框，壳撤掉根滚动跟随
 ready_inner() { last_is sink.set '.on == false'; }
+# web_rail <最少操作数>：网页探针最新一页的最后一条 rail：竖排着、底栏在竖栏里、页头里的侧栏开关全藏了、操作槽里至少这么多个页头操作
+web_rail() {
+  jq -se --argjson n "$1" 'map(select(.event == "rail")) | sort_by(.nav, .seq) | last | .info
+    | .side != null and .tabs and .headerToggles == 0 and .actions >= $n' "$wlog" >/dev/null 2>&1
+}
+# Duo 外屏：竖栏模式下原生页头不接管（侧栏开关挪进竖栏），等壳报告竖栏、网页竖栏与视图钮就位
+ready_duo_outer() { last_is rail '.side != null' && web_rail 1; }
+# Duo 内屏横放：列侧栏布局，且竖栏带着页头操作（会话树、更多，非双段时还有信息面板）
+ready_duo_inner() { ready_inner && last_is rail '.side != null' && web_rail 2; }
 
 # capture_when <文件名> <就绪谓词>：就绪后再等过渡走完，截到相邻两张一致为止
 capture_when() {
@@ -130,8 +144,8 @@ for scheme in light dark; do
   sim_run 60 xcrun simctl ui "$udid" appearance "$scheme"
   # 动画折叠：iOS 27.1 运行时上瞬间跳变会让模拟器之后切不了屏
   duo close --duration 1
-  shoot "duo-outer-$scheme" "/t/$thread" ready_thread
+  shoot "duo-outer-$scheme" "/t/$thread" ready_duo_outer
   duo open --duration 1
   duo rotate landscape
-  capture_when "duo-inner-$scheme" ready_inner
+  capture_when "duo-inner-$scheme" ready_duo_inner
 done
