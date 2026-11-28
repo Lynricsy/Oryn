@@ -7,6 +7,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
+import { type ReactNode, useEffect } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Thread } from "../../api/client";
@@ -41,7 +42,9 @@ vi.mock("../../realtime/socket", () => ({
 	},
 }));
 
-function setup() {
+function setup(
+	page: ReactNode = <ThreadHeader threadId="T-1" sidebarToggle={false} />,
+) {
 	const qc = new QueryClient({
 		defaultOptions: { queries: { retry: false, staleTime: Infinity } },
 	});
@@ -55,10 +58,7 @@ function setup() {
 			<MemoryRouter initialEntries={["/t/T-1"]}>
 				<Routes>
 					<Route element={<AppShell />}>
-						<Route
-							path="/t/:id"
-							element={<ThreadHeader threadId="T-1" sidebarToggle={false} />}
-						/>
+						<Route path="/t/:id" element={page} />
 						{/* 切分区会导航到别的页面：壳仍要留在原地 */}
 						<Route path="*" element={null} />
 					</Route>
@@ -526,6 +526,54 @@ describe("手机下沉式侧栏（compact）", () => {
 		expect(more).toHaveAttribute("aria-current", "true");
 		fireEvent.click(more as HTMLElement);
 		expect(uiStore.getState().sidebarOpen).toBe(false);
+	});
+});
+
+/** 跨断点往返用的路由页：记挂载次数；不受控输入框的内容与焦点只活在 DOM 节点上，页面一重挂载就丢。 */
+let pageMounts = 0;
+function MountProbe(): ReactNode {
+	useEffect(() => {
+		pageMounts++;
+	}, []);
+	return <input aria-label="草稿" />;
+}
+
+describe("跨 compact 断点（折叠屏折叠 / 展开）", () => {
+	afterEach(() => {
+		uiStore.setState({ sidebarOpen: false });
+		window.history.replaceState(null, "");
+	});
+
+	it("390 → 700 → 390 往返：路由页不重挂载，输入内容与焦点都留着", () => {
+		pageMounts = 0;
+		const resize = (width: number) =>
+			act(() => {
+				window.innerWidth = width;
+				window.dispatchEvent(new Event("resize"));
+			});
+		window.innerWidth = 390;
+		setup(<MountProbe />);
+		const input = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "草稿",
+		});
+		expect(screen.getByTestId("sink-content")).toContainElement(input);
+		input.value = "没发出去的半句话";
+		input.focus();
+
+		// 展开：内屏进入 medium，下沉侧栏换成列侧栏
+		resize(700);
+		expect(screen.queryByTestId("sink-content")).toBeNull();
+		expect(column()).not.toBeNull();
+		expect(screen.getByRole("textbox", { name: "草稿" })).toBe(input);
+		expect(input.value).toBe("没发出去的半句话");
+		expect(document.activeElement).toBe(input);
+
+		// 合上：回到外屏的下沉侧栏
+		resize(390);
+		expect(screen.getByTestId("sink-content")).toContainElement(input);
+		expect(input.value).toBe("没发出去的半句话");
+		expect(document.activeElement).toBe(input);
+		expect(pageMounts).toBe(1);
 	});
 });
 

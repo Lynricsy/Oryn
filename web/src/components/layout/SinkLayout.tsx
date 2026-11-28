@@ -22,8 +22,12 @@
  * - iOS 原生底栏（`lib/native-tab-bar.ts`）浮在 WebView 之上，右缘由原生按根滚动裁到卡片左缘（侧栏列表一直画到屏幕底边，
  *   玻璃折射它）。这里只在侧栏打开且静止时定时探测底栏位置是否被菜单、弹层、软键盘盖住（`setCovered`，盖住时原生隐藏、
  *   网页胶囊顶上）。
+ * - `sink = false`（medium / expanded / 双段）：同一棵元素树退化成普通外框——根换成 `frame` 类名，侧栏层换成 `aside`，
+ *   卡片与内容两层包装改为 `display: contents`，手势、历史标记、焦点、原生跟随全部停用。`children` 在 React 树里的位置
+ *   不随断点变化，折叠屏折叠 / 展开跨 600px 时应用壳的 `<main>` 不重挂载（焦点、滚动位置、页内状态都留着）。
  */
 import {
+	Fragment,
 	type ReactNode,
 	useEffect,
 	useLayoutEffect,
@@ -131,10 +135,20 @@ function markMoving(card: HTMLElement, open: boolean) {
 }
 
 export function SinkLayout({
+	sink = true,
 	sidebar,
+	aside,
+	frame,
 	children,
 }: {
+	/** false = 普通外框：只渲染 `aside` 与 `children`，下沉侧栏的行为全部停用。 */
+	sink?: boolean;
+	/** 下沉侧栏层的内容（只在 `sink` 时渲染）。 */
 	sidebar: ReactNode;
+	/** 普通外框时排在内容之前的部分（列侧栏、悬浮抽屉）。 */
+	aside?: ReactNode;
+	/** 普通外框时根元素的类名。 */
+	frame?: string;
 	children: ReactNode;
 }): ReactNode {
 	const { t } = useTranslation();
@@ -150,6 +164,7 @@ export function SinkLayout({
 	openRef.current = open;
 	// 历史标记：打开时压入；关闭时若标记仍在栈顶（没有因导航被盖住）就弹掉
 	useEffect(() => {
+		if (!sink) return;
 		if (open) {
 			if (!marked())
 				window.history.pushState(
@@ -159,9 +174,10 @@ export function SinkLayout({
 			return;
 		}
 		if (marked()) window.history.back();
-	}, [open]);
+	}, [open, sink]);
 
 	useEffect(() => {
+		if (!sink) return;
 		const onPop = () => {
 			if (openRef.current) {
 				if (!marked()) uiStore.getState().setSidebar(false);
@@ -172,10 +188,15 @@ export function SinkLayout({
 		};
 		window.addEventListener("popstate", onPop);
 		return () => window.removeEventListener("popstate", onPop);
-	}, []);
+	}, [sink]);
 
 	// 焦点：打开时移入侧栏，关闭后还原
 	useLayoutEffect(() => {
+		// 退出下沉模式等同卸载：丢掉待还原的焦点，回来时不会把焦点拉回很久以前的元素
+		if (!sink) {
+			restore.current = null;
+			return;
+		}
 		if (open) {
 			const active = document.activeElement;
 			restore.current =
@@ -194,10 +215,10 @@ export function SinkLayout({
 		)
 			return;
 		back.focus({ preventScroll: true });
-	}, [open]);
+	}, [open, sink]);
 
 	useEffect(() => {
-		if (!open) return;
+		if (!sink || !open) return;
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key !== "Escape" || e.defaultPrevented) return;
 			e.preventDefault();
@@ -205,12 +226,12 @@ export function SinkLayout({
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [open]);
+	}, [open, sink]);
 
 	// 原生底栏的遮挡探测：只在打开且接管时；卡片停在打开位才判定（开合途中卡片还压在槽位上，命中卡片不是被弹层盖住）。
 	// 定时探测，抬手 / 松键 / 软键盘变化 / 根滚动之后下一帧补探
 	useEffect(() => {
-		if (!open || !engaged) return;
+		if (!sink || !open || !engaged) return;
 		let frame = 0;
 		const check = () => {
 			if (sinkRest(window) !== "open") return;
@@ -240,18 +261,19 @@ export function SinkLayout({
 			vv?.removeEventListener("resize", soon);
 			nativeTabBar.setCovered(false);
 		};
-	}, [open, engaged]);
+	}, [open, engaged, sink]);
 
-	// 根滚动跟随：挂载即请求（没有原生能力时是空操作），卸载时撤掉
+	// 根滚动跟随：进入下沉模式即请求（没有原生能力时是空操作），退出时撤掉
 	useEffect(() => {
+		if (!sink) return;
 		nativeSink.setOn(true);
 		return () => nativeSink.setOn(false);
-	}, []);
+	}, [sink]);
 
 	// 原生滚动模式：文档可横滚（index.css 的 `:root[data-sink-native]`），根滚动与 sidebarOpen 互相同步
 	useLayoutEffect(() => {
 		const card = cardRef.current;
-		if (!native || !card) return;
+		if (!sink || !native || !card) return;
 		const root = document.documentElement;
 		root.setAttribute("data-sink-native", "");
 		setMinScale(true);
@@ -307,19 +329,19 @@ export function SinkLayout({
 			window.history.scrollRestoration = restoration;
 			window.scrollTo(0, 0);
 		};
-	}, [native]);
+	}, [native, sink]);
 
 	// sidebarOpen 由别处改变（按钮、Esc、返回键、选线程）：请求滚到对应一端；根滚动自己提交的变化在这里是空操作
 	useLayoutEffect(() => {
-		if (!native) return;
+		if (!sink || !native) return;
 		scrollRef.current?.request(open ? "open" : "closed", !reduce);
 		if (cardRef.current) markMoving(cardRef.current, open);
-	}, [open, reduce, native]);
+	}, [open, reduce, native, sink]);
 
 	// 触摸手势（非原生模式）：跟手写 --sink-p，松手吸附
 	useEffect(() => {
 		const card = cardRef.current;
-		if (!card || native) return;
+		if (!sink || !card || native) return;
 		let start: {
 			x: number;
 			y: number;
@@ -404,40 +426,52 @@ export function SinkLayout({
 			card.removeEventListener("touchend", end);
 			card.removeEventListener("touchcancel", end);
 		};
-	}, [native]);
+	}, [native, sink]);
 
+	// 两种模式的元素树逐层同构（根 → 卡片 → 内容 → children），只换类名与属性：children 不随断点重挂载
 	return (
-		<div className="sink-root relative h-dvh w-full overflow-hidden text-fg">
-			<div
-				ref={sideRef}
-				tabIndex={-1}
-				inert={!open}
-				data-testid="sink-sidebar"
-				// isolate：栏内带 z-index 的元素（fork 树引导线）不得越过上层卡片
-				className="sink-sidebar absolute inset-y-0 left-0 isolate flex w-[var(--sink-w)] flex-col outline-none"
-			>
-				<div className="min-h-0 flex-1">{sidebar}</div>
-			</div>
+		<div
+			className={
+				sink ? "sink-root relative h-dvh w-full overflow-hidden text-fg" : frame
+			}
+		>
+			{sink ? (
+				<div
+					key="sink"
+					ref={sideRef}
+					tabIndex={-1}
+					inert={!open}
+					data-testid="sink-sidebar"
+					// isolate：栏内带 z-index 的元素（fork 树引导线）不得越过上层卡片
+					className="sink-sidebar absolute inset-y-0 left-0 isolate flex w-[var(--sink-w)] flex-col outline-none"
+				>
+					<div className="min-h-0 flex-1">{sidebar}</div>
+				</div>
+			) : (
+				<Fragment key="aside">{aside}</Fragment>
+			)}
 			<div
 				ref={cardRef}
-				data-testid="sink-card"
-				data-open={open ? "" : undefined}
-				data-instant={reduce ? "" : undefined}
-				className="sink-card absolute inset-0 flex"
+				data-testid={sink ? "sink-card" : undefined}
+				data-open={sink && open ? "" : undefined}
+				data-instant={sink && reduce ? "" : undefined}
+				className={sink ? "sink-card absolute inset-0 flex" : "contents"}
 			>
 				{/* 壁纸晕染是半透明渐变：垫在卡片的不透明底色上，底层侧栏不会透上来 */}
+				{sink && (
+					<div
+						aria-hidden
+						className="shell-wash pointer-events-none absolute inset-0"
+					/>
+				)}
 				<div
-					aria-hidden
-					className="shell-wash pointer-events-none absolute inset-0"
-				/>
-				<div
-					inert={open}
-					data-testid="sink-content"
-					className="relative flex h-full min-w-0 flex-1"
+					inert={sink && open}
+					data-testid={sink ? "sink-content" : undefined}
+					className={sink ? "relative flex h-full min-w-0 flex-1" : "contents"}
 				>
 					{children}
 				</div>
-				{open && (
+				{sink && open && (
 					// 露出的卡片条：轻点关闭（拖动由卡片上的触摸手势处理）
 					<button
 						type="button"

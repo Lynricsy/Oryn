@@ -1,7 +1,8 @@
 /**
  * 应用壳：三档自适应——expanded（≥840）侧边栏常驻，是浮在壁纸上的悬浮玻璃（macOS Tahoe 式），
  * 中栏与右栏是纸面，8px 缝里露出壁纸，侧栏可收起（存 localStorage）；medium（600–839）侧边栏可折叠推入，
- * 同样是悬浮玻璃；compact（<600）是下沉式侧栏（SinkLayout：侧栏常驻底层，内容卡片右移露出它）；
+ * 同样是悬浮玻璃；compact（<600）是下沉式侧栏（SinkLayout：侧栏常驻底层，内容卡片右移露出它）；三档共用 SinkLayout 的同一棵树，
+ * 跨断点（折叠屏折叠 / 展开）时页面不重挂载；
  * Viewport Segments 双段时是同材质的悬浮抽屉（四角都圆、四周留 8px 与安全区，背后整屏模糊并轻度压暗）。壁纸见 index.css 的 `.shell-wash`。
  * 收起 / 展开是连续动画：外层列宽与右侧缝一起收到 0，内层玻璃保持固定宽度、同步左移并淡出（不挤扁内容）。
  * 右侧信息面板由线程页自行处理。分区（M9.6）：侧栏底部是底栏 `SectionTabBar`，当前分区由路由决定，`useSectionTracker` 记下
@@ -352,30 +353,10 @@ export function AppShell(): ReactNode {
 			<Outlet />
 		</main>
 	);
-	if (sink)
-		return (
-			<>
-				<SinkLayout sidebar={<Sidebar sink />}>{main}</SinkLayout>
-				<BottomDock />
-				<NotificationToasts />
-				<PaletteHost />
-				<ThreadRowDialogs />
-				<ConsentDialog />
-				<AiDataConsentGate />
-			</>
-		);
-
 	// 侧栏玻璃离屏幕左、上、下缘 8px：左两角取同心半径（--side-r 在 macOS 26 壳里按窗口外框同心）
 	const sidebarCorners = "dc-tl dc-bl [--dc-gap:0.5rem] [--dc-r:var(--side-r)]";
-	return (
-		<div
-			// 双段时不留外边距：线程页按段的视口坐标分窗格
-			className={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${
-				expandedFrame
-					? "pt-[max(0.5rem,var(--safe-top))] pr-[max(0.5rem,var(--safe-right))] pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.5rem,var(--safe-left))]"
-					: ""
-			}`}
-		>
+	const aside = (
+		<>
 			{!drawerMode && (
 				// 外层只负责占位宽度与右侧 8px 缝；内层固定宽度，translate 与列宽同时长同缓动，
 				// 右缘始终贴着列右缘，所以外层不必 overflow-hidden（那会裁掉玻璃的描边与投影）
@@ -424,7 +405,24 @@ export function AppShell(): ReactNode {
 					</div>
 				</div>
 			)}
-			{main}
+		</>
+	);
+	// 各档共用同一棵树：<main> 与下面的浮层在 React 树里的位置不随断点变化，折叠屏折叠 / 展开（跨 600px）不重挂载页面
+	return (
+		<>
+			<SinkLayout
+				sink={sink}
+				sidebar={<Sidebar sink />}
+				aside={aside}
+				// 双段时不留外边距：线程页按段的视口坐标分窗格
+				frame={`shell-wash flex h-dvh w-full overflow-hidden text-fg ${
+					expandedFrame
+						? "pt-[max(0.5rem,var(--safe-top))] pr-[max(0.5rem,var(--safe-right))] pb-[max(0.5rem,var(--safe-bottom))] pl-[max(0.5rem,var(--safe-left))]"
+						: ""
+				}`}
+			>
+				{main}
+			</SinkLayout>
 			<BottomDock />
 			<NotificationToasts />
 			<PaletteHost />
@@ -433,6 +431,6 @@ export function AppShell(): ReactNode {
 			<AiDataConsentGate />
 			{/* macOS 全屏：左上角自绘红绿灯，指针移上去才出现（不在全屏 / 不在桌面壳里时为空） */}
 			<FullscreenLights />
-		</div>
+		</>
 	);
 }
