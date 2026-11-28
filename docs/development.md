@@ -75,14 +75,14 @@ bun run accept:m33 -- --only T1,T8          # 只跑指定条目
 
 两者都起 `VITE_MOCK=1` 的 vite 开发服务器并用本机 Chromium 截图，不需要后端。
 
-README 的手机三联（`mobile-views`）用 iOS 模拟器里真实 App 的截图：原生液态玻璃底栏与页头由 UIKit 绘制，浏览器里没有。原图由 GitHub Actions 的 [`readme-ios-shots`](../.github/workflows/readme-ios-shots.yml) 工作流产出（推送 `readme-shots/**` 分支或手动运行；脚本是 `web/src-tauri/ci/ios-readme-shots.sh`，演示数据与 `shots:readme` 同一份），下载产物后在本机合成：
+README 的手机三联（`mobile-views`）与 iPhone Duo 双拼（`duo-views`）用 iOS 模拟器里真实 App 的截图：原生液态玻璃底栏与页头由 UIKit 绘制，浏览器里没有；Duo 在同一会话里先截合上时的外屏、再展开截内屏（横放），折叠由 duoctl 驱动（见 `web/src-tauri/ci/ios-sim.sh` 的 `duo_setup`）。原图由 GitHub Actions 的 [`readme-ios-shots`](../.github/workflows/readme-ios-shots.yml) 工作流产出（推送 `readme-shots/**` 分支或手动运行；脚本是 `web/src-tauri/ci/ios-readme-shots.sh`，演示数据与 `shots:readme` 同一份），下载产物后在本机合成：
 
 ```bash
 gh run download <运行 id> -n readme-ios-shots -D /tmp/readme-ios-shots
-cd web && ORYN_IOS_SHOTS=/tmp/readme-ios-shots bun run shots:readme --only mobile-views
+cd web && ORYN_IOS_SHOTS=/tmp/readme-ios-shots bun run shots:readme --only mobile-views,duo-views
 ```
 
-没设 `ORYN_IOS_SHOTS` 时 `shots:readme` 跳过这一组，保留现有配图。
+没设 `ORYN_IOS_SHOTS` 时 `shots:readme` 跳过这两组，保留现有配图。
 
 ## UI 排版审计
 
