@@ -13,12 +13,10 @@ import (
 // subagentTool 是派生子 agent 的工具名：它的进度帧带子 agent 的工具参数、输出片段与会话路径，不发给匿名连接（F3）。
 const subagentTool = "task"
 
-// liveFile 是把实时消息套进 transcript.Public 判定时使用的主会话文件名（只需满足 IsMainFile）。
-const liveFile = "live.jsonl"
-
 // publicFrame 返回 omp 帧在匿名连接上的形态；ok=false 表示不发（F2 / F3）。
 //   - 帧类型不在 publicFrameTypes 里 → 不发；
-//   - message_start / message_end：消息按条目同一条规则（transcript.Public）判定，`display:false` 的注入消息不发；
+//   - message_start / message_end：消息按条目同一条规则（transcript.PublicLiveMessage）判定，`display:false` 的注入消息不发，
+//     用户消息里的写作块改稿块缩成只含 kind / title 的空壳（帧里的 message 换成清洗后的形态）；
 //   - message_update：只发 assistant 的（delta 投影只带 role、不带 display，无法判定；也只有 assistant 消息流式输出）；
 //   - agent_end：去掉本轮全部 messages，只留 `{type, isTerminal?}`；
 //   - 子 agent 工具（task）的 tool_execution_update / tool_stream_update 不发（只发开始与结束）。
@@ -34,8 +32,18 @@ func publicFrame(frame json.RawMessage) (json.RawMessage, bool) {
 	}
 	switch f.Type {
 	case "message_start", "message_end":
-		if hiddenLiveMessage(f.Message) {
+		pm, ok := transcript.PublicLiveMessage(f.Message)
+		if !ok {
 			return nil, false
+		}
+		if !bytes.Equal(pm, bytes.TrimSpace(f.Message)) {
+			var m map[string]json.RawMessage
+			if json.Unmarshal(frame, &m) != nil {
+				return nil, false
+			}
+			m["message"] = pm
+			b := marshal(m)
+			return b, b != nil
 		}
 	case "message_update":
 		var m struct {
@@ -56,21 +64,6 @@ func publicFrame(frame json.RawMessage) (json.RawMessage, bool) {
 		}
 	}
 	return frame, true
-}
-
-// hiddenLiveMessage 报告实时帧里的消息是否不得公开：与已入库条目共用 transcript.Public 的判定
-// （它把隐藏消息的 payload 换成只剩 type 的对象）；没有消息对象时同样不发。
-func hiddenLiveMessage(msg json.RawMessage) bool {
-	msg = bytes.TrimSpace(msg)
-	if len(msg) == 0 || msg[0] != '{' {
-		return true
-	}
-	payload := make([]byte, 0, len(msg)+12)
-	payload = append(payload, `{"message":`...)
-	payload = append(payload, msg...)
-	payload = append(payload, '}')
-	pe, ok := transcript.Public(transcript.Entry{File: liveFile, Type: "message", Payload: payload})
-	return !ok || !bytes.Equal(pe.Payload, payload)
 }
 
 // publicLive 过滤 thread.snapshot 的在途帧（同 publicFrame）。

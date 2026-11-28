@@ -173,6 +173,36 @@ func TestPublic(t *testing.T) {
 	assert.Equal(t, cleared("custom_message"), string(got.Payload))
 }
 
+// 用户消息末尾的写作块改稿块在公开视图里缩成只含 kind / title 的空壳（字符串与块数组两种 content 都处理，附件块保留）；
+// 助手消息里同样的字面、没有改稿块的用户消息原样保留。
+func TestPublicRedactsDraftEdits(t *testing.T) {
+	block := "\n\n<oryn-draft-edits>\nThe user edited these drafts from your earlier replies in place. The text below is the current version of each; build on it rather than on your original wording.\n" +
+		"<draft kind=\"email\" title=\"A &quot;B&quot;\">\nBODY-ONE\n</draft>\n<draft kind=\"doc\" title=\"\">\nBODY-TWO with <\\/draft> escaped\n</draft>\n</oryn-draft-edits>"
+	attach := "\n\n<oryn-attachments>\n- a.txt (text/plain, 3 bytes)\n</oryn-attachments>"
+	want := "hi\n\n<oryn-draft-edits>\n<draft kind=\"email\" title=\"A &quot;B&quot;\">\n</draft>\n<draft kind=\"doc\" title=\"\">\n</draft>\n</oryn-draft-edits>"
+	userText := func(e Entry) string {
+		r, ok := parseRaw(e)
+		require.True(t, ok)
+		return blockText(blocks(r.Content))
+	}
+
+	got, ok := Public(Entry{File: "a.jsonl", Type: "message", Payload: msg("user", "hi"+block, nil)})
+	require.True(t, ok)
+	assert.Equal(t, want, userText(got))
+	assert.NotContains(t, string(got.Payload), "BODY-")
+
+	got, ok = Public(Entry{File: "a.jsonl", Type: "message", Payload: msg("user", []any{text("hi" + block + attach), map[string]any{"type": "image", "data": "x"}}, nil)})
+	require.True(t, ok)
+	assert.Equal(t, want+attach, userText(got))
+	assert.Contains(t, string(got.Payload), `"type":"image"`)
+
+	for _, p := range []json.RawMessage{msg("assistant", "hi"+block, nil), msg("user", "plain <draft kind=\"email\" title=\"x\">", nil)} {
+		got, ok = Public(Entry{File: "a.jsonl", Type: "message", Payload: p})
+		require.True(t, ok)
+		assert.Equal(t, string(p), string(got.Payload))
+	}
+}
+
 func TestSnippet(t *testing.T) {
 	assert.Equal(t, "Title Done: item one item two quoted", Snippet("# Title\n\nDone:\n- item one\n* item two\n> quoted", 200))
 	assert.Equal(t, "see code after", Snippet("see\n```go\ncode\n```\nafter", 200))

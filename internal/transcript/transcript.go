@@ -6,6 +6,7 @@
 package transcript
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -260,7 +261,8 @@ var publicTypes = map[string]bool{
 
 // Public 返回条目的公开视图。子 agent 文件 → ok=false（不公开）。
 // 类型不在白名单、`role ∈ {custom, hookMessage}` 且 `display:false` 的消息、`display:false` 的 custom_message
-// → Payload 换成 `{"type":"<type>"}`（保留链、清空内容）；其余原样返回。
+// → Payload 换成 `{"type":"<type>"}`（保留链、清空内容）；用户消息末尾的写作块改稿块缩成只含 kind / title 的空壳
+// （见 redactDraftEdits）；其余原样返回。
 func Public(e Entry) (Entry, bool) {
 	if !IsMainFile(e.File) {
 		return Entry{}, false
@@ -270,8 +272,40 @@ func Public(e Entry) (Entry, bool) {
 			Type string `json:"type"`
 		}{e.Type})
 		e.Payload = b
+		return e, true
+	}
+	if e.Type == "message" {
+		e.Payload, _ = redactDraftEdits(e.Payload)
 	}
 	return e, true
+}
+
+// PublicLiveMessage 返回实时帧里一条消息对象的公开形态（与已入库条目同一条 Public 规则）：
+// `display:false` 的注入消息与非对象 → ok=false（不发）；用户消息的改稿块缩成空壳；其余原样返回。
+func PublicLiveMessage(msg json.RawMessage) (_ json.RawMessage, ok bool) {
+	msg = bytes.TrimSpace(msg)
+	if len(msg) == 0 || msg[0] != '{' {
+		return nil, false
+	}
+	payload := make([]byte, 0, len(msg)+12)
+	payload = append(payload, `{"message":`...)
+	payload = append(payload, msg...)
+	payload = append(payload, '}')
+	e := Entry{File: "live.jsonl", Type: "message", Payload: payload}
+	if hiddenByDisplay(e) {
+		return nil, false
+	}
+	red, changed := redactDraftEdits(payload)
+	if !changed {
+		return msg, true
+	}
+	var p struct {
+		Message json.RawMessage `json:"message"`
+	}
+	if json.Unmarshal(red, &p) != nil || len(p.Message) == 0 {
+		return nil, false
+	}
+	return p.Message, true
 }
 
 // hiddenByDisplay 报告条目是否是 `display:false` 的注入消息。

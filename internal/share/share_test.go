@@ -897,3 +897,29 @@ func TestSnapshotFrozenAfterRewrite(t *testing.T) {
 	assert.NotContains(t, md.Body.String(), "rewritten")
 	assert.NotContains(t, md.Body.String(), "Renamed")
 }
+
+// 公开面不带写作块改稿全文（主人没发出去的私人草稿）：条目分页、实时补发与 `.md` 都只剩草稿的 kind / title。
+func TestPublicEntriesRedactDraftEdits(t *testing.T) {
+	e := newEnv(t)
+	e.thread(tid, "Drafts", nil)
+	edited := "make it formal\n\n<oryn-draft-edits>\nThe user edited these drafts from your earlier replies in place. The text below is the current version of each; build on it rather than on your original wording.\n" +
+		"<draft kind=\"email\" title=\"Friday sync\">\nDear Sam, PRIVATE-DRAFT-BODY\n</draft>\n</oryn-draft-edits>"
+	e.add(tid, "s1.jsonl", "a0", "", "message", msg("assistant", "```draft-email subject=\"Friday sync\"\nHi Sam\n```"))
+	e.add(tid, "s1.jsonl", "u1", "a0", "message", msg("user", edited))
+	e.leaf(tid, "u1")
+	for _, mode := range []apigen.ShareMode{apigen.ShareModeSnapshot, apigen.ShareModeLive} {
+		sh, err := e.svc.Create(e.ctx, tid, mode, false)
+		require.NoError(t, err)
+		got := e.allEntries(sh.Slug, 500)
+		require.Equal(t, []string{"a0", "u1"}, ids(got))
+		b, _ := json.Marshal(got)
+		assert.NotContains(t, string(b), "PRIVATE-DRAFT-BODY", mode)
+		assert.NotContains(t, string(b), "build on it", mode)
+		text := payloadOf(got[1])["message"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"]
+		assert.Equal(t, "make it formal\n\n<oryn-draft-edits>\n<draft kind=\"email\" title=\"Friday sync\">\n</draft>\n</oryn-draft-edits>", text, mode)
+		md := do(t, e.svc.PageHandler(spa()), http.MethodGet, "/s/"+sh.Slug+".md")
+		require.Equal(t, http.StatusOK, md.Code)
+		assert.NotContains(t, md.Body.String(), "PRIVATE-DRAFT-BODY", mode)
+		assert.Contains(t, md.Body.String(), "*[edited draft: Friday sync]*", mode)
+	}
+}
