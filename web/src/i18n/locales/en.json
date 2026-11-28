@@ -1460,7 +1460,8 @@
 		"app_unavailable": "This app isn't available right now. Try again in a few seconds.",
 		"reauth_required": "Verify it's you first. The check lasts 5 minutes.",
 		"last_passkey": "This is your last passkey, so it can't be deleted.",
-		"last_login_method": "This is your only sign-in method, so it can't be turned off. Add a passkey first."
+		"last_login_method": "This is your only sign-in method, so it can't be turned off. Add a passkey first.",
+		"reauth_failed": "Wrong password or code. Try again with the next code; each code works once."
 	},
 	"pair": {
 		"backToApp": "Back to the Oryn app",

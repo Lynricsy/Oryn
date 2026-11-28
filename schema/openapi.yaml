@@ -460,7 +460,7 @@ paths:
       tags: [auth]
       operationId: passwordReauth
       summary: 用密码 + TOTP 验证码重新验证当前会话；此后 5 分钟内可做敏感操作
-      description: 只接受网页会话与 App 会话。错误规则同 `authPasswordLogin`。
+      description: 只接受网页会话与 App 会话。密码或验证码不对（含验证码已用过）→ 403 reauth_failed（不是 401：会话本身仍有效，客户端不应当成登录失效）。
       security:
         - cookieAuth: []
           csrfHeader: []

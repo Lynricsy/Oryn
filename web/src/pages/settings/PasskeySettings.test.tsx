@@ -12,7 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Schemas } from "../../api/client";
+import { type Schemas, UNAUTHORIZED_EVENT } from "../../api/client";
 import { confirmStore } from "../../lib/confirm";
 import { answerConfirm } from "../../test/confirm";
 import PasskeySettings from "./PasskeySettings";
@@ -78,6 +78,17 @@ async function handle(req: Request): Promise<Response> {
 		return Response.json({ verifiedAt: at, validUntil: reauthValidUntil });
 	}
 	if (path === "/api/v1/auth/password/reauth") {
+		// 与真实服务端一致：复核凭据不对是 403 reauth_failed，不是 401
+		const ok =
+			body !== null &&
+			typeof body === "object" &&
+			"password" in body &&
+			body.password === "correct horse";
+		if (!ok)
+			return Response.json(
+				{ code: "reauth_failed", message: "密码或验证码错误" },
+				{ status: 403 },
+			);
 		const at = Date.now();
 		reauthValidUntil = at + 300_000;
 		return Response.json({ verifiedAt: at, validUntil: reauthValidUntil });
@@ -318,6 +329,45 @@ describe("已启用密码登录时的重新验证", () => {
 			]),
 		);
 		expect(startAuthentication).toHaveBeenCalledTimes(1);
+	});
+
+	it("密码或验证码错：留在对话框显示错误、清空验证码，不当成会话失效，重试成功后才 DELETE", async () => {
+		const lost = vi.fn();
+		window.addEventListener(UNAUTHORIZED_EVENT, lost);
+		try {
+			const verify = await openVerify();
+			fireEvent.change(screen.getByLabelText("密码"), {
+				target: { value: "wrong horse" },
+			});
+			fireEvent.change(screen.getByLabelText("验证码"), {
+				target: { value: "123456" },
+			});
+			fireEvent.click(verify);
+			expect(await screen.findByRole("alert")).toHaveTextContent(
+				"密码或验证码错误",
+			);
+			expect(screen.getByLabelText("验证码")).toHaveValue("");
+			expect(lost).not.toHaveBeenCalled();
+			expect(calls).toEqual(["POST /api/v1/auth/password/reauth"]);
+
+			fireEvent.change(screen.getByLabelText("密码"), {
+				target: { value: "correct horse" },
+			});
+			fireEvent.change(screen.getByLabelText("验证码"), {
+				target: { value: "654321" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "验证" }));
+			await waitFor(() =>
+				expect(calls).toEqual([
+					"POST /api/v1/auth/password/reauth",
+					"POST /api/v1/auth/password/reauth",
+					"DELETE /api/v1/auth/passkeys/pk-yubi",
+				]),
+			);
+			expect(lost).not.toHaveBeenCalled();
+		} finally {
+			window.removeEventListener(UNAUTHORIZED_EVENT, lost);
+		}
 	});
 
 	it("取消对话框：不验证、不删除、不显示错误", async () => {

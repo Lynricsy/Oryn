@@ -100,6 +100,129 @@ function useCeremony() {
 	return { busy, error, run };
 }
 
+/**
+ * 重新验证对话框（已启用密码登录时）：密码 + 验证码；`passkey` 时还可改用 Passkey。
+ * 验证失败留在对话框里显示错误并清空验证码（同一个码只能用一次）；关掉对话框 = 取消。
+ */
+function VerifyDialog({
+	passkey,
+	onDone,
+}: {
+	passkey: boolean;
+	onDone: (ok: boolean) => void;
+}) {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const formId = useId();
+	const [password, setPassword] = useState("");
+	const [code, setCode] = useState("");
+	const op = useCeremony();
+	const valid = password !== "" && isTotpCode(code);
+	const withPassword = async () => {
+		if (!valid) return;
+		if (await op.run(() => passwordReauth(qc, { password, code })))
+			onDone(true);
+		else setCode("");
+	};
+	const withPasskey = async () => {
+		if (await op.run(() => reauth(qc))) onDone(true);
+	};
+	return (
+		<Dialog
+			open
+			onClose={() => onDone(false)}
+			title={t("account.passkeys.verifyTitle")}
+			footer={
+				<>
+					<Button onClick={() => onDone(false)}>{t("common.cancel")}</Button>
+					{passkey && (
+						<Button disabled={op.busy} onClick={() => void withPasskey()}>
+							{t("account.passkeys.verifyAction")}
+						</Button>
+					)}
+					<Button
+						type="submit"
+						form={formId}
+						variant="primary"
+						disabled={op.busy || !valid}
+					>
+						{t("account.password.verifyAction")}
+					</Button>
+				</>
+			}
+		>
+			<form
+				id={formId}
+				className="flex flex-col gap-3"
+				onSubmit={(e) => {
+					e.preventDefault();
+					void withPassword();
+				}}
+			>
+				<p className="text-muted text-sm">{t("account.password.verifyBody")}</p>
+				<Field label={t("auth.password")}>
+					<TextInput
+						type="password"
+						autoFocus
+						autoComplete="current-password"
+						value={password}
+						onChange={(e) => setPassword(e.target.value)}
+					/>
+				</Field>
+				<TotpCodeInput value={code} onChange={setCode} />
+				<ErrorText error={op.error} />
+			</form>
+		</Dialog>
+	);
+}
+
+/**
+ * 重新验证：缓存里还剩 5 秒以上直接放行；否则按可用方式验证——只有 Passkey 时先确认再发起系统提示，
+ * 已启用密码登录时打开 `VerifyDialog`（能用 Passkey 时对话框里可改用 Passkey）。`dialog` 要渲染出来。
+ */
+function useEnsureVerified(webauthn: boolean): {
+	ensureVerified: EnsureVerified;
+	dialog: ReactNode;
+} {
+	const { t } = useTranslation();
+	const qc = useQueryClient();
+	const [pending, setPending] = useState<{
+		passkey: boolean;
+		resolve: (ok: boolean) => void;
+	} | null>(null);
+	const ensureVerified = async (): Promise<boolean> => {
+		const until =
+			qc.getQueryData<Schemas["PasskeyList"]>(passkeyKeys.list)
+				?.reauthValidUntil ?? null;
+		if (until !== null && until - Date.now() > REAUTH_MARGIN_MS) return true;
+		const me = qc.getQueryData<Schemas["Me"]>(qk.me);
+		if (me?.passwordEnabled) {
+			const passkey = webauthn && me.passkeyCount !== 0;
+			return new Promise((resolve) => setPending({ passkey, resolve }));
+		}
+		if (
+			!(await confirmAction({
+				title: t("account.passkeys.verifyTitle"),
+				body: t("account.passkeys.verifyBody"),
+				action: t("account.passkeys.verifyAction"),
+			}))
+		)
+			return false;
+		await reauth(qc);
+		return true;
+	};
+	const dialog = pending && (
+		<VerifyDialog
+			passkey={pending.passkey}
+			onDone={(ok) => {
+				pending.resolve(ok);
+				setPending(null);
+			}}
+		/>
+	);
+	return { ensureVerified, dialog };
+}
+
 function useFormatDay(): (ts: number) => string {
 	const { i18n } = useTranslation();
 	return (ts) =>

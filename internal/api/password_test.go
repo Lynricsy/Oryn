@@ -142,7 +142,10 @@ func TestPasswordTotpLogin(t *testing.T) {
 	assert.Equal(t, 401, login(pw1, h2TOTP(t, en.Secret, step)).status, "旧密码与旧密钥作废")
 
 	// 5. 重新验证
-	assert.Equal(t, 401, e.do("POST", "/api/v1/auth/password/reauth", s1c, map[string]string{"password": pw1, "code": h2TOTP(t, en2.Secret, step)}).status)
+	r = e.do("POST", "/api/v1/auth/password/reauth", s1c, map[string]string{"password": pw1, "code": h2TOTP(t, en2.Secret, step)})
+	assert.Equal(t, 403, r.status, "复核失败不是会话失效，不能用 401")
+	assert.Equal(t, "reauth_failed", r.code(t))
+	assert.Equal(t, 200, e.do("GET", "/api/v1/me", h2Cred{cookie: s1}, nil).status)
 	r = e.do("POST", "/api/v1/auth/password/reauth", s1c, map[string]string{"password": pw2, "code": h2TOTP(t, en2.Secret, step)})
 	require.Equal(t, 200, r.status, string(r.body))
 	var re struct{ VerifiedAt, ValidUntil int64 }

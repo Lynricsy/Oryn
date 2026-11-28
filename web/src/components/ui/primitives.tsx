@@ -1013,6 +1013,7 @@ const FRIENDLY_CODES = [
 	"reauth_required",
 	"last_passkey",
 	"last_login_method",
+	"reauth_failed",
 ] as const;
 
 type FriendlyCode = (typeof FRIENDLY_CODES)[number];

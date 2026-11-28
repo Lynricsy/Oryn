@@ -54,6 +54,8 @@ const (
 
 var (
 	errBadPassword = newErr(http.StatusUnauthorized, "unauthorized", "密码或验证码错误")
+	// errReauthFailed 是已登录会话复核时凭据不对：用 403，不能用 401——客户端把 401 当成会话失效，会直接踢回登录页。
+	errReauthFailed = newErr(http.StatusForbidden, "reauth_failed", "密码或验证码错误")
 	errEnrollCode  = newErr(http.StatusBadRequest, "invalid_request", "验证码不对：请确认验证器里添加的是这次显示的密钥，并且设备时间准确")
 	totpEncoding   = base32.StdEncoding.WithPadding(base32.NoPadding)
 )
@@ -306,6 +308,7 @@ func (s *Service) LoginWithPassword(ctx context.Context, r *http.Request, passwo
 }
 
 // ReauthWithPassword 用密码 + 验证码重新验证当前会话，把验证时间记为此刻并返回它。
+// 凭据不对返回 403 reauth_failed（会话本身仍有效，留在原处重试）。
 func (s *Service) ReauthWithPassword(ctx context.Context, p Principal, password, code string) (time.Time, error) {
 	if err := requireOwnerSession(p); err != nil {
 		return time.Time{}, err
@@ -314,6 +317,9 @@ func (s *Service) ReauthWithPassword(ctx context.Context, p Principal, password,
 	err := s.checkPassword(ctx, password, code, func(q *db.Queries) error {
 		return q.TouchWebSessionVerified(ctx, db.TouchWebSessionVerifiedParams{VerifiedAt: &ms, IDHash: p.ID})
 	})
+	if errors.Is(err, errBadPassword) {
+		return time.Time{}, errReauthFailed
+	}
 	if err != nil {
 		return time.Time{}, err
 	}

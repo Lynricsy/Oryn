@@ -1460,7 +1460,8 @@
 		"app_unavailable": "这个应用暂时不可用，过几秒再试",
 		"reauth_required": "需要先验证身份，5 分钟内有效",
 		"last_passkey": "这是最后一把 Passkey，不能删除",
-		"last_login_method": "这是唯一的登录方式，不能关闭。请先添加一把 Passkey"
+		"last_login_method": "这是唯一的登录方式，不能关闭。请先添加一把 Passkey",
+		"reauth_failed": "密码或验证码错误，请重新输入（验证码只能用一次，等下一个）"
 	},
 	"pair": {
 		"backToApp": "返回 Oryn App",
