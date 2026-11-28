@@ -47,7 +47,7 @@ var m2Tables = []string{
 	"project_repos", "project_snapshots", "project_webhooks", "projects", "providers", "published_files", "push_subscriptions", "recovery_codes", "repo_commit_threads", "repo_pushes",
 	"research_mined", "research_runs", "research_settings", "research_topics", "role_avatars", "runners", "sandboxes", "schedule_runs", "schedule_webhooks", "schedules",
 	"search_docs", "search_fts", "search_fts_config", "search_fts_content", "search_fts_data", "search_fts_docsize", "search_fts_idx", "search_state",
-	"secrets", "spaces", "ssh_audit", "ssh_hosts", "ssh_keys", "stats_state", "thread_browser_relay_bindings", "thread_commits", "thread_issues", "thread_labels", "thread_pulls", "thread_reports", "thread_share_entries",
+	"secrets", "spaces", "ssh_audit", "ssh_hosts", "ssh_keys", "stats_state", "thread_browser_relay_bindings", "thread_commits", "thread_drafts", "thread_issues", "thread_labels", "thread_pulls", "thread_reports", "thread_share_entries",
 	"thread_share_identities", "thread_shares", "threads", "tool_calls", "tool_q", "turn_q", "turns", "usage_q", "usage_records", "web_sessions",
 }
 

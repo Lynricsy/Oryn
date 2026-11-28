@@ -95,6 +95,8 @@ type pendingCmd struct {
 	// omfg 是客户端发起的 omfg 命令在保存位置对话框里的作答记录（M12.2，admitOmfgLocked / noteOmfgChoiceLocked）；
 	// 其它命令为 nil。授权随命令结束（应答、失败、删除）一起消失。
 	omfg *omfgChoice
+	// drafts 是这条消息附上的改稿送达标记；命令在入队前失败时据此回滚（见 failCmd）。
+	drafts []draftMark
 }
 
 // responseHead 是应答中本包关心的字段。
@@ -1330,8 +1332,9 @@ func (s *Service) sshSelfManaged(ctx context.Context, t *thread) bool {
 
 // command 是 Command 与 Deliver 的共同主体。originAuto（自动化投递）不清未读、不通知 Seen、不记用户交互
 // （记 agent 活动），唤醒逻辑相同。tag 是带标签投递的标签（只由 Deliver 给出）；帧上的 orynTag 一律删除丢弃。
-// 返回已登记的未决命令（只读查询与带附件的命令返回 nil）。
-func (s *Service) command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage), origin cmdOrigin, tag string) (*pendingCmd, error) {
+// 返回已登记的未决命令（只读查询与带附件的命令返回 nil）。用户发出的消息命令会带上尚未交给 agent 的写作块改稿
+// （见 takePendingDrafts）；命令未被受理时撤销送达标记。
+func (s *Service) command(ctx context.Context, threadID string, frame json.RawMessage, reply func(json.RawMessage), origin cmdOrigin, tag string) (_ *pendingCmd, err error) {
 	route, cmdType := RouteCommand(frame)
 	switch route {
 	case RouteInvalidFrame:
@@ -1354,6 +1357,24 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 	t, err := s.get(ctx, threadID)
 	if err != nil {
 		return nil, err
+	}
+	var drafts []draftMark
+	if messageCommands[cmdType] && origin == originUser {
+		// 改稿块必须早于附件块追加（附件块保持在消息最后）；读库失败不阻断用户消息
+		block, marks, derr := s.takePendingDrafts(ctx, threadID)
+		if derr != nil {
+			slog.Warn("threads: 读取待送达改稿失败", "thread", threadID, "err", derr)
+		} else if block != "" {
+			drafts = marks
+			defer func() {
+				if err != nil {
+					s.restoreDrafts(context.WithoutCancel(ctx), threadID, drafts)
+				}
+			}()
+			if frame, err = appendMessage(frame, block); err != nil {
+				return nil, errf(RouteInvalidFrame, err.Error())
+			}
+		}
 	}
 	if t.kind != KindWork {
 		if !coordinatorAllowed(cmdType) {
@@ -1380,7 +1401,7 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		return nil, errf(RouteManaged, "SSH 主机由 Oryn 集中管理：请到 设置 → SSH 主机 里添加或修改")
 	}
 	if len(ids) > 0 {
-		return nil, s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply)
+		return nil, s.commandWithAttachments(ctx, t, cmdType, frame, ids, reply, drafts)
 	}
 	id := s.newCmdID()
 	line, err := omprpc.SetID(frame, id)
@@ -1403,7 +1424,7 @@ func (s *Service) command(ctx context.Context, threadID string, frame json.RawMe
 		t.mu.Unlock()
 		return nil, err
 	}
-	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin, tag: tag}
+	p := &pendingCmd{cmdType: cmdType, reply: reply, id: id, origin: origin, tag: tag, drafts: drafts}
 	if cmdType == "switch_leaf" || cmdType == "navigate_tree" {
 		p.leafBefore, p.revBefore = copyStr(t.leaf), t.transcriptRev
 	}
@@ -1585,7 +1606,7 @@ func asThreadErr(err error) error {
 
 // commandWithAttachments 处理带附件的客户端命令：受理时即在消息顺序队列里占位，记用户交互、必要时唤醒，
 // 等 agent 就绪后投递附件、追加附件块，再按受理顺序入队；投递失败时以合成的失败应答结束该命令，并向线程广播一条 notice。
-func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType string, frame []byte, ids []string, reply func(json.RawMessage)) error {
+func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType string, frame []byte, ids []string, reply func(json.RawMessage), drafts []draftMark) error {
 	if s.attach == nil {
 		return errf("invalid", "attachments are not supported")
 	}
@@ -1599,7 +1620,7 @@ func (s *Service) commandWithAttachments(ctx context.Context, t *thread, cmdType
 		t.mu.Unlock()
 		return err
 	}
-	if err := s.startDeliveryLocked(t, frame, ids, &pendingCmd{cmdType: cmdType, reply: reply}, false, s.cfg.CallTimeout); err != nil {
+	if err := s.startDeliveryLocked(t, frame, ids, &pendingCmd{cmdType: cmdType, reply: reply, drafts: drafts}, false, s.cfg.CallTimeout); err != nil {
 		t.mu.Unlock()
 		return err
 	}
@@ -1716,8 +1737,11 @@ func (s *Service) runDelivery(ctx context.Context, t *thread, sl *msgSlot, frame
 	}
 }
 
-// failCmd 以合成的失败应答结束尚未入队的命令（带标签时按 error 结算）。
+// failCmd 以合成的失败应答结束尚未入队的命令（带标签时按 error 结算）；随命令附上的改稿撤销送达标记。
 func (s *Service) failCmd(t *thread, p *pendingCmd, reason string) {
+	if len(p.drafts) > 0 {
+		s.restoreDrafts(context.Background(), t.id, p.drafts)
+	}
 	resp, _ := json.Marshal(map[string]any{"type": "response", "id": s.newCmdID(), "command": p.cmdType, "success": false, "error": reason})
 	s.deliver(p, resp)
 	s.failTagged(t.id, p, reason)

@@ -3940,7 +3940,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径） */
+        /** 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹、单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf），或单个 .md / .markdown 文件（导入为文档 artifact；每个 part 的字段名是相对路径） */
         post: operations["importArtifact"];
         delete?: never;
         options?: never;
@@ -5397,6 +5397,52 @@ export interface paths {
         post?: never;
         /** 删除线程内定时（没有 → 404 `schedule_not_found`） */
         delete: operations["deleteThreadSchedule"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        /** 本线程写作块的用户改稿（按 `updatedAt` 升序） */
+        get: operations["listThreadDrafts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/threads/{id}/drafts/{entryId}/{block}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+                /** @description 写作块所在助手消息的转录条目 id */
+                entryId: components["parameters"]["DraftEntryIdPath"];
+                /** @description 块键 `<contentIndex>.<ordinal>` */
+                block: components["parameters"]["DraftBlockPath"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 保存写作块改稿（没有则新建，有则替换全文；下一条用户消息会把未送达的改稿附给 agent）
+         * @description `block` 不合格式、`kind` 非法、`title` 超 200 字符或 `text` 超 100 KiB → 400 `invalid_draft`；`entryId` 不是本线程的转录条目 → 404 `entry_not_found`。
+         */
+        put: operations["putThreadDraft"];
+        post?: never;
+        /** 删除写作块改稿（没有 → 404 `draft_not_found`） */
+        delete: operations["deleteThreadDraft"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10022,6 +10068,41 @@ export interface components {
             /** @description 新线程加入该 Space（M9；不存在 → 404 `space_not_found`）；未给 `projectId` 时取 Space 的项目 */
             spaceId?: components["schemas"]["SpaceId"];
         };
+        /**
+         * @description 写作块类型（围栏语言 `draft-email` / `draft-message` / `draft-doc`）
+         * @enum {string}
+         */
+        DraftKind: "email" | "message" | "doc";
+        ThreadDraftInput: {
+            kind: components["schemas"]["DraftKind"];
+            /** @description 块的显示标题 */
+            title: string;
+            /** @description 改稿 Markdown 全文（≤ 100 KiB） */
+            text: string;
+        };
+        ThreadDraft: {
+            /** @description 写作块所在助手消息的转录条目 id */
+            entryId: string;
+            /** @description 块键 `<contentIndex>.<ordinal>` */
+            block: string;
+            kind: components["schemas"]["DraftKind"];
+            title: string;
+            /** @description 改稿 Markdown 全文 */
+            text: string;
+            /**
+             * Format: int64
+             * @description 最后保存时间（毫秒）
+             */
+            updatedAt: number;
+            /**
+             * Format: int64
+             * @description 已随用户消息交给 agent 的那一版的 `updatedAt`；未送达过则省略
+             */
+            deliveredAt?: number;
+        };
+        ThreadDraftList: {
+            drafts: components["schemas"]["ThreadDraft"][];
+        };
         Thread: {
             id: components["schemas"]["ThreadId"];
             projectId?: components["schemas"]["ProjectId"];
@@ -13858,6 +13939,10 @@ export interface components {
         ProjectIdPath: components["schemas"]["ProjectId"];
         ProviderIdPath: components["schemas"]["ProviderId"];
         ThreadIdPath: components["schemas"]["ThreadId"];
+        /** @description 写作块所在助手消息的转录条目 id */
+        DraftEntryIdPath: string;
+        /** @description 块键 `<contentIndex>.<ordinal>` */
+        DraftBlockPath: string;
         MemoryDocumentIdPath: components["schemas"]["MemoryDocumentId"];
         MemoryCandidateIdPath: string;
         MemoryExportIdPath: string;
@@ -22433,6 +22518,85 @@ export interface operations {
             header?: never;
             path: {
                 id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listThreadDrafts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 改稿 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadDraftList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putThreadDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+                /** @description 写作块所在助手消息的转录条目 id */
+                entryId: components["parameters"]["DraftEntryIdPath"];
+                /** @description 块键 `<contentIndex>.<ordinal>` */
+                block: components["parameters"]["DraftBlockPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadDraftInput"];
+            };
+        };
+        responses: {
+            /** @description 改稿 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadDraft"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteThreadDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ThreadIdPath"];
+                /** @description 写作块所在助手消息的转录条目 id */
+                entryId: components["parameters"]["DraftEntryIdPath"];
+                /** @description 块键 `<contentIndex>.<ordinal>` */
+                block: components["parameters"]["DraftBlockPath"];
             };
             cookie?: never;
         };

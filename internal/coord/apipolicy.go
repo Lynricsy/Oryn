@@ -111,7 +111,7 @@ func buildAPIPolicy() map[string]opPolicy {
 	deny := func(reason string) opPolicy { return opPolicy{Deny: reason} }
 
 	// threads
-	set("threads", opRead, none, "listThreads", "getThread", "listThreadEntries", "listThreadAttachments")
+	set("threads", opRead, none, "listThreads", "getThread", "listThreadEntries", "listThreadAttachments", "listThreadDrafts")
 	set("threads", opWrite, thread, "updateThread", "wakeThread", "removeThreadWorktree")
 	set("threads", opWrite, opPolicy{Guard: guardThread, Timeout: 5 * time.Minute}, "forkThread")
 	set("threads", opConfirm, thread, "deleteThread")
@@ -119,6 +119,7 @@ func buildAPIPolicy() map[string]opPolicy {
 	set("threads", opDeny, deny(denyNative("create_thread")), "createThread")
 	set("threads", opDeny, deny(denyBinary("pass library file ids in create_thread's files, or use put_thread_file")), "uploadAttachment")
 	set("threads", opDeny, deny(denyBinary("use read_thread_file on the copy in the thread's orb")), "getAttachmentContent")
+	set("threads", opDeny, deny("draft edits are the owner's own edits; write a new writing block instead"), "putThreadDraft", "deleteThreadDraft")
 	// 视图帧（M33）：只有浏览器里的 HTML 视图用，令牌就是帧的访问凭证
 	set("threads", opDeny, deny(denyClient), "openViewFrame")
 

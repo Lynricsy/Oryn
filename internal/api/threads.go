@@ -50,6 +50,9 @@ var threadErrStatus = map[string]int{
 	threads.CodeBoxStopped:     http.StatusConflict,
 	threads.CodeBoxUnsupported: http.StatusConflict,
 	threads.CodeOrbIsBox:       http.StatusConflict,
+	// 写作块改稿
+	"draft_not_found": http.StatusNotFound,
+	"entry_not_found": http.StatusNotFound,
 }
 
 func writeThreadErr(w http.ResponseWriter, err error) {

@@ -959,6 +959,27 @@ func (e DirInUseConflictCode) Valid() bool {
 	}
 }
 
+// Defines values for DraftKind.
+const (
+	Doc     DraftKind = "doc"
+	Email   DraftKind = "email"
+	Message DraftKind = "message"
+)
+
+// Valid indicates whether the value is a known member of the DraftKind enum.
+func (e DraftKind) Valid() bool {
+	switch e {
+	case Doc:
+		return true
+	case Email:
+		return true
+	case Message:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ForkThreadRequestEnv.
 const (
 	Copy  ForkThreadRequestEnv = "copy"
@@ -6702,6 +6723,9 @@ type DirInUseConflict struct {
 
 // DirInUseConflictCode defines model for DirInUseConflict.Code.
 type DirInUseConflictCode string
+
+// DraftKind 写作块类型（围栏语言 `draft-email` / `draft-message` / `draft-doc`）
+type DraftKind string
 
 // Entry 会话 JSONL 的一行（已复制入库）
 type Entry struct {
@@ -13186,6 +13210,45 @@ type ThreadBrowserRelayBindRequest struct {
 	DeviceID DeviceID `json:"deviceId"`
 }
 
+// ThreadDraft defines model for ThreadDraft.
+type ThreadDraft struct {
+	// Block 块键 `<contentIndex>.<ordinal>`
+	Block string `json:"block"`
+
+	// DeliveredAt 已随用户消息交给 agent 的那一版的 `updatedAt`；未送达过则省略
+	DeliveredAt *int64 `json:"deliveredAt,omitempty"`
+
+	// EntryID 写作块所在助手消息的转录条目 id
+	EntryID string `json:"entryId"`
+
+	// Kind 写作块类型（围栏语言 `draft-email` / `draft-message` / `draft-doc`）
+	Kind DraftKind `json:"kind"`
+
+	// Text 改稿 Markdown 全文
+	Text  string `json:"text"`
+	Title string `json:"title"`
+
+	// UpdatedAt 最后保存时间（毫秒）
+	UpdatedAt int64 `json:"updatedAt"`
+}
+
+// ThreadDraftInput defines model for ThreadDraftInput.
+type ThreadDraftInput struct {
+	// Kind 写作块类型（围栏语言 `draft-email` / `draft-message` / `draft-doc`）
+	Kind DraftKind `json:"kind"`
+
+	// Text 改稿 Markdown 全文（≤ 100 KiB）
+	Text string `json:"text"`
+
+	// Title 块的显示标题
+	Title string `json:"title"`
+}
+
+// ThreadDraftList defines model for ThreadDraftList.
+type ThreadDraftList struct {
+	Drafts []ThreadDraft `json:"drafts"`
+}
+
 // ThreadEnvelope defines model for ThreadEnvelope.
 type ThreadEnvelope struct {
 	Thread Thread `json:"thread"`
@@ -14350,6 +14413,12 @@ type BrowserProfileIDPath = BrowserProfileID
 
 // DeviceIDPath `dev_<ulid>`
 type DeviceIDPath = DeviceID
+
+// DraftBlockPath defines model for DraftBlockPath.
+type DraftBlockPath = string
+
+// DraftEntryIDPath defines model for DraftEntryIdPath.
+type DraftEntryIDPath = string
 
 // FromQuery UTC 毫秒时间戳
 type FromQuery = TimestampMs
@@ -15798,6 +15867,9 @@ type UpdateThreadJSONRequestBody = ThreadPatch
 
 // BindThreadBrowserRelayJSONRequestBody defines body for BindThreadBrowserRelay for application/json ContentType.
 type BindThreadBrowserRelayJSONRequestBody = ThreadBrowserRelayBindRequest
+
+// PutThreadDraftJSONRequestBody defines body for PutThreadDraft for application/json ContentType.
+type PutThreadDraftJSONRequestBody = ThreadDraftInput
 
 // ForkThreadJSONRequestBody defines body for ForkThread for application/json ContentType.
 type ForkThreadJSONRequestBody = ForkThreadRequest
@@ -18474,7 +18546,7 @@ type ServerInterface interface {
 	// GetArtifactCapabilities 本控制面的 artifact 能力（帧的寻址方式、能否渲染、能否向模型提问）
 	// (GET /api/v1/artifacts/capabilities)
 	GetArtifactCapabilities(w http.ResponseWriter, r *http.Request)
-	// ImportArtifact 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径）
+	// ImportArtifact 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹、单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf），或单个 .md / .markdown 文件（导入为文档 artifact；每个 part 的字段名是相对路径）
 	// (POST /api/v1/artifacts/import)
 	ImportArtifact(w http.ResponseWriter, r *http.Request, params ImportArtifactParams)
 	// DeleteArtifact 移到「最近删除」（保留 30 天）；`permanent=true` 永久删除回收站里的 artifact
@@ -19608,6 +19680,15 @@ type ServerInterface interface {
 	// BindThreadBrowserRelay 绑定线程到指定本机浏览器扩展设备（M27）
 	// (PUT /api/v1/threads/{id}/browser-relay)
 	BindThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// ListThreadDrafts 本线程写作块的用户改稿（按 `updatedAt` 升序）
+	// (GET /api/v1/threads/{id}/drafts)
+	ListThreadDrafts(w http.ResponseWriter, r *http.Request, id ThreadIDPath)
+	// DeleteThreadDraft 删除写作块改稿（没有 → 404 `draft_not_found`）
+	// (DELETE /api/v1/threads/{id}/drafts/{entryId}/{block})
+	DeleteThreadDraft(w http.ResponseWriter, r *http.Request, id ThreadIDPath, entryID DraftEntryIDPath, block DraftBlockPath)
+	// PutThreadDraft 保存写作块改稿（没有则新建，有则替换全文；下一条用户消息会把未送达的改稿附给 agent）
+	// (PUT /api/v1/threads/{id}/drafts/{entryId}/{block})
+	PutThreadDraft(w http.ResponseWriter, r *http.Request, id ThreadIDPath, entryID DraftEntryIDPath, block DraftBlockPath)
 	// ListThreadEntries 分页读取已复制条目（按 `seq` 升序）
 	// (GET /api/v1/threads/{id}/entries)
 	ListThreadEntries(w http.ResponseWriter, r *http.Request, id ThreadIDPath, params ListThreadEntriesParams)
@@ -19785,7 +19866,7 @@ func (_ Unimplemented) GetArtifactCapabilities(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// ImportArtifact 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径）
+// ImportArtifact 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹、单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf），或单个 .md / .markdown 文件（导入为文档 artifact；每个 part 的字段名是相对路径）
 // (POST /api/v1/artifacts/import)
 func (_ Unimplemented) ImportArtifact(w http.ResponseWriter, r *http.Request, params ImportArtifactParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -22050,6 +22131,24 @@ func (_ Unimplemented) GetThreadBrowserRelay(w http.ResponseWriter, r *http.Requ
 // BindThreadBrowserRelay 绑定线程到指定本机浏览器扩展设备（M27）
 // (PUT /api/v1/threads/{id}/browser-relay)
 func (_ Unimplemented) BindThreadBrowserRelay(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListThreadDrafts 本线程写作块的用户改稿（按 `updatedAt` 升序）
+// (GET /api/v1/threads/{id}/drafts)
+func (_ Unimplemented) ListThreadDrafts(w http.ResponseWriter, r *http.Request, id ThreadIDPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteThreadDraft 删除写作块改稿（没有 → 404 `draft_not_found`）
+// (DELETE /api/v1/threads/{id}/drafts/{entryId}/{block})
+func (_ Unimplemented) DeleteThreadDraft(w http.ResponseWriter, r *http.Request, id ThreadIDPath, entryID DraftEntryIDPath, block DraftBlockPath) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutThreadDraft 保存写作块改稿（没有则新建，有则替换全文；下一条用户消息会把未送达的改稿附给 agent）
+// (PUT /api/v1/threads/{id}/drafts/{entryId}/{block})
+func (_ Unimplemented) PutThreadDraft(w http.ResponseWriter, r *http.Request, id ThreadIDPath, entryID DraftEntryIDPath, block DraftBlockPath) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -33924,6 +34023,120 @@ func (siw *ServerInterfaceWrapper) BindThreadBrowserRelay(w http.ResponseWriter,
 	handler.ServeHTTP(w, r)
 }
 
+// ListThreadDrafts operation middleware
+func (siw *ServerInterfaceWrapper) ListThreadDrafts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListThreadDrafts(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteThreadDraft operation middleware
+func (siw *ServerInterfaceWrapper) DeleteThreadDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entryId" -------------
+	var entryID DraftEntryIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryId", chi.URLParam(r, "entryId"), &entryID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "block" -------------
+	var block DraftBlockPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "block", chi.URLParam(r, "block"), &block, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "block", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteThreadDraft(w, r, id, entryID, block)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutThreadDraft operation middleware
+func (siw *ServerInterfaceWrapper) PutThreadDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ThreadIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entryId" -------------
+	var entryID DraftEntryIDPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryId", chi.URLParam(r, "entryId"), &entryID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "block" -------------
+	var block DraftBlockPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "block", chi.URLParam(r, "block"), &block, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "block", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutThreadDraft(w, r, id, entryID, block)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListThreadEntries operation middleware
 func (siw *ServerInterfaceWrapper) ListThreadEntries(w http.ResponseWriter, r *http.Request) {
 
@@ -35597,6 +35810,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/v1/threads/{id}/schedule", wrapper.PutThreadSchedule)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/v1/threads/{id}/drafts", wrapper.ListThreadDrafts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/v1/threads/{id}/drafts/{entryId}/{block}", wrapper.DeleteThreadDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/v1/threads/{id}/drafts/{entryId}/{block}", wrapper.PutThreadDraft)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/github", wrapper.GetGitHubStatus)

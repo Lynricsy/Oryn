@@ -4778,7 +4778,7 @@ paths:
     post:
       tags: [artifacts]
       operationId: importArtifact
-      summary: 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹，或单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf；每个 part 的字段名是相对路径）
+      summary: 导入一个 HTML 文件、带 index.html / canvas.json 的文件夹、单个 Office 文件（docx docm xlsx xlsm pptx pptm pdf），或单个 .md / .markdown 文件（导入为文档 artifact；每个 part 的字段名是相对路径）
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -6540,6 +6540,58 @@ paths:
       tags: [schedules]
       operationId: deleteThreadSchedule
       summary: 删除线程内定时（没有 → 404 `schedule_not_found`）
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      responses:
+        '204': { description: 已删除 }
+        default: { $ref: '#/components/responses/Error' }
+
+  /api/v1/threads/{id}/drafts:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+    get:
+      tags: [threads]
+      operationId: listThreadDrafts
+      summary: 本线程写作块的用户改稿（按 `updatedAt` 升序）
+      responses:
+        '200':
+          description: 改稿
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadDraftList' }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/threads/{id}/drafts/{entryId}/{block}:
+    parameters:
+      - { $ref: '#/components/parameters/ThreadIdPath' }
+      - { $ref: '#/components/parameters/DraftEntryIdPath' }
+      - { $ref: '#/components/parameters/DraftBlockPath' }
+    put:
+      tags: [threads]
+      operationId: putThreadDraft
+      summary: 保存写作块改稿（没有则新建，有则替换全文；下一条用户消息会把未送达的改稿附给 agent）
+      description: '`block` 不合格式、`kind` 非法、`title` 超 200 字符或 `text` 超 100 KiB → 400 `invalid_draft`；`entryId` 不是本线程的转录条目 → 404 `entry_not_found`。'
+      security:
+        - cookieAuth: []
+          csrfHeader: []
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThreadDraftInput' }
+      responses:
+        '200':
+          description: 改稿
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadDraft' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [threads]
+      operationId: deleteThreadDraft
+      summary: 删除写作块改稿（没有 → 404 `draft_not_found`）
       security:
         - cookieAuth: []
           csrfHeader: []
@@ -8335,6 +8387,18 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/ThreadId' }
+    DraftEntryIdPath:
+      name: entryId
+      in: path
+      required: true
+      description: 写作块所在助手消息的转录条目 id
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    DraftBlockPath:
+      name: block
+      in: path
+      required: true
+      description: 块键 `<contentIndex>.<ordinal>`
+      schema: { type: string, pattern: '^\d{1,4}\.\d{1,4}$' }
     MemoryDocumentIdPath:
       name: documentId
       in: path
@@ -13054,6 +13118,35 @@ components:
           allOf:
             - $ref: '#/components/schemas/SpaceId'
           description: 新线程加入该 Space（M9；不存在 → 404 `space_not_found`）；未给 `projectId` 时取 Space 的项目
+    DraftKind:
+      type: string
+      enum: [email, message, doc]
+      description: 写作块类型（围栏语言 `draft-email` / `draft-message` / `draft-doc`）
+    ThreadDraftInput:
+      type: object
+      required: [kind, title, text]
+      properties:
+        kind: { $ref: '#/components/schemas/DraftKind' }
+        title: { type: string, maxLength: 200, description: 块的显示标题 }
+        text: { type: string, description: 改稿 Markdown 全文（≤ 100 KiB） }
+    ThreadDraft:
+      type: object
+      required: [entryId, block, kind, title, text, updatedAt]
+      properties:
+        entryId: { type: string, description: 写作块所在助手消息的转录条目 id }
+        block: { type: string, description: '块键 `<contentIndex>.<ordinal>`' }
+        kind: { $ref: '#/components/schemas/DraftKind' }
+        title: { type: string }
+        text: { type: string, description: 改稿 Markdown 全文 }
+        updatedAt: { type: integer, format: int64, description: 最后保存时间（毫秒） }
+        deliveredAt: { type: integer, format: int64, description: 已随用户消息交给 agent 的那一版的 `updatedAt`；未送达过则省略 }
+    ThreadDraftList:
+      type: object
+      required: [drafts]
+      properties:
+        drafts:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadDraft' }
     Thread:
       type: object
       required: [id, title, titleSource, state, stateChangedAt, pinned, labels, unread, createdAt, updatedAt]

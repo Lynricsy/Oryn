@@ -1461,6 +1461,17 @@ type ThreadCommit struct {
 	Ts       int64  `json:"ts"`
 }
 
+type ThreadDraft struct {
+	ThreadID    string `json:"threadId"`
+	EntryID     string `json:"entryId"`
+	Block       string `json:"block"`
+	Kind        string `json:"kind"`
+	Title       string `json:"title"`
+	Text        string `json:"text"`
+	UpdatedAt   int64  `json:"updatedAt"`
+	DeliveredAt *int64 `json:"deliveredAt"`
+}
+
 type ThreadIssue struct {
 	RepoID         int64   `json:"repoId"`
 	Number         int64   `json:"number"`
