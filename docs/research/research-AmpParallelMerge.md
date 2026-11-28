@@ -91,14 +91,16 @@ New Worktree 在仓库旁执行 `git worktree add`（`<repo>-<name>`，同名分
 
 ## 7. 对照 Oryn
 
-| 维度 | Amp | Oryn 现状 |
-|---|---|---|
-| 交付提示词可编辑 | 四个保存提示词，可改、可设成按钮 | `ship-prompt.ts` 写死 |
-| rebase 后跑测试 | 必须，且规定何时可以不重跑 | 托管提示词没有这一步 |
-| 实质性冲突 | 先问人 | 「resolving any conflicts」，agent 自行处理 |
-| 浅克隆 add/add 兜底 | 有 | 无 |
-| 托管仓库强推保护 | 无：主人与线程凭据都能强推、删除 main | 无（但有 30 天 saved ref）；暂不做 |
-| 跨线程消息来源标注与授权约束 | 标注来源，并要求未经主人同意不得并入对方改动 | `coord/tools.go` 的 `sourceLine` 标注「sent by an agent, not typed by the owner」，没有并入改动的约束 |
-| 派工时预先裁决语义冲突 | 协调者自发 | `internal/coord` 里没有分支、推送、合并相关指引 |
-| 集成线程 + 拉取别人改动的工具 | `download_thread_changes`：任一线程一次取回另一线程整份改动（取自服务端快照，源 orb 不在也行） | 只有全局助手能中转：`get_thread_changes` 列出改动 → 逐个 `fetch_thread_file` 存进文件库 → `put_thread_file` 或 `create_thread` 的 `files` 放进集成线程（`coord/filetools.go:101-117`，读文件时会唤醒源 orb）；工作线程和 Space 协调者没有这些工具 |
-| 汇总交付状态 | `list_space_threads.produced.landedSinceLatestRequest` | 线程有「已交付」标记；Space 侧是否汇总未核对 |
+调研时（2026-11-28）的对照；「已改」列是之后按本文做的改动。
+
+| 维度 | Amp | Oryn 调研时 | 已改 |
+|---|---|---|---|
+| 交付提示词可编辑 | 四个保存提示词，可改、可设成按钮 | `ship-prompt.ts` 写死 | 未改 |
+| rebase 后跑测试 | 必须，且规定何时可以不重跑 | 托管提示词没有这一步 | 托管提示词：rebase 后跑完整检查再推，被拒后只在解决冲突改了文件时重跑；基线同样失败才可忽略 |
+| 实质性冲突 | 先问人 | 「resolving any conflicts」，agent 自行处理 | 中止 rebase、先问主人 |
+| 浅克隆 add/add 兜底 | 有 | 无 | 先 `git fetch --unshallow` 再 rebase |
+| 托管仓库强推保护 | 无：主人与线程凭据都能强推、删除 main | 无（但有 30 天 saved ref） | 暂不做 |
+| 跨线程消息来源标注与授权约束 | 标注来源，并要求未经主人同意不得并入对方改动 | `coord/tools.go` 的 `sourceLine` 只标注来源 | orb 与 Runner 指引：他人改动只有自己派出或主人同意才并入 |
+| 派工时预先裁决语义冲突 | 协调者自发 | `internal/coord` 里没有相关指引 | 协调者与助手提示：写明彼此改动与合并后行为；主人没说就不写交付方式 |
+| 集成线程 + 拉取别人改动的工具 | `download_thread_changes`：任一线程取回另一线程改动文件的最终内容（服务端快照，源 orb 不在也行） | 只有全局助手能按文件中转（`get_thread_changes` → `fetch_thread_file` → `put_thread_file`） | `oryn thread pull <id>`：只限父子线程，git bundle 取回对方已提交与未提交的改动到 `refs/oryn/threads/<id>/{head,snapshot}`，保留合并基；源 orb 会被唤醒 |
+| 汇总交付状态 | `list_space_threads.produced.landedSinceLatestRequest` | 线程有「已交付」标记；Space 侧是否汇总未核对 | 未改 |
