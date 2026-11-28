@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# iOS 模拟器 CI 脚本的公共部分：ios-header-check.sh（原生页头演示）与 ios-e2e-check.sh（真实网页 + 真实触摸）
-# 都 source 它，几步用同一台模拟器。
+# iOS 模拟器 CI 脚本的公共部分：ios-header-check.sh（原生页头演示）、ios-e2e-check.sh（真实网页 + 真实触摸）、
+# ios-duo-check.sh（iPhone Duo 折叠往返）与 ios-readme-shots.sh（README 截图）都 source 它。
 # 下面函数设置的全局变量（app / out / bundle / summary / work / udid / data / log）由 source 它的脚本使用。
 # shellcheck disable=SC2034
 
@@ -56,6 +56,40 @@ sim_setup() {
   mkdir -p "$data/tmp"
 }
 
+# iPhone Duo：simctl 没有铰链命令，折叠、转屏与截图由 duoctl 驱动（github.com/skarol/duoctl，固定到 v0.2.1 的提交、
+# 从源码运行，不经 Homebrew tap）。它走模拟器的私有 HID 接口，每次折叠后读回状态、没生效就报错；Xcode 更新后可能失效。
+# 不用 `simctl io … screenConfig` 关屏模拟折叠：会让 SpringBoard 反复崩溃。
+duoctl_rev=c6ff3e961a9858fb061907448e702d7d1617dc4a # v0.2.1
+# duo_setup 之后是 duoctl 的路径；非空时 sim_shot 改用它截图（simctl 合上时截的是内屏，一片黑）
+duoctl=""
+
+# duo_setup：在 $work 下取出 duoctl，用支持 iPhone Duo 的最新 iOS 运行时新建一台模拟器（不启动），
+# 设置全局变量 udid、duo_os、duoctl；没有这样的运行时（需要 Xcode 27.1+）时报错并返回 1。调用方负责删除这台模拟器。
+duo_setup() {
+  git -C "$work" init -q duoctl
+  git -C "$work/duoctl" fetch -q --depth 1 https://github.com/skarol/duoctl.git "$duoctl_rev"
+  git -C "$work/duoctl" checkout -q FETCH_HEAD
+  local pick
+  pick=$(xcrun simctl list runtimes available -j | jq -c '
+    [.runtimes[] | select(.platform == "iOS")
+      | . as $r
+      | (($r.supportedDeviceTypes // []) | map(select(.name == "iPhone Duo")) | first) as $t
+      | select($t != null)
+      | {runtime: $r.identifier, version: $r.version, type: $t.identifier}]
+    | sort_by(.version | split(".") | map(tonumber)) | last // empty')
+  if [[ -z $pick ]]; then
+    echo "::error::没有支持 iPhone Duo 的 iOS 运行时（需要 Xcode 27.1+）" >&2
+    xcrun simctl list runtimes >&2 || true
+    return 1
+  fi
+  udid=$(xcrun simctl create "Oryn CI Duo" "$(jq -r .type <<<"$pick")" "$(jq -r .runtime <<<"$pick")")
+  duo_os=$(jq -r .version <<<"$pick")
+  duoctl="$work/duoctl/bin/duoctl"
+}
+
+# duo <duoctl 子命令…>：对当前这台 Duo 执行 duoctl
+duo() { "$duoctl" -d "$udid" "$@"; }
+
 # run <名字> <等待的事件> [要传给 App 的 SIMCTL_CHILD_* 赋值…]
 # 冷启动 App，等事件日志里出现该事件后截图到 <输出目录>/<名字>.png，日志存为 <名字>.jsonl。
 run() {
@@ -86,7 +120,11 @@ run() {
 sim_shot() {
   local f=$1 secs=$2 tmp="${1%.png}.part.png" pid i
   rm -f "$tmp"
-  xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>&1 &
+  if [[ -n $duoctl ]]; then
+    "$duoctl" -d "$udid" screenshot "$tmp" >/dev/null 2>&1 &
+  else
+    xcrun simctl io "$udid" screenshot "$tmp" >/dev/null 2>&1 &
+  fi
   pid=$!
   for ((i = 0; i < secs * 4; i++)); do
     if ! kill -0 "$pid" 2>/dev/null; then

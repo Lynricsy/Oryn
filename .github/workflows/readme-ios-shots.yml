@@ -1,8 +1,9 @@
 name: readme-ios-shots
 
-# README 手机三联的 iOS 原图：iOS 26+ 模拟器里的真实 App（不签名的 debug 模拟器包）打开带演示数据的 mock Web UI，
-# 原生液态玻璃底栏与页头由 UIKit 绘制，明暗各截三张，作为产物 readme-ios-shots 上传（web/src-tauri/ci/ios-readme-shots.sh）。
-# 合成到 docs/assets 在本机做：下载产物后 `ORYN_IOS_SHOTS=<目录> bun run shots:readme --only mobile-views`（见 docs/development.md）。
+# README 手机三联与 iPhone Duo 双拼的 iOS 原图：iOS 26+ 模拟器里的真实 App（不签名的 debug 模拟器包）打开带演示数据的 mock Web UI，
+# 原生液态玻璃底栏与页头由 UIKit 绘制；Duo 在同一会话里先截外屏、再展开截内屏（折叠用 duoctl）。明暗各一套，
+# 作为产物 readme-ios-shots 上传（web/src-tauri/ci/ios-readme-shots.sh）。
+# 合成到 docs/assets 在本机做：下载产物后 `ORYN_IOS_SHOTS=<目录> bun run shots:readme --only mobile-views,duo-views`（见 docs/development.md）。
 # 触发：推送 readme-shots/** 分支，或手动运行。只读权限、不取任何 secret。
 # 供应链约束同 mobile.yml：第三方 action 钉到完整提交 SHA；checkout 不保留凭据。
 on:
@@ -70,7 +71,7 @@ jobs:
         run: bun run tauri ios build --debug --target aarch64-sim --no-sign --ci
 
       - name: 模拟器截图
-        timeout-minutes: 30
+        timeout-minutes: 50
         shell: bash
         run: |
           set -euo pipefail

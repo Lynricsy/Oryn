@@ -8,7 +8,7 @@
  *   ORYN_README_DIR   输出目录（默认仓库的 docs/assets）
  *   ORYN_README_BASE  复用已在跑的 mock 开发服务器（如 http://127.0.0.1:5191），不另起 vite
  *   ORYN_ORB_IMAGE    desktop-control 取任务栏真实应用图标的 orb 镜像（默认 oryn-orb:dev）
- *   ORYN_IOS_SHOTS    mobile-views 用的 iOS 模拟器原图目录（readme-ios-shots 工作流的产物）；没设时跳过该组
+ *   ORYN_IOS_SHOTS    mobile-views 与 duo-views 用的 iOS 模拟器原图目录（readme-ios-shots 工作流的产物）；没设时跳过这两组
  *   CHROMIUM          Chromium 可执行文件（默认 /usr/bin/chromium）
  * `--emit-ios-init <文件>`：只输出 iOS 模拟器里注入 mock 构建的演示数据脚本（工作流调用），见 `iosDriver`。
  *
@@ -48,6 +48,7 @@ const GROUPS = [
 	"workbench",
 	"coord-stats",
 	"mobile-views",
+	"duo-views",
 	"artifacts-inbox",
 	"tool-cards",
 	"file-preview",
@@ -2916,6 +2917,45 @@ const mobileViews: Shooter = async (scheme) => {
 	);
 };
 
+/**
+ * iPhone Duo 双拼：同一会话里合上时的外屏线程页与展开后的内屏（横放），原图同样来自 readme-ios-shots 工作流
+ * （`duo-outer-*` / `duo-inner-*`）。两张按同一高度排开，宽度随各自屏幕比例。
+ */
+const duoViews: Shooter = async (scheme) => {
+	const dir = process.env.ORYN_IOS_SHOTS;
+	if (!dir) {
+		console.warn(
+			"  duo-views 跳过：没设 ORYN_IOS_SHOTS（iOS 原图来自 readme-ios-shots 工作流，见 docs/development.md）",
+		);
+		return Buffer.alloc(0);
+	}
+	const shots: Record<string, Buffer> = {};
+	for (const face of ["outer", "inner"]) {
+		const file = Bun.file(`${dir}/duo-${face}-${scheme}.png`);
+		if (!(await file.exists()))
+			throw new Error(`缺少 iPhone Duo 原图 ${file.name}`);
+		shots[face] = Buffer.from(await file.arrayBuffer());
+	}
+	return compose(
+		scheme,
+		{ width: 1280, height: 600 },
+		`<div class="duo-row">
+<figure><div class="dev outer"><img src="/__readme/outer.png"></div><figcaption>合上：外屏是手机布局，原生页头与底部输入坞</figcaption></figure>
+<figure><div class="dev inner"><img src="/__readme/inner.png"></div><figcaption>展开：内屏铺满，侧栏与对话并排，页面不重新加载</figcaption></figure>
+</div>`,
+		shots,
+		`.duo-row { position: absolute; top: 16px; left: 0; right: 0; display: flex; justify-content: center; gap: 56px; }
+.duo-row figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.dev { height: 520px; overflow: hidden; background: var(--bg);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--text) 14%, transparent), 0 24px 50px -20px oklch(0.25 0.03 235 / 0.4); }
+:root[data-theme="dark"] .dev { box-shadow: 0 0 0 1px oklch(1 0 0 / 0.12), 0 24px 50px -20px oklch(0 0 0 / 0.6); }
+.dev.outer { border-radius: 30px; }
+.dev.inner { border-radius: 22px; }
+.dev img { display: block; height: 100%; }
+.duo-row figcaption { font-size: 15.5px; color: var(--text); }`,
+	);
+};
+
 /** 单窗口特写：一窗 + 底部图注。 */
 function single(
 	scheme: Scheme,
@@ -3647,6 +3687,7 @@ const SHOOTERS: Record<Group, Shooter> = {
 	workbench,
 	"coord-stats": coordStats,
 	"mobile-views": mobileViews,
+	"duo-views": duoViews,
 	"artifacts-inbox": artifactsInbox,
 	"tool-cards": toolCards,
 	"file-preview": filePreview,

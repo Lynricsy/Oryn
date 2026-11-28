@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # 谓词函数经 until_ok 间接调用
-# shellcheck disable=SC2329
+# shellcheck disable=SC2329 source-path=SCRIPTDIR
 # iPhone Duo 折叠往返检查（mobile.yml 的 ios-check，硬门禁）：同一次会话里「外屏 → 展开 → 合上」，跨 600px 断点来回一趟，
 # 确认换布局不重挂载页面、原生根滚动跟随随之撤掉与重建。只在内屏、外屏各跑一遍抓不到这一类问题。
-#   - 新建一台 iPhone Duo 模拟器（支持它的最新 iOS 运行时），debug 包经 ORYN_E2E_URL 打开 mock Web UI 的线程页
+#   - 新建一台 iPhone Duo 模拟器（ios-sim.sh 的 duo_setup），debug 包经 ORYN_E2E_URL 打开 mock Web UI 的线程页
 #     （与 ios-e2e-check.sh 同一条生产路径：open_remote、远程能力、宿主命令权限）；
 #   - 合上时外屏不到 600pt 宽：compact 下沉侧栏，原生跟随根滚动（sink.set on）；展开后内屏 ≥ 600pt：列侧栏，
 #     SinkLayout 退成普通外框并撤掉跟随（sink.set off）；
-#   - simctl 没有铰链命令，折叠由 duoctl 驱动（github.com/skarol/duoctl，固定到 v0.2.1 的提交、从源码运行，不经 Homebrew tap）。
-#     它走模拟器的私有 HID 接口，每次折叠后读回状态，没生效就报错：Xcode 更新后若失效，这一步红在 duoctl 的报错上而不是断言上。
-#     不用 `simctl io … screenConfig` 关屏模拟折叠：会让 SpringBoard 反复崩溃；截图也用 duoctl（simctl 合上时截内屏是黑图）。
+#   - 折叠与截图用 duoctl（见 ios-sim.sh）：Xcode 更新后若失效，这一步红在 duoctl 的报错上而不是断言上。
 # 断言（网页探针 = ios-e2e-preview.mjs 的 main.mount / layout；壳的事件日志 = sink.set）：
 #   folded    外屏：最后一条 layout 是 sink = true（宽 < 600），最后一条 sink.set 是 on
 #   open      展开：layout 变成 sink = false（宽 ≥ 600），最后一条 sink.set 是 off
@@ -37,7 +35,6 @@ port=47614
 origin="http://localhost:$port"
 # mock 的 MAIN_THREAD（web/src/mock/fixtures.ts）
 thread=T-0193a1b2-0000-7000-8000-00000000a001
-duoctl_rev=c6ff3e961a9858fb061907448e702d7d1617dc4a # v0.2.1
 wlog="$out/duo-web.jsonl"
 work=$(mktemp -d)
 server=""
@@ -53,10 +50,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# shellcheck source=ios-sim.sh
+source "$here/ios-sim.sh"
+
 fail() {
   echo "::error::iPhone Duo 折叠往返（${1}）：${2}"
   echo "- ❌ ${1}：${2}" >>"$summary"
-  if [[ -n $udid ]]; then "$work/duoctl/bin/duoctl" -d "$udid" screenshot "$out/duo-fail-$1.png" 2>/dev/null || true; fi
+  if [[ -n $udid && -n $duoctl ]]; then sim_shot "$out/duo-fail-$1.png" 30 || true; fi
   echo "--- 事件日志"
   cat "$log" 2>/dev/null || true
   [[ -n $log ]] && cp "$log" "$out/duo-events.jsonl" 2>/dev/null || true
@@ -77,33 +77,16 @@ until_ok() {
   fail "$step" "${secs} 秒内没有等到：${what}"
 }
 
-# duoctl：固定提交，从源码运行；首次运行用 Xcode 的 clang 编译模拟器里的小助手（缓存在 ~/.cache/duoctl）
-git -C "$work" init -q duoctl
-git -C "$work/duoctl" fetch -q --depth 1 https://github.com/skarol/duoctl.git "$duoctl_rev"
-git -C "$work/duoctl" checkout -q FETCH_HEAD
-duo() { "$work/duoctl/bin/duoctl" -d "$udid" "$@"; }
-# pose <步骤> <open|close>：动画折叠（iOS 27.1 运行时上瞬间跳变会让模拟器之后切不了屏，duoctl 也总是扫过去），读回状态写进摘要
+# pose <步骤> <open|close>：动画折叠（iOS 27.1 运行时上瞬间跳变会让模拟器之后切不了屏），读回状态写进摘要
 pose() {
   duo "$2" --duration 1 || fail "$1" "duoctl ${2} 失败（见上面 duoctl 的报错；Xcode 更新后私有接口可能变了）"
   echo "- ${1}：\`$(duo state | jq -c '{hingeAngle, activeScreen, orientation, sizePoints}')\`" | tee -a "$summary"
 }
-shot() { duo screenshot "$out/duo-$1.png" || fail "$1" "duoctl screenshot 失败"; }
+shot() { sim_shot "$out/duo-$1.png" 60 || fail "$1" "duoctl screenshot 60 秒没有返回"; }
 
-# 支持 iPhone Duo 的最新 iOS 运行时（Xcode 27.1+ 自带）
-pick=$(xcrun simctl list runtimes available -j | jq -c '
-  [.runtimes[] | select(.platform == "iOS")
-    | . as $r
-    | (($r.supportedDeviceTypes // []) | map(select(.name == "iPhone Duo")) | first) as $t
-    | select($t != null)
-    | {runtime: $r.identifier, version: $r.version, type: $t.identifier}]
-  | sort_by(.version | split(".") | map(tonumber)) | last // empty')
-if [[ -z $pick ]]; then
-  xcrun simctl list runtimes >&2 || true
-  fail setup "没有支持 iPhone Duo 的 iOS 运行时（需要 Xcode 27.1+）"
-fi
-udid=$(xcrun simctl create "Oryn CI Duo" "$(jq -r .type <<<"$pick")" "$(jq -r .runtime <<<"$pick")")
+duo_setup || fail setup "没有支持 iPhone Duo 的 iOS 运行时（需要 Xcode 27.1+）"
 echo "### iPhone Duo 折叠往返（跨 600px 断点）" >>"$summary"
-echo "模拟器：iPhone Duo（iOS $(jq -r .version <<<"$pick")），duoctl ${duoctl_rev:0:7}" | tee -a "$summary"
+echo "模拟器：iPhone Duo（iOS ${duo_os}），duoctl ${duoctl_rev:0:7}" | tee -a "$summary"
 echo >>"$summary"
 
 # mock Web UI 由 Vite 预览，探针把 layout / main.mount 记到 duo-web.jsonl
