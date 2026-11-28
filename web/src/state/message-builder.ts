@@ -12,6 +12,11 @@ export interface LiveMessage {
 	messageId?: string;
 	role: string;
 	timestamp?: number;
+	/**
+	 * 转录行键：线程状态为每次 `message_start` 分配的唯一身份（`ThreadViewState.liveSerial`）。不由 messageId / 时间戳推出——
+	 * 同一毫秒相继开始的助手消息与注入消息可能都没有 messageId；条目接替时经 `ThreadViewState.rowKeys` 沿用。
+	 */
+	rowKey: string;
 	/** 当前重建出的消息对象（结构与 AgentMessage 相同，但字段可能残缺）。 */
 	message: JsonRecord;
 	/** 每个 toolCall 块累计的参数 JSON 文本（按 contentIndex）。 */
@@ -32,7 +37,10 @@ function cloneMessage(m: unknown): JsonRecord {
 	return { ...m, content };
 }
 
-export function startLiveMessage(frame: JsonRecord): LiveMessage {
+export function startLiveMessage(
+	frame: JsonRecord,
+	rowKey: string,
+): LiveMessage {
 	const message = cloneMessage(frame.message);
 	return {
 		messageId:
@@ -40,6 +48,7 @@ export function startLiveMessage(frame: JsonRecord): LiveMessage {
 		role: typeof message.role === "string" ? message.role : "assistant",
 		timestamp:
 			typeof message.timestamp === "number" ? message.timestamp : undefined,
+		rowKey,
 		message,
 		partialJson: {},
 		ended: false,
@@ -234,21 +243,20 @@ export function applyMessageUpdate(
 }
 
 export function endLiveMessage(
-	live: LiveMessage | null,
+	live: LiveMessage,
 	frame: JsonRecord,
 ): LiveMessage {
-	const base = live ?? startLiveMessage(frame);
 	const message = isRecord(frame.message)
 		? cloneMessage(frame.message)
-		: base.message;
+		: live.message;
 	return {
-		...base,
+		...live,
 		message,
-		role: typeof message.role === "string" ? message.role : base.role,
+		role: typeof message.role === "string" ? message.role : live.role,
 		timestamp:
 			typeof message.timestamp === "number"
 				? message.timestamp
-				: base.timestamp,
+				: live.timestamp,
 		partialJson: {},
 		ended: true,
 	};

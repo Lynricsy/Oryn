@@ -35,6 +35,8 @@ export type TranscriptItem =
 			entryId?: string;
 			message: JsonRecord;
 			live: boolean;
+			/** 接替在途消息的条目：沿用在途时的行键（见 `ThreadViewState.rowKeys`），虚拟列表据此原地交接。 */
+			rowKey?: string;
 			/** 在途消息里已收到 `*_end` 的内容块（按 contentIndex）。 */
 			endedBlocks?: readonly number[];
 			/** 助手消息：走到它之前的模型来源轨迹（在途消息为分支末端的）。 */
@@ -55,6 +57,7 @@ export type TranscriptItem =
 			seq: number;
 			entryId?: string;
 			entry: JsonRecord;
+			rowKey?: string;
 	  }
 	| {
 			kind: "meta";
@@ -363,7 +366,7 @@ export function buildTranscript(
 		| "liveToolOrder"
 		| "notices"
 	> &
-		Partial<Pick<ThreadViewState, "landing">>,
+		Partial<Pick<ThreadViewState, "landing" | "rowKeys">>,
 ): TranscriptModel {
 	const items: TranscriptItem[] = [];
 	const branches = activeBranch(s.entries, s.leafEntryId).filter(
@@ -390,6 +393,12 @@ export function buildTranscript(
 		for (const e of branch) {
 			if (render) {
 				const item = entryItem(e);
+				const rowKey = s.rowKeys?.[e.seq];
+				if (
+					rowKey &&
+					(item?.kind === "message" || item?.kind === "custom_message")
+				)
+					item.rowKey = rowKey;
 				if (item?.kind === "message" && item.message.role === "assistant")
 					item.trail = trail;
 				if (item?.kind === "meta" && e.type === "mode_change" && lastMode)
@@ -439,7 +448,7 @@ export function buildTranscript(
 			continue;
 		items.push({
 			kind: "message",
-			key: `live-${live.messageId ?? live.timestamp ?? "m"}`,
+			key: live.rowKey,
 			seq: lastSeq + 0.6,
 			message: live.message,
 			live: !live.ended,

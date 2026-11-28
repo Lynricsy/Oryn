@@ -922,11 +922,18 @@ describe("注入消息落盘为 custom_message：实时副本不重影", () => {
 		).toBe(true);
 	});
 
-	it("助手消息说完紧跟注入消息、条目还没到：助手消息不从转录里消失，条目到了原位接替", () => {
+	/** [条目键, 虚拟列表行键] */
+	const keys = (st: ThreadViewState) =>
+		buildTranscript(st).items.map((i) => [
+			i.key,
+			("rowKey" in i && i.rowKey) || i.key,
+		]);
+
+	it("助手消息说完同一毫秒紧跟注入消息（都没有 messageId）、条目还没到：两行各有行键，助手消息不消失，条目到了沿用在途行键原地接替", () => {
 		const reply = {
 			role: "assistant",
 			content: [{ type: "text", text: "最终回答" }],
-			timestamp: TS - 5,
+			timestamp: TS,
 		};
 		const advisor = { ...delivery, customType: "advisor" };
 		let s = frames(initialThreadState(TID), [
@@ -934,20 +941,31 @@ describe("注入消息落盘为 custom_message：实时副本不重影", () => {
 			{ type: "message_end", message: reply },
 			{ type: "message_start", message: advisor },
 		]);
-		const keys = (st: ThreadViewState) =>
-			buildTranscript(st).items.map((i) => i.key);
-		expect(keys(s)).toEqual([`live-${TS - 5}`, `live-${TS}`]);
+		const replyKey = s.landing[0]?.rowKey;
+		const advisorKey = s.liveMessage?.rowKey;
+		expect(replyKey).toBeDefined();
+		expect(advisorKey).not.toBe(replyKey);
+		expect(keys(s)).toEqual([
+			[replyKey, replyKey],
+			[advisorKey, advisorKey],
+		]);
 
 		s = frames(s, [{ type: "message_end", message: advisor }]);
 		const replyEntry = msgEntry("a1", reply);
 		s = applyEntries(s, { entries: [replyEntry] });
 		expect(s.landing).toEqual([]);
-		expect(keys(s)).toEqual([`e${replyEntry.seq}`, `live-${TS}`]);
+		expect(keys(s)).toEqual([
+			[`e${replyEntry.seq}`, replyKey],
+			[advisorKey, advisorKey],
+		]);
 
 		const advisorEntry = { ...customEntry("advisor", TS), parentId: "a1" };
 		s = applyEntries(s, { entries: [advisorEntry] });
 		expect(s.liveMessage).toBeNull();
-		expect(keys(s)).toEqual([`e${replyEntry.seq}`, `e${advisorEntry.seq}`]);
+		expect(keys(s)).toEqual([
+			[`e${replyEntry.seq}`, replyKey],
+			[`e${advisorEntry.seq}`, advisorKey],
+		]);
 	});
 });
 

@@ -108,6 +108,7 @@ describe("buildTranscript 的来源轨迹", () => {
 			messageId: "m1",
 			role: "assistant",
 			timestamp: 999,
+			rowKey: "live-0",
 			message: reply("…").message as JsonRecord,
 			partialJson: {},
 			ended: false,
@@ -269,6 +270,7 @@ describe("buildTranscript 的条目可见性", () => {
 			messageId: "n1",
 			role: "custom",
 			timestamp: 999,
+			rowKey: "live-0",
 			message: {
 				role: "custom",
 				customType: "xdev-mount-notice",

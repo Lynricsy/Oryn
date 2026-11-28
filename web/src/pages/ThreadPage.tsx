@@ -249,6 +249,7 @@ export function ThreadScreen({
 	const leaf = useThread(threadId, (s) => s.leafEntryId);
 	const liveMessage = useThread(threadId, (s) => s.liveMessage);
 	const landing = useThread(threadId, (s) => s.landing);
+	const rowKeys = useThread(threadId, (s) => s.rowKeys);
 	const liveTools = useThread(threadId, (s) => s.liveTools);
 	const liveToolOrder = useThread(threadId, (s) => s.liveToolOrder);
 	const notices = useThread(threadId, (s) => s.notices);
@@ -327,6 +328,7 @@ export function ThreadScreen({
 				leafEntryId: rewind.active ? rewind.previewLeafId : leaf,
 				liveMessage,
 				landing,
+				rowKeys,
 				liveTools,
 				liveToolOrder,
 				notices,
@@ -338,6 +340,7 @@ export function ThreadScreen({
 			rewind.previewLeafId,
 			liveMessage,
 			landing,
+			rowKeys,
 			liveTools,
 			liveToolOrder,
 			notices,

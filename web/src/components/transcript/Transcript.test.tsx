@@ -294,11 +294,14 @@ describe("思考块随思考开合", () => {
 		});
 
 	it("思考中自动展开；只收到 thinking_end、下一块还没来时就合上", () => {
-		let live = startLiveMessage({
-			type: "message_start",
-			messageId: "m1",
-			message: { role: "assistant", content: [] },
-		});
+		let live = startLiveMessage(
+			{
+				type: "message_start",
+				messageId: "m1",
+				message: { role: "assistant", content: [] },
+			},
+			"live-0",
+		);
 		live = upd(live, {
 			type: "thinking_start",
 			contentIndex: 0,
@@ -335,11 +338,14 @@ describe("思考块随思考开合", () => {
 
 	it("思考按 Markdown 渲染：**小标题** 成粗体、尖括号照字面；合上后的预览去掉记号", () => {
 		const text = "**评估界面方案**\n\n用 `<Tabs>` 分开 <div> 方案";
-		let live = startLiveMessage({
-			type: "message_start",
-			messageId: "m1",
-			message: { role: "assistant", content: [] },
-		});
+		let live = startLiveMessage(
+			{
+				type: "message_start",
+				messageId: "m1",
+				message: { role: "assistant", content: [] },
+			},
+			"live-0",
+		);
 		live = upd(live, {
 			type: "thinking_start",
 			contentIndex: 0,
@@ -372,11 +378,14 @@ describe("思考块随思考开合", () => {
 			value: animate,
 		});
 		try {
-			let live = startLiveMessage({
-				type: "message_start",
-				messageId: "m1",
-				message: { role: "assistant", content: [] },
-			});
+			let live = startLiveMessage(
+				{
+					type: "message_start",
+					messageId: "m1",
+					message: { role: "assistant", content: [] },
+				},
+				"live-0",
+			);
 			live = upd(live, {
 				type: "thinking_start",
 				contentIndex: 0,
@@ -1496,6 +1505,7 @@ describe("回合头身份（M9.6：只认来源记录）", () => {
 				messageId: "m",
 				role: "assistant",
 				timestamp: Number(reply.timestamp),
+				rowKey: "live-0",
 				message: { ...reply, content: [] },
 				partialJson: {},
 				ended: false,

@@ -238,6 +238,13 @@ export interface ThreadViewState {
 	 * 留在这里继续渲染，条目到了再接替，转录不会先塌掉一整条再长回来。
 	 */
 	landing: LiveMessage[];
+	/**
+	 * 条目 seq → 它接替的在途消息行键（`LiveMessage.rowKey`）。虚拟列表按行键缓存测得的高度：换成 `e<seq>` 会按估高重挂载，
+	 * 读到上方时视口被测高补偿整段推走；沿用在途行键则原地交接。
+	 */
+	rowKeys: Record<number, string>;
+	/** 下一条在途消息的行键序号（`live-<n>`）：只增不减，快照与转录重置也不回绕，保证与 `rowKeys` 里沿用的旧键不撞。 */
+	liveSerial: number;
 	liveTools: Record<string, LiveTool>;
 	liveToolOrder: string[];
 	/** `live.reset` 之后、下一个 `message_start` 之前为真。 */
@@ -302,6 +309,8 @@ export function initialThreadState(threadId: string): ThreadViewState {
 		windowStart: 0,
 		liveMessage: null,
 		landing: [],
+		rowKeys: {},
+		liveSerial: 0,
 		liveTools: {},
 		liveToolOrder: [],
 		liveSuppressed: false,
@@ -498,11 +507,13 @@ export function mergeEntries(
 	// 条目按落盘顺序到达：盖住第 i 条在途消息时，它之前的已结束消息要么已被盖住，要么不会再落盘，一并清掉
 	const inflight = s.liveMessage ? [...s.landing, s.liveMessage] : s.landing;
 	let covered = -1;
+	let rowKeys = s.rowKeys;
 	for (const e of incoming) {
 		for (let i = inflight.length - 1; i > covered; i--) {
 			const m = inflight[i];
 			if (m && entryCoversMessage(e, m)) {
 				covered = i;
+				rowKeys = { ...rowKeys, [e.seq]: m.rowKey };
 				break;
 			}
 		}
@@ -514,6 +525,7 @@ export function mergeEntries(
 			...next,
 			landing: s.landing.slice(covered + 1),
 			liveMessage: covered >= s.landing.length ? null : s.liveMessage,
+			rowKeys,
 		};
 	return removeTools(next, toolIds);
 }
@@ -571,7 +583,14 @@ export function applyTranscriptReset(
 	s: ThreadViewState,
 	transcriptRev: number,
 ): ThreadViewState {
-	return { ...s, entries: [], lastSeq: 0, transcriptRev, windowStart: 0 };
+	return {
+		...s,
+		entries: [],
+		lastSeq: 0,
+		transcriptRev,
+		windowStart: 0,
+		rowKeys: {},
+	};
 }
 
 /** `plan.resolved`：计划提案已被任一客户端处理。 */
@@ -795,23 +814,26 @@ export function applyFrame(
 					: s.landing;
 			return {
 				...s,
-				liveMessage: startLiveMessage(f),
+				liveMessage: startLiveMessage(f, `live-${s.liveSerial}`),
+				liveSerial: s.liveSerial + 1,
 				landing,
 				liveSuppressed: false,
 			};
 		}
 		case "message_update":
+		case "message_end": {
 			if (s.liveSuppressed) return s;
+			// 没有 message_start 就到的增量 / 结束帧：按本帧开一条，同样占一个行键序号
+			const live = s.liveMessage ?? startLiveMessage(f, `live-${s.liveSerial}`);
 			return {
 				...s,
-				liveMessage: applyMessageUpdate(
-					s.liveMessage ?? startLiveMessage(f),
-					f,
-				),
+				liveMessage:
+					frame.type === "message_end"
+						? endLiveMessage(live, f)
+						: applyMessageUpdate(live, f),
+				liveSerial: s.liveMessage ? s.liveSerial : s.liveSerial + 1,
 			};
-		case "message_end":
-			if (s.liveSuppressed) return s;
-			return { ...s, liveMessage: endLiveMessage(s.liveMessage, f) };
+		}
 		case "tool_execution_start": {
 			const id = str(f.toolCallId);
 			if (!id) return s;
@@ -1251,6 +1273,8 @@ export function applySnapshot(
 	let next: ThreadViewState = {
 		...initialThreadState(s.threadId),
 		entries: keepEntries ? s.entries : [],
+		rowKeys: keepEntries ? s.rowKeys : {},
+		liveSerial: s.liveSerial,
 		lastSeq: keepEntries ? s.lastSeq : 0,
 		transcriptRev: snap.transcriptRev,
 		// 服务端开窗时（只在从 seq 0 补发时）以它为准；续传沿用本地的窗口

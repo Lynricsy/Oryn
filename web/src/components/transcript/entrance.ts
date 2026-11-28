@@ -22,6 +22,13 @@ export class ArrivalLog<R extends { key: string }> {
 	private readonly known = new Set<string>();
 	private readonly at = new Map<string, number>();
 
+	/** 行的身份键，须与虚拟列表的行键一致（接替在途消息的条目沿用在途行键，不算新行）。 */
+	private readonly keyOf: (row: R) => string;
+
+	constructor(keyOf: (row: R) => string = (row) => row.key) {
+		this.keyOf = keyOf;
+	}
+
 	/**
 	 * 登记这一版显示行（同一个数组只处理一次，渲染期重复调用无副作用）。
 	 * `armed` 为假时只记下行键；`animate` 决定一行新行是否自己入场（交接行——在途消息落盘、
@@ -38,17 +45,17 @@ export class ArrivalLog<R extends { key: string }> {
 		let lastKnown = -1;
 		const fresh: R[] = [];
 		rows.forEach((row, i) => {
-			if (this.known.has(row.key)) lastKnown = i;
+			if (this.known.has(this.keyOf(row))) lastKnown = i;
 			else fresh.push(row);
 		});
-		for (const row of fresh) this.known.add(row.key);
+		for (const row of fresh) this.known.add(this.keyOf(row));
 		for (const [key, t] of this.at)
 			if (now - t >= ENTER_WINDOW) this.at.delete(key);
 		if (!armed || fresh.length === 0 || fresh.length > MAX_FRESH) return;
 		// 只认追加在末尾的新行：插在已知行之间的（加载更早、重排）不入场
 		for (const row of fresh)
 			if (rows.indexOf(row) > lastKnown && animate(row))
-				this.at.set(row.key, now);
+				this.at.set(this.keyOf(row), now);
 	}
 
 	entering(key: string, now: number): boolean {

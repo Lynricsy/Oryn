@@ -354,6 +354,11 @@ function isUserRow(item: MainlineRow): boolean {
 	return item.kind === "message" && item.message.role === "user";
 }
 
+/** 虚拟列表与入场记录的行键：接替在途消息的条目沿用在途时的行键，原地交接、不按估高重挂载。 */
+function rowKeyOf(row: MainlineRow): string {
+	return ("rowKey" in row && row.rowKey) || row.key;
+}
+
 /** 主人亲手发的 user 消息：右侧气泡、让出头像列；自动消息（`isAutoMessage`）铺满正文列，不放用户头像。 */
 function isOwnerRow(item: MainlineRow): boolean {
 	return (
@@ -832,7 +837,10 @@ export const Transcript = memo(function Transcript({
 		overscan: 6,
 		paddingStart: insetTop + (hasEarlier ? EARLIER_H : 0),
 		paddingEnd: insetBottom,
-		getItemKey: (i) => (i < rows.length ? (rows[i]?.key ?? i) : "__footer__"),
+		getItemKey: (i) => {
+			const row = rows[i];
+			return row ? rowKeyOf(row) : "__footer__";
+		},
 		directDomUpdates: true,
 		directDomUpdatesMode: "position",
 		onChange: (v) => {
@@ -1184,7 +1192,7 @@ export const Transcript = memo(function Transcript({
 	// 入场动画（entrance.ts）：挂载后 INTRO_MS 内不启用。助手消息由块级入场负责（MessageView 的 FlowBlock）；
 	// 待发气泡换成真实 user 行是交接，气泡早已在场，不再入场
 	const armed = performance.now() - mountedAt >= INTRO_MS;
-	const [log] = useState(() => new ArrivalLog<MainlineRow>());
+	const [log] = useState(() => new ArrivalLog<MainlineRow>(rowKeyOf));
 	const hadPending = useRef(false);
 	log.note(
 		rows,
@@ -1208,7 +1216,7 @@ export const Transcript = memo(function Transcript({
 			// 会话分隔线、自动消息与 agent 各块都铺满正文列；主人的用户气泡右侧让出头像列（pr-10）
 			const userRow = item !== undefined && isOwnerRow(item);
 			const entering =
-				item === undefined || !log.entering(item.key, now)
+				item === undefined || !log.entering(rowKeyOf(item), now)
 					? ""
 					: userRow
 						? "tx-enter-user"
